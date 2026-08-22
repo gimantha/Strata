@@ -84,10 +84,15 @@ type SourceEventAcceptedPayload struct {
 	PipelineVersion int           `json:"pipeline_version"`
 }
 
-// PipelineDedupeKey is the outbox dedupe key for processing one source event under
-// one pipeline version.
-func PipelineDedupeKey(eventID SourceEventID, pipelineVersion int) string {
-	return DeriveKey("outbox.pipeline", string(eventID), itoa(pipelineVersion))
+// PipelineDedupeKey is the outbox dedupe key for processing one submission under one
+// pipeline version.
+//
+// It is derived from the submission's stable identity - source plus idempotency key -
+// rather than from the assigned event id, because a replay carries a fresh candidate id
+// while resolving to the original event. Keying on the assigned id would enqueue a
+// second work item for work that is already queued.
+func PipelineDedupeKey(source SourceID, idempotencyKey string, pipelineVersion int) string {
+	return DeriveKey("outbox.pipeline", string(source), idempotencyKey, itoa(pipelineVersion))
 }
 
 func itoa(i int) string {

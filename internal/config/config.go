@@ -30,6 +30,10 @@ type Config struct {
 	DatabaseURL string
 	DBMaxConns  int32
 	DBMinConns  int32
+	// AutoMigrate applies pending migrations at startup. Safe with several instances
+	// because the runner holds an advisory lock, and it keeps single-node development
+	// to one command. Disable it where migrations are a separate deployment step.
+	AutoMigrate bool
 
 	BlobDir     string
 	APIKeysFile string
@@ -72,6 +76,7 @@ func LoadFrom(getenv func(string) string) (Config, error) {
 		MaxBodyBytes:    int64(l.intVal("MAX_BODY_BYTES", 8<<20)),
 
 		DatabaseURL: l.str("DATABASE_URL", ""),
+		AutoMigrate: l.boolVal("AUTO_MIGRATE", true),
 		DBMaxConns:  int32(l.intVal("DB_MAX_CONNS", 10)),
 		DBMinConns:  int32(l.intVal("DB_MIN_CONNS", 0)),
 

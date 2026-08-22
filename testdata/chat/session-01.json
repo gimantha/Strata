@@ -1,0 +1,8 @@
+{
+  "messages": [
+    {"role": "user", "content": "Hi, I need to check our refund policy for enterprise customers.", "timestamp": "2026-03-25T09:58:00Z"},
+    {"role": "assistant", "content": "Enterprise refunds run through the account team. The standard window is thirty days from invoice date.", "timestamp": "2026-03-25T09:58:12Z"},
+    {"role": "user", "content": "Alice Chen is our account manager, and she said Acme signed on March 3rd.", "timestamp": "2026-03-25T09:59:30Z"},
+    {"role": "assistant", "content": "Then Acme's refund window closes on April 2nd, thirty days after the March 3rd invoice.", "timestamp": "2026-03-25T09:59:45Z"}
+  ]
+}

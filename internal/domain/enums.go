@@ -92,6 +92,31 @@ func ParseClassification(s string) (Classification, error) {
 	return parseEnum("classification", s, classifications)
 }
 
+// rank orders classifications from least to most restrictive.
+func (c Classification) rank() int {
+	for i, known := range classifications {
+		if known == c {
+			return i + 1
+		}
+	}
+	return 0
+}
+
+// MostRestrictive returns whichever classification protects more.
+//
+// Classification propagates downstream and may only be raised implicitly; lowering it
+// requires an explicit policy decision, which this phase has no mechanism for. So when
+// two labels meet, the stricter one wins (AGENTS.md section 22.3).
+func MostRestrictive(a, b Classification) Classification {
+	if b.rank() > a.rank() {
+		return b
+	}
+	if a.rank() == 0 {
+		return ClassificationInternal
+	}
+	return a
+}
+
 // MemoryKind classifies knowledge without splitting it across incompatible stores
 // (AGENTS.md section 9). Declared now; assertions arrive in phase 2.
 type MemoryKind string

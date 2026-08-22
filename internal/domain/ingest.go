@@ -143,6 +143,27 @@ func DeriveIdempotencyKey(source SourceID, externalID, sourceVersion, contentHas
 	return DeriveKey("source_event", string(source), externalID, sourceVersion, contentHash)
 }
 
+// SourceEventAppend is one atomic ingestion unit: the archived artifact's metadata,
+// the canonical source event, and the work items its processing requires. The ledger
+// commits all of it in a single transaction (AGENTS.md sections 10.2, 28.1).
+type SourceEventAppend struct {
+	Artifact Artifact
+	Event    SourceEvent
+	Outbox   []OutboxEvent
+	// PipelineVersion seeds a pending pipeline run so processing status is queryable
+	// as soon as ingestion is acknowledged. Zero skips that.
+	PipelineVersion int
+	Actor           PrincipalID
+}
+
+// SourceEventAppendResult reports what the ledger did. Duplicate is true when the
+// event already existed under the same idempotency key with identical content.
+type SourceEventAppendResult struct {
+	Event     SourceEvent
+	Artifact  Artifact
+	Duplicate bool
+}
+
 // Locator preserves positional provenance for an episode or chunk
 // (AGENTS.md section 6.6). Fields are typed rather than a bare map so provenance
 // stays reviewable; Extra exists for genuinely source-specific detail.

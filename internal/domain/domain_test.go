@@ -298,13 +298,20 @@ func TestOutboxEventValidation(t *testing.T) {
 	}
 }
 
-func TestPipelineDedupeKeySeparatesPipelineVersions(t *testing.T) {
-	id := SourceEventID("event-1")
-	if PipelineDedupeKey(id, 1) == PipelineDedupeKey(id, 2) {
-		t.Fatal("a new pipeline version must be able to reprocess an event")
+func TestPipelineDedupeKeyIsStableAcrossReplays(t *testing.T) {
+	src := SourceID("11111111-1111-7111-8111-111111111111")
+
+	// A replay of the same submission must map to the same work item, so redelivery
+	// cannot enqueue a second copy of work that is already queued.
+	if PipelineDedupeKey(src, "key-1", 1) != PipelineDedupeKey(src, "key-1", 1) {
+		t.Fatal("dedupe keys must be stable for identical submissions")
 	}
-	if PipelineDedupeKey(id, 1) != PipelineDedupeKey(id, 1) {
-		t.Fatal("dedupe keys must be stable")
+	if PipelineDedupeKey(src, "key-1", 1) == PipelineDedupeKey(src, "key-2", 1) {
+		t.Fatal("distinct submissions must map to distinct work items")
+	}
+	// A new pipeline version must be able to reprocess the same event.
+	if PipelineDedupeKey(src, "key-1", 1) == PipelineDedupeKey(src, "key-1", 2) {
+		t.Fatal("a new pipeline version must produce a new work item")
 	}
 }
 
