@@ -81,11 +81,21 @@ func New(ctx context.Context, cfg config.Config) (*App, error) {
 	app.Identity = identityService
 
 	// Register configured principals so an owner can grant access to someone who has
-	// not authenticated yet. Best effort: on an unmigrated database this is expected to
-	// fail, and authentication registers principals lazily regardless.
-	if err := identityService.SyncPrincipals(ctx); err != nil {
-		logger.WarnContext(ctx, "could not register configured principals",
-			slog.String("error", err.Error()))
+	// not authenticated yet.
+	//
+	// Skipped on an unmigrated database, which is the normal state when this process is
+	// the one about to run the migrations: warning about a missing table that is seconds
+	// away from existing would make a clean first run look broken. Authentication
+	// registers principals lazily regardless.
+	schemaVersion, err := store.SchemaVersion(ctx)
+	if err != nil {
+		logger.WarnContext(ctx, "could not read schema version", slog.String("error", err.Error()))
+	}
+	if schemaVersion > 0 {
+		if err := identityService.SyncPrincipals(ctx); err != nil {
+			logger.WarnContext(ctx, "could not register configured principals",
+				slog.String("error", err.Error()))
+		}
 	}
 
 	app.Gateway = ingest.New(store, blobs, ingest.Options{

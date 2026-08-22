@@ -99,9 +99,21 @@ go test ./...
 go test -race ./...
 ```
 
-Integration tests use real PostgreSQL. They pick up `TEST_DATABASE_URL` if set, otherwise
-boot a throwaway cluster with `initdb`, and skip if neither is possible. Set
-`CG_REQUIRE_PG=1` to turn that skip into a failure, as CI does.
+Integration tests use real PostgreSQL. They pick up `TEST_DATABASE_URL` if set,
+otherwise boot a throwaway cluster from a local installation (Debian packages, Homebrew,
+or Postgres.app; override the location with `PG_BINDIR`), and skip if neither is
+possible. **Set `CG_REQUIRE_PG=1` to turn that skip into a failure** - without it a run
+with no database reports every package green while quietly skipping the integration
+tests, which is exactly the false confidence to avoid. CI sets it.
+
+With no local PostgreSQL, a container works:
+
+```bash
+docker run -d --name strata-pg -e POSTGRES_PASSWORD=postgres -p 55432:5432 postgres:16
+export TEST_DATABASE_URL="postgres://postgres:postgres@127.0.0.1:55432/postgres"
+export CG_REQUIRE_PG=1
+go test ./...
+```
 
 Segmentation and chunk boundaries are covered by golden files. When a change to them is
 intended:

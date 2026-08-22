@@ -320,6 +320,18 @@ func (c *ephemeralCluster) run(bin string, args ...string) (string, error) {
 
 func shellQuote(s string) string { return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'" }
 
+// serverBinaryRoots are the directory patterns that hold PostgreSQL server binaries on
+// the platforms this project is developed on. Each match is expected to contain a bin
+// subdirectory; the highest major version wins.
+var serverBinaryRoots = []string{
+	"/usr/lib/postgresql/*",                          // Debian and Ubuntu packages
+	"/opt/homebrew/opt/postgresql@*",                 // Homebrew, Apple silicon
+	"/usr/local/opt/postgresql@*",                    // Homebrew, Intel macOS
+	"/opt/homebrew/Cellar/postgresql@*/*",            // Homebrew cellar, unlinked
+	"/usr/local/Cellar/postgresql@*/*",               // Homebrew cellar, unlinked
+	"/Applications/Postgres.app/Contents/Versions/*", // Postgres.app
+}
+
 // findBinDir locates PostgreSQL server binaries, preferring an explicit override.
 func findBinDir() (string, error) {
 	if dir := os.Getenv("PG_BINDIR"); dir != "" {
@@ -336,26 +348,51 @@ func findBinDir() (string, error) {
 		}
 	}
 
-	// Debian and Ubuntu keep server binaries out of PATH, one directory per version.
-	roots, _ := filepath.Glob("/usr/lib/postgresql/*")
+	// Packaged installations keep server binaries out of PATH, one directory per
+	// version, in a location that differs per platform.
 	best, bestVersion := "", -1
-	for _, root := range roots {
-		dir := filepath.Join(root, "bin")
-		if ok, _ := hasServerBinaries(dir); !ok {
-			continue
-		}
-		v, err := strconv.Atoi(filepath.Base(root))
-		if err != nil {
-			continue
-		}
-		if v > bestVersion {
-			best, bestVersion = dir, v
+	for _, pattern := range serverBinaryRoots {
+		roots, _ := filepath.Glob(pattern)
+		for _, root := range roots {
+			dir := filepath.Join(root, "bin")
+			if ok, _ := hasServerBinaries(dir); !ok {
+				continue
+			}
+			if v := majorVersion(root); v > bestVersion {
+				best, bestVersion = dir, v
+			}
 		}
 	}
 	if best != "" {
 		return best, nil
 	}
-	return "", fmt.Errorf("no PostgreSQL server binaries found; set TEST_DATABASE_URL or PG_BINDIR")
+
+	return "", fmt.Errorf("no PostgreSQL server binaries found; set TEST_DATABASE_URL " +
+		"(for example a container: docker run -d -e POSTGRES_PASSWORD=postgres -p 55432:5432 postgres:16) " +
+		"or point PG_BINDIR at a directory containing initdb and pg_ctl")
+}
+
+// majorVersion extracts a major version from an installation directory name, handling
+// the plain "16" of a Debian package and the "postgresql@16" of a Homebrew formula.
+// Unparseable names sort last rather than causing an error, since a wrong guess about
+// version ordering should not stop a usable installation from being found.
+func majorVersion(root string) int {
+	name := filepath.Base(root)
+	if _, after, found := strings.Cut(name, "@"); found {
+		name = after
+	}
+	digits := 0
+	for digits < len(name) && name[digits] >= '0' && name[digits] <= '9' {
+		digits++
+	}
+	if digits == 0 {
+		return 0
+	}
+	v, err := strconv.Atoi(name[:digits])
+	if err != nil {
+		return 0
+	}
+	return v
 }
 
 func hasServerBinaries(dir string) (bool, error) {
