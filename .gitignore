@@ -1,0 +1,12 @@
+# Build output
+/bin/
+/dist/
+
+# Local runtime state
+/.data/
+/.tmp/
+*.log
+
+# Test and coverage artifacts
+*.out
+/coverage/
