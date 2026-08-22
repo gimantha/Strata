@@ -79,6 +79,12 @@ func (s *Store) PublishOutbox(ctx context.Context, events ...domain.OutboxEvent)
 func (s *Store) ClaimOutbox(ctx context.Context, topics []string, workerID string, lease time.Duration, limit int) ([]domain.OutboxEvent, error) {
 	const op = "ledger.ClaimOutbox"
 
+	// Normalize a nil filter to an empty array: nil encodes as SQL NULL, and
+	// cardinality(NULL) is NULL, which would silently match nothing.
+	if topics == nil {
+		topics = []string{}
+	}
+
 	rows, err := s.pool.Query(ctx, `
 		UPDATE outbox_events
 		SET status = 'claimed',
@@ -90,7 +96,7 @@ func (s *Store) ClaimOutbox(ctx context.Context, topics []string, workerID strin
 			SELECT id FROM outbox_events
 			WHERE status = 'pending'
 			  AND visible_at <= now()
-			  AND (cardinality($3::text[]) = 0 OR topic = ANY($3::text[]))
+			  AND ($3::text[] IS NULL OR cardinality($3::text[]) = 0 OR topic = ANY($3::text[]))
 			ORDER BY visible_at, created_at
 			FOR UPDATE SKIP LOCKED
 			LIMIT $4

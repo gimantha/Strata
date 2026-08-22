@@ -125,10 +125,20 @@ const sourceEventColumns = `id, workspace_id, graph_space_id, collection_id, sou
 
 // insertSourceEvent inserts an event, returning the stored row and whether this was
 // a replay of an existing one.
+//
+// The insert runs inside a savepoint. A unique-index violation aborts a PostgreSQL
+// transaction, and this function has to keep querying afterwards to tell a harmless
+// replay from a genuine conflict; the savepoint is what makes that possible without
+// discarding the artifact row already written by the caller's transaction.
 func (s *Store) insertSourceEvent(ctx context.Context, tx pgx.Tx, e domain.SourceEvent) (domain.SourceEvent, bool, error) {
 	const op = "ledger.insertSourceEvent"
 
-	err := tx.QueryRow(ctx, `
+	savepoint, err := tx.Begin(ctx)
+	if err != nil {
+		return domain.SourceEvent{}, false, mapError(err, op, "cannot open savepoint")
+	}
+
+	insertErr := savepoint.QueryRow(ctx, `
 		INSERT INTO source_events (`+sourceEventColumns+`)
 		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25)
 		ON CONFLICT (workspace_id, source_id, idempotency_key) DO NOTHING
@@ -141,11 +151,18 @@ func (s *Store) insertSourceEvent(ctx context.Context, tx pgx.Tx, e domain.Sourc
 	).Scan(&e.ID)
 
 	switch {
-	case err == nil:
+	case insertErr == nil:
+		if err := savepoint.Commit(ctx); err != nil {
+			return domain.SourceEvent{}, false, mapError(err, op, "cannot release savepoint")
+		}
 		return e, false, nil
 
-	case isNoRows(err):
-		// The idempotency key already exists: this is a replay.
+	case isNoRows(insertErr):
+		// ON CONFLICT DO NOTHING suppressed the insert, so the transaction is still
+		// healthy: the idempotency key already exists and this is a replay.
+		if err := savepoint.Commit(ctx); err != nil {
+			return domain.SourceEvent{}, false, mapError(err, op, "cannot release savepoint")
+		}
 		existing, lookupErr := s.sourceEventByIdempotencyKey(ctx, tx, e.WorkspaceID, e.SourceID, e.IdempotencyKey)
 		if lookupErr != nil {
 			return domain.SourceEvent{}, false, lookupErr
@@ -157,10 +174,14 @@ func (s *Store) insertSourceEvent(ctx context.Context, tx pgx.Tx, e domain.Sourc
 		}
 		return existing, true, nil
 
-	case isUniqueViolation(err, "source_events_external_version_key"):
-		// The upstream (external_id, source_version) pair was already ingested, under
-		// a different idempotency key. Same content is a replay; different content
-		// means the source reused a version number for changed data.
+	case isUniqueViolation(insertErr, "source_events_external_version_key"):
+		// The upstream (external_id, source_version) pair was already ingested under a
+		// different idempotency key. Roll back to the savepoint to clear the aborted
+		// state, then decide whether this is a replay or a source that reused a version
+		// number for changed data.
+		if err := savepoint.Rollback(ctx); err != nil {
+			return domain.SourceEvent{}, false, mapError(err, op, "cannot roll back to savepoint")
+		}
 		existing, lookupErr := s.sourceEventByExternalVersion(ctx, tx, e.WorkspaceID, e.SourceID, e.ExternalID, e.SourceVersion)
 		if lookupErr != nil {
 			return domain.SourceEvent{}, false, lookupErr
@@ -173,7 +194,8 @@ func (s *Store) insertSourceEvent(ctx context.Context, tx pgx.Tx, e domain.Sourc
 		return existing, true, nil
 
 	default:
-		return domain.SourceEvent{}, false, mapError(err, op, "cannot insert source event")
+		_ = savepoint.Rollback(ctx)
+		return domain.SourceEvent{}, false, mapError(insertErr, op, "cannot insert source event")
 	}
 }
 

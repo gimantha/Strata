@@ -32,7 +32,9 @@ import (
 	"github.com/gimantha/strata/internal/store/ledger"
 )
 
-const templateDB = "strata_test_template"
+// templateDB is per process: Go runs one test binary per package, often in parallel,
+// and a shared template name would make them race to create it.
+var templateDB = fmt.Sprintf("strata_test_tmpl_%d", os.Getpid())
 
 var (
 	baseOnce sync.Once
@@ -52,6 +54,14 @@ var (
 //	func TestMain(m *testing.M) { pgtest.Main(m) }
 func Main(m *testing.M) {
 	code := m.Run()
+
+	// Drop this process's template so a shared cluster does not accumulate databases
+	// across runs. The ephemeral cluster is discarded wholesale instead.
+	if cluster == nil && baseDSN != "" && templateErr == nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		_ = adminExec(ctx, fmt.Sprintf(`DROP DATABASE IF EXISTS %s WITH (FORCE)`, templateDB))
+		cancel()
+	}
 	if cluster != nil {
 		cluster.stop()
 	}

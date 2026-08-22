@@ -1,0 +1,15 @@
+{
+  "comment": "Example API key file. Copy to api-keys.json and replace the entries. Only a SHA-256 digest of each secret is stored, so this file never holds a usable credential on its own. Mint entries with: go run ./cmd/cgctl keygen --principal <id> --system-role admin",
+  "version": 1,
+  "keys": [
+    {
+      "comment": "The digest below is a placeholder, not the hash of any real secret, so this file cannot authenticate anyone as written. Run cgctl keygen and paste its output here.",
+      "key_id": "k_example",
+      "secret_sha256": "b7c9d1e9d55f47d19d0b3a0d0b0e2ad1b0c5b3a1a5c9c2f4e8d7b6a5f4e3d2c1",
+      "principal_id": "example-admin",
+      "kind": "user",
+      "display_name": "Example administrator",
+      "system_role": "admin"
+    }
+  ]
+}

@@ -80,6 +80,14 @@ func New(ctx context.Context, cfg config.Config) (*App, error) {
 	}
 	app.Identity = identityService
 
+	// Register configured principals so an owner can grant access to someone who has
+	// not authenticated yet. Best effort: on an unmigrated database this is expected to
+	// fail, and authentication registers principals lazily regardless.
+	if err := identityService.SyncPrincipals(ctx); err != nil {
+		logger.WarnContext(ctx, "could not register configured principals",
+			slog.String("error", err.Error()))
+	}
+
 	app.Gateway = ingest.New(store, blobs, ingest.Options{
 		PipelineVersion: cfg.PipelineVersion,
 		MaxPayloadBytes: cfg.MaxBodyBytes,

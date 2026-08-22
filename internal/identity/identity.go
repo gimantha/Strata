@@ -153,6 +153,23 @@ func NewService(store GrantStore, keys map[string]domain.Principal, secrets map[
 	return svc
 }
 
+// SyncPrincipals registers every configured principal.
+//
+// Authentication would register them lazily anyway, but a workspace owner must be able
+// to grant access to a colleague who has not logged in yet, and a grant references a
+// principal row. Callers run this once the schema is known to exist.
+func (s *Service) SyncPrincipals(ctx context.Context) error {
+	if s.store == nil {
+		return nil
+	}
+	for _, key := range s.keys {
+		if err := s.ensureRegistered(ctx, key.principal); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // KeyIDs lists configured key identifiers, for CLI selection. Secrets are not
 // exposed.
 func (s *Service) KeyIDs() []string {

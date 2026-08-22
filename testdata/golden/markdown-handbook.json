@@ -1,0 +1,90 @@
+{
+  "media_type": "text/markdown",
+  "text_runes": 551,
+  "segments": [
+    {
+      "sequence": 0,
+      "content_type": "text/markdown",
+      "section": "Support Handbook",
+      "heading_path": [
+        "Support Handbook"
+      ],
+      "artifact_char_start": 0,
+      "artifact_char_end": 89,
+      "content": "# Support Handbook\n\nThis handbook describes how the support team handles common requests.",
+      "chunks": [
+        {
+          "sequence": 0,
+          "token_count": 22,
+          "char_start": 0,
+          "char_end": 89,
+          "content": "# Support Handbook\n\nThis handbook describes how the support team handles common requests."
+        }
+      ]
+    },
+    {
+      "sequence": 1,
+      "content_type": "text/markdown",
+      "section": "Refunds",
+      "heading_path": [
+        "Support Handbook",
+        "Refunds"
+      ],
+      "artifact_char_start": 91,
+      "artifact_char_end": 276,
+      "content": "## Refunds\n\nStandard refunds are available for thirty days from the delivery date. Enterprise\nagreements may specify a different window, which always takes precedence over this\ndefault.",
+      "chunks": [
+        {
+          "sequence": 0,
+          "token_count": 46,
+          "char_start": 0,
+          "char_end": 185,
+          "content": "## Refunds\n\nStandard refunds are available for thirty days from the delivery date. Enterprise\nagreements may specify a different window, which always takes precedence over this\ndefault."
+        }
+      ]
+    },
+    {
+      "sequence": 2,
+      "content_type": "text/markdown",
+      "section": "Exceptions",
+      "heading_path": [
+        "Support Handbook",
+        "Refunds",
+        "Exceptions"
+      ],
+      "artifact_char_start": 278,
+      "artifact_char_end": 388,
+      "content": "### Exceptions\n\nFinal sale items and custom fabrication orders cannot be refunded once production has\nstarted.",
+      "chunks": [
+        {
+          "sequence": 0,
+          "token_count": 28,
+          "char_start": 0,
+          "char_end": 110,
+          "content": "### Exceptions\n\nFinal sale items and custom fabrication orders cannot be refunded once production has\nstarted."
+        }
+      ]
+    },
+    {
+      "sequence": 3,
+      "content_type": "text/markdown",
+      "section": "Escalation",
+      "heading_path": [
+        "Support Handbook",
+        "Escalation"
+      ],
+      "artifact_char_start": 390,
+      "artifact_char_end": 551,
+      "content": "## Escalation\n\nEscalate to the account team when a customer disputes a charge above ten thousand\ndollars, or when a contract term conflicts with standard policy.",
+      "chunks": [
+        {
+          "sequence": 0,
+          "token_count": 40,
+          "char_start": 0,
+          "char_end": 161,
+          "content": "## Escalation\n\nEscalate to the account team when a customer disputes a charge above ten thousand\ndollars, or when a contract term conflicts with standard policy."
+        }
+      ]
+    }
+  ]
+}

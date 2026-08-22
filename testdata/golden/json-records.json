@@ -1,0 +1,60 @@
+{
+  "media_type": "application/json",
+  "text_runes": 321,
+  "segments": [
+    {
+      "sequence": 0,
+      "content_type": "application/json",
+      "json_pointer": "/0",
+      "row_key": "acme",
+      "artifact_char_start": 0,
+      "artifact_char_end": 111,
+      "content": "{\n  \"id\": \"acme\",\n  \"name\": \"Acme Corporation\",\n  \"signed_at\": \"2026-03-03T00:00:00Z\",\n  \"tier\": \"enterprise\"\n}",
+      "chunks": [
+        {
+          "sequence": 0,
+          "token_count": 28,
+          "char_start": 0,
+          "char_end": 111,
+          "content": "{\n  \"id\": \"acme\",\n  \"name\": \"Acme Corporation\",\n  \"signed_at\": \"2026-03-03T00:00:00Z\",\n  \"tier\": \"enterprise\"\n}"
+        }
+      ]
+    },
+    {
+      "sequence": 1,
+      "content_type": "application/json",
+      "json_pointer": "/1",
+      "row_key": "globex",
+      "artifact_char_start": 113,
+      "artifact_char_end": 214,
+      "content": "{\n  \"id\": \"globex\",\n  \"name\": \"Globex\",\n  \"signed_at\": \"2025-11-14T00:00:00Z\",\n  \"tier\": \"standard\"\n}",
+      "chunks": [
+        {
+          "sequence": 0,
+          "token_count": 25,
+          "char_start": 0,
+          "char_end": 101,
+          "content": "{\n  \"id\": \"globex\",\n  \"name\": \"Globex\",\n  \"signed_at\": \"2025-11-14T00:00:00Z\",\n  \"tier\": \"standard\"\n}"
+        }
+      ]
+    },
+    {
+      "sequence": 2,
+      "content_type": "application/json",
+      "json_pointer": "/2",
+      "row_key": "initech",
+      "artifact_char_start": 216,
+      "artifact_char_end": 321,
+      "content": "{\n  \"id\": \"initech\",\n  \"name\": \"Initech\",\n  \"signed_at\": \"2026-01-20T00:00:00Z\",\n  \"tier\": \"enterprise\"\n}",
+      "chunks": [
+        {
+          "sequence": 0,
+          "token_count": 26,
+          "char_start": 0,
+          "char_end": 105,
+          "content": "{\n  \"id\": \"initech\",\n  \"name\": \"Initech\",\n  \"signed_at\": \"2026-01-20T00:00:00Z\",\n  \"tier\": \"enterprise\"\n}"
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,82 @@
+{
+  "media_type": "application/json",
+  "text_runes": 365,
+  "segments": [
+    {
+      "sequence": 0,
+      "content_type": "text/plain",
+      "event_time": "2026-03-25T09:58:00Z",
+      "role": "user",
+      "json_pointer": "/messages/0",
+      "artifact_char_start": 0,
+      "artifact_char_end": 69,
+      "content": "user: Hi, I need to check our refund policy for enterprise customers.",
+      "chunks": [
+        {
+          "sequence": 0,
+          "token_count": 17,
+          "char_start": 0,
+          "char_end": 69,
+          "content": "user: Hi, I need to check our refund policy for enterprise customers."
+        }
+      ]
+    },
+    {
+      "sequence": 1,
+      "content_type": "text/plain",
+      "event_time": "2026-03-25T09:58:12Z",
+      "role": "assistant",
+      "json_pointer": "/messages/1",
+      "artifact_char_start": 71,
+      "artifact_char_end": 184,
+      "content": "assistant: Enterprise refunds run through the account team. The standard window is thirty days from invoice date.",
+      "chunks": [
+        {
+          "sequence": 0,
+          "token_count": 28,
+          "char_start": 0,
+          "char_end": 113,
+          "content": "assistant: Enterprise refunds run through the account team. The standard window is thirty days from invoice date."
+        }
+      ]
+    },
+    {
+      "sequence": 2,
+      "content_type": "text/plain",
+      "event_time": "2026-03-25T09:59:30Z",
+      "role": "user",
+      "json_pointer": "/messages/2",
+      "artifact_char_start": 186,
+      "artifact_char_end": 265,
+      "content": "user: Alice Chen is our account manager, and she said Acme signed on March 3rd.",
+      "chunks": [
+        {
+          "sequence": 0,
+          "token_count": 20,
+          "char_start": 0,
+          "char_end": 79,
+          "content": "user: Alice Chen is our account manager, and she said Acme signed on March 3rd."
+        }
+      ]
+    },
+    {
+      "sequence": 3,
+      "content_type": "text/plain",
+      "event_time": "2026-03-25T09:59:45Z",
+      "role": "assistant",
+      "json_pointer": "/messages/3",
+      "artifact_char_start": 267,
+      "artifact_char_end": 365,
+      "content": "assistant: Then Acme's refund window closes on April 2nd, thirty days after the March 3rd invoice.",
+      "chunks": [
+        {
+          "sequence": 0,
+          "token_count": 25,
+          "char_start": 0,
+          "char_end": 98,
+          "content": "assistant: Then Acme's refund window closes on April 2nd, thirty days after the March 3rd invoice."
+        }
+      ]
+    }
+  ]
+}

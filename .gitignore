@@ -10,3 +10,4 @@
 # Test and coverage artifacts
 *.out
 /coverage/
+configs/api-keys.json
