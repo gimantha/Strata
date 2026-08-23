@@ -170,11 +170,24 @@ func (p *Projector) projectAssertions(ctx context.Context, scope domain.Scope, e
 	if err != nil {
 		return Stats{}, err
 	}
+	// A quarantined claim is not knowledge yet: it failed schema validation or carried an
+	// instruction-like quote, and it is held for review. Projecting it would make it
+	// retrievable, and retrievable is indistinguishable from believed once a claim is in
+	// a context block.
+	kept := assertions[:0]
+	for _, assertion := range assertions {
+		if assertion.Status != domain.AssertionQuarantined {
+			kept = append(kept, assertion)
+		}
+	}
+	assertions = kept
+
 	if len(assertions) == 0 {
 		return Stats{}, nil
 	}
 
 	names := map[domain.EntityID]string{}
+	types := map[domain.EntityID]string{}
 	nameOf := func(id domain.EntityID) string {
 		if name, ok := names[id]; ok {
 			return name
@@ -185,6 +198,7 @@ func (p *Projector) projectAssertions(ctx context.Context, scope domain.Scope, e
 			return names[id]
 		}
 		names[id] = entity.CanonicalName
+		types[id] = entity.EntityType
 		return entity.CanonicalName
 	}
 
@@ -197,19 +211,28 @@ func (p *Projector) projectAssertions(ctx context.Context, scope domain.Scope, e
 			object = nameOf(assertion.Object.EntityID)
 		}
 
+		// Resolved before the literal below rather than inside it: nameOf populates the
+		// type cache as a side effect, and field evaluation order in a composite literal
+		// is not something to depend on.
+		subjectName := nameOf(assertion.SubjectID)
+		subjectType := domain.NormalizeEntityType(types[assertion.SubjectID])
+
 		records = append(records, domain.ProjectedRecord{
 			Scope: domain.Scope{
 				WorkspaceID: assertion.WorkspaceID, GraphSpaceID: assertion.GraphSpaceID,
 			},
 			Surface:        domain.SurfaceAssertion,
 			RecordID:       string(assertion.ID),
-			Content:        renderClaim(nameOf(assertion.SubjectID), assertion.Predicate.Name, object),
+			Content:        renderClaim(subjectName, assertion.Predicate.Name, object),
 			ValidFrom:      assertion.Temporal.ValidFrom,
 			ValidTo:        assertion.Temporal.ValidTo,
 			Status:         string(assertion.Status),
 			Classification: assertion.Classification,
 			MemoryKind:     assertion.MemoryKind,
 			SourceEventID:  assertion.SourceEventID,
+			// The subject's type, so a query can ask for claims about organizations
+			// without joining back to the ledger for every candidate.
+			EntityType: subjectType,
 		})
 
 		// Only entity-to-entity claims become edges.
@@ -270,6 +293,7 @@ func (p *Projector) ProjectEntities(ctx context.Context, scope domain.Scope) (St
 			RecordID:       string(entity.ID),
 			Content:        entity.CanonicalName + " (" + entity.EntityType + ")",
 			Classification: domain.ClassificationInternal,
+			EntityType:     domain.NormalizeEntityType(entity.EntityType),
 		})
 	}
 	return p.write(ctx, scope, records)

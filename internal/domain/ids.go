@@ -40,6 +40,7 @@ type (
 	TraceID              string
 	ContextBlockID       string
 	PredicateID          string
+	OntologyVersionID    string
 	ConflictSetID        string
 	ResolutionDecisionID string
 )
@@ -67,6 +68,9 @@ func NewAssertionID() AssertionID     { return AssertionID(newID()) }
 func NewEvidenceID() EvidenceID       { return EvidenceID(newID()) }
 func NewDerivationID() DerivationID   { return DerivationID(newID()) }
 func NewPredicateID() PredicateID     { return PredicateID(newID()) }
+func NewOntologyVersionID() OntologyVersionID {
+	return OntologyVersionID(newID())
+}
 func NewConflictSetID() ConflictSetID { return ConflictSetID(newID()) }
 
 // NewUUIDString returns a bare UUIDv7 string, for durable rows whose identifiers

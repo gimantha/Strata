@@ -49,6 +49,8 @@ type Request struct {
 	Scope         domain.Scope
 	SourceEventID domain.SourceEventID
 	Units         []SourceUnit
+	// Schema constrains the vocabulary in guided mode. Zero value means open mode.
+	Schema Schema
 }
 
 // Result is what extraction produced, along with the model run that produced it.
@@ -71,10 +73,11 @@ func (e *Extractor) Extract(ctx context.Context, req Request) (Result, error) {
 		attribute.String("strata.provider", e.provider.Name()),
 		attribute.String("strata.model", e.provider.Model()),
 		attribute.Int("strata.units", len(req.Units)),
+		attribute.Bool("strata.schema_guided", req.Schema.Guided()),
 	))
 	defer span.End()
 
-	prompt, err := BuildPrompt(req.Units)
+	prompt, err := BuildGuidedPrompt(req.Units, req.Schema)
 	if err != nil {
 		return Result{}, domain.Wrap(err, domain.CodeInvalidArgument, op, "cannot build the extraction prompt")
 	}

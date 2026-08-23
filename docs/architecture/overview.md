@@ -1,6 +1,6 @@
 # Architecture overview
 
-This describes what exists after phases 0 through 8, and how each part enforces the
+This describes what exists after phases 0 through 9, and how each part enforces the
 invariants in [AGENTS.md](../../AGENTS.md) section 2. Later phases extend this picture
 without changing its shape.
 
@@ -17,12 +17,14 @@ without changing its shape.
                           WORK FABRIC (transactional outbox)
                                      |
                                      v
-        PIPELINE   normalize -> segment -> chunk -> extract
-                   -> resolve entities -> reconcile temporally -> project
+        PIPELINE   normalize -> segment -> chunk -> extract (schema-guided or open)
+                   -> resolve entities -> validate against ontology
+                   -> reconcile temporally -> project
                                      |
                                      v
   CANONICAL LEDGER   Source | SourceEvent | Artifact | Episode | Chunk
                      Entity | Assertion | Evidence | Derivation | ConflictSet
+                     OntologyVersion
                                      |
                                      v
         PROJECTIONS   graph | vector | lexical                 summaries   [later]
@@ -53,6 +55,7 @@ absent rather than stubbed: an empty stage that recorded success would make repl
 | Observability is part of correctness | Every ingest and stage is traced, W3C trace context is carried on outbox rows across the async boundary, and queue lag is an observable gauge |
 | No hidden global graph | There is no unscoped list or read path anywhere, including administrative listings |
 | Provider independence | `internal/domain` imports nothing but the standard library and a UUID package, enforced by `scripts/check-domain-deps.sh` in CI |
+| Invalid schema candidates are never silently committed | A guided graph space validates every claim; a caller gets `ontology_violation`, a model's candidate is committed as `quarantined` with its reasons, and quarantined claims are neither projected nor reconciled |
 
 ## Ingestion, step by step
 
@@ -184,8 +187,20 @@ The budget is a ceiling rather than a target: content is dropped rather than exc
 and what was dropped is reported, because absence is the hardest thing to debug in an
 assembled prompt.
 
+## Ontology modes
+
+A graph space is either open — extraction invents entity types and predicate names, and the
+registry normalizes them — or guided, where every claim is validated against an immutable
+schema version ([ADR 0014](../adr/0014-two-ontology-modes-and-two-dispositions.md)). The
+setting lives on the graph space so the same source can be processed both ways and compared.
+
+What a schema refuses never becomes knowledge quietly. A caller stating a claim gets
+`ontology_violation` and can fix it; a model proposing one has no such loop, so the claim is
+committed as quarantined, carrying its reasons, and held out of belief — not projected, not
+retrievable, not reconciled.
+
 ## What comes next
 
-Phase 9 adds ontology mode: versioned schemas, entity and predicate type constraints, and
-schema-guided extraction, with invalid candidates quarantined rather than silently
-committed.
+Phase 10 adds CDC and connectors: change-data-capture ingestion that converges to the same
+state whatever order updates arrive in, which the reconciler already assumes and phase 5
+already tests.

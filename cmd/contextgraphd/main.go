@@ -64,6 +64,7 @@ func run() error {
 		Knowledge: application.Knowledge,
 		Retriever: application.Retriever,
 		Assembler: application.Assembler,
+		Ontology:  application.Ontology,
 		Blobs:     application.Blobs,
 	})
 

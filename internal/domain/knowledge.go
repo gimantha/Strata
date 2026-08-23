@@ -244,6 +244,15 @@ type Assertion struct {
 	RetractedAt      *time.Time
 	RetractionReason string
 
+	// OntologyVersionID names the schema this claim was validated against, when one was
+	// bound (AGENTS.md section 8). Nil in open mode: recording a version the claim never
+	// saw would be a lie that outlives the mistake.
+	OntologyVersionID *OntologyVersionID
+	// QuarantineReason says why a held claim is held. Quarantine has two causes now —
+	// an instruction-like quote and a schema violation — and a status that cannot tell
+	// them apart cannot be triaged.
+	QuarantineReason string
+
 	Classification Classification
 	CreatedBy      PrincipalRef
 	CreatedAt      time.Time

@@ -82,3 +82,23 @@ func (f *Fixture) NewTenant(t *testing.T, slug string) Tenant {
 
 	return Tenant{Workspace: ws, GraphSpace: gs, Source: src, Principal: principal}
 }
+
+// NewGraphSpace adds a second graph space inside the primary tenant's workspace.
+//
+// Two spaces in one workspace is the arrangement anything per-space is tested through:
+// ontology mode, for instance, is set per graph space precisely so the same source can be
+// processed both ways and compared, and that comparison needs the workspace held constant.
+func (f *Fixture) NewGraphSpace(t *testing.T, slug string) Tenant {
+	t.Helper()
+
+	gs, err := f.Store.CreateGraphSpace(context.Background(), domain.GraphSpace{
+		WorkspaceID: f.Primary.Workspace.ID, Slug: slug, Name: slug,
+	}, f.Primary.Principal.ID)
+	if err != nil {
+		t.Fatalf("create graph space %s: %v", slug, err)
+	}
+
+	tenant := f.Primary
+	tenant.GraphSpace = gs
+	return tenant
+}

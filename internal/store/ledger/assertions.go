@@ -20,7 +20,8 @@ const assertionColumns = `id, workspace_id, graph_space_id, subject_id, predicat
 	source_sequence, source_version, active_from, active_until, decay_starts_at, expires_at,
 	confidence, confidence_breakdown, status, supersedes_id, conflict_set_id, provenance_mode,
 	derivation_id, source_event_id, fingerprint, retracted_at, retraction_reason, classification,
-	created_by_id, created_by_kind, created_by_name, created_at`
+	created_by_id, created_by_kind, created_by_name, created_at, ontology_version_id,
+	quarantine_reason`
 
 // CommitKnowledge durably records entities, assertions, evidence, and derivations in one
 // transaction (AGENTS.md section 27.1).
@@ -153,10 +154,10 @@ func (s *Store) insertAssertionTx(ctx context.Context, tx pgx.Tx, a domain.Asser
 			source_sequence, source_version, active_from, active_until, decay_starts_at, expires_at,
 			confidence, confidence_breakdown, status, supersedes_id, conflict_set_id, provenance_mode,
 			derivation_id, source_event_id, fingerprint, retracted_at, retraction_reason, classification,
-			created_by_id, created_by_kind, created_by_name)
+			created_by_id, created_by_kind, created_by_name, ontology_version_id, quarantine_reason)
 		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,
 		        $25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38,$39,$40,$41,$42,$43,$44,$45,$46,
-		        $47,$48,$49,$50,$51,$52,$53)
+		        $47,$48,$49,$50,$51,$52,$53,$54,$55)
 		ON CONFLICT (workspace_id, fingerprint) DO NOTHING
 		RETURNING `+assertionColumns,
 		a.ID, a.WorkspaceID, a.GraphSpaceID, a.SubjectID, a.Predicate.ID, a.Predicate.Name,
@@ -173,7 +174,8 @@ func (s *Store) insertAssertionTx(ctx context.Context, tx pgx.Tx, a domain.Asser
 		a.Confidence, breakdown, a.Status, assertionIDOrNil(a.SupersedesID),
 		conflictIDOrNil(a.ConflictSetID), a.ProvenanceMode, derivationIDOrNil(a.DerivationID),
 		a.SourceEventID, a.Fingerprint, a.RetractedAt, a.RetractionReason, a.Classification,
-		string(a.CreatedBy.ID), string(a.CreatedBy.Kind), a.CreatedBy.DisplayName)
+		string(a.CreatedBy.ID), string(a.CreatedBy.Kind), a.CreatedBy.DisplayName,
+		ontologyVersionIDOrNil(a.OntologyVersionID), a.QuarantineReason)
 
 	stored, err := scanAssertion(row, op)
 	switch {
@@ -552,6 +554,7 @@ func scanAssertionInto(row pgx.Row, op string, extra ...any) (domain.Assertion, 
 		supersedesID   *string
 		conflictSetID  *string
 		derivationID   *string
+		ontologyID     *string
 	)
 
 	dest := []any{&a.ID, &a.WorkspaceID, &a.GraphSpaceID, &a.SubjectID, &a.Predicate.ID,
@@ -566,7 +569,8 @@ func scanAssertionInto(row pgx.Row, op string, extra ...any) (domain.Assertion, 
 		&a.Temporal.DecayStartsAt, &a.Temporal.ExpiresAt,
 		&a.Confidence, &breakdown, &a.Status, &supersedesID, &conflictSetID, &a.ProvenanceMode,
 		&derivationID, &a.SourceEventID, &a.Fingerprint, &a.RetractedAt, &a.RetractionReason,
-		&a.Classification, &a.CreatedBy.ID, &a.CreatedBy.Kind, &a.CreatedBy.DisplayName, &a.CreatedAt}
+		&a.Classification, &a.CreatedBy.ID, &a.CreatedBy.Kind, &a.CreatedBy.DisplayName, &a.CreatedAt,
+		&ontologyID, &a.QuarantineReason}
 	dest = append(dest, extra...)
 
 	err := row.Scan(dest...)
@@ -575,6 +579,11 @@ func scanAssertionInto(row pgx.Row, op string, extra ...any) (domain.Assertion, 
 			return domain.Assertion{}, domain.Errorf(domain.CodeNotFound, op, "assertion not found")
 		}
 		return domain.Assertion{}, mapError(err, op, "cannot scan assertion")
+	}
+
+	if ontologyID != nil {
+		version := domain.OntologyVersionID(*ontologyID)
+		a.OntologyVersionID = &version
 	}
 
 	// Rebuild the typed object from whichever column its kind uses.
@@ -738,6 +747,14 @@ func assertionIDOrNil(id *domain.AssertionID) *string {
 }
 
 func conflictIDOrNil(id *domain.ConflictSetID) *string {
+	if id == nil {
+		return nil
+	}
+	v := string(*id)
+	return &v
+}
+
+func ontologyVersionIDOrNil(id *domain.OntologyVersionID) *string {
 	if id == nil {
 		return nil
 	}

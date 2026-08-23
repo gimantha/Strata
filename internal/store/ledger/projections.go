@@ -30,8 +30,8 @@ func (s *Store) UpsertVectors(ctx context.Context, records []domain.VectorRecord
 			INSERT INTO vector_records (id, workspace_id, graph_space_id, surface, record_id,
 			                            embedding_model, embedding_version, embedding,
 			                            valid_from, valid_to, status, classification, memory_kind,
-			                            source_event_id, content_hash)
-			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+			                            source_event_id, content_hash, entity_type)
+			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
 			ON CONFLICT (workspace_id, surface, record_id, embedding_model, embedding_version)
 			DO UPDATE SET embedding = EXCLUDED.embedding,
 			              valid_from = EXCLUDED.valid_from,
@@ -39,12 +39,14 @@ func (s *Store) UpsertVectors(ctx context.Context, records []domain.VectorRecord
 			              status = EXCLUDED.status,
 			              classification = EXCLUDED.classification,
 			              memory_kind = EXCLUDED.memory_kind,
-			              content_hash = EXCLUDED.content_hash`,
+			              content_hash = EXCLUDED.content_hash,
+			              entity_type = EXCLUDED.entity_type`,
 			domain.NewUUIDString(), record.Scope.WorkspaceID, record.Scope.GraphSpaceID,
 			record.Surface, record.RecordID, record.Model, record.Version,
 			formatVector(record.Embedding),
 			record.ValidFrom, record.ValidTo, record.Status, record.Classification,
-			record.MemoryKind, nullableString(record.SourceEventID), record.ContentHash)
+			record.MemoryKind, nullableString(record.SourceEventID), record.ContentHash,
+			record.EntityType)
 	}
 
 	return s.InTx(ctx, func(tx pgx.Tx) error {
@@ -111,6 +113,9 @@ func (s *Store) SearchVectors(ctx context.Context, q domain.VectorQuery) ([]doma
 	if len(q.MemoryKinds) > 0 {
 		add("v.memory_kind = ANY($%d::text[])", enumStrings(q.MemoryKinds))
 	}
+	if len(q.EntityTypes) > 0 {
+		add("v.entity_type = ANY($%d::text[])", q.EntityTypes)
+	}
 
 	args = append(args, formatVector(q.Embedding))
 	probe := len(args)
@@ -159,19 +164,20 @@ func (s *Store) UpsertLexical(ctx context.Context, records []domain.ProjectedRec
 		batch.Queue(`
 			INSERT INTO lexical_records (id, workspace_id, graph_space_id, surface, record_id,
 			                             content, valid_from, valid_to, status, classification,
-			                             memory_kind, source_event_id)
-			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+			                             memory_kind, source_event_id, entity_type)
+			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
 			ON CONFLICT (workspace_id, surface, record_id)
 			DO UPDATE SET content = EXCLUDED.content,
 			              valid_from = EXCLUDED.valid_from,
 			              valid_to = EXCLUDED.valid_to,
 			              status = EXCLUDED.status,
 			              classification = EXCLUDED.classification,
-			              memory_kind = EXCLUDED.memory_kind`,
+			              memory_kind = EXCLUDED.memory_kind,
+			              entity_type = EXCLUDED.entity_type`,
 			domain.NewUUIDString(), record.Scope.WorkspaceID, record.Scope.GraphSpaceID,
 			record.Surface, record.RecordID, record.Content,
 			record.ValidFrom, record.ValidTo, record.Status, record.Classification,
-			record.MemoryKind, nullableString(record.SourceEventID))
+			record.MemoryKind, nullableString(record.SourceEventID), record.EntityType)
 	}
 
 	return s.InTx(ctx, func(tx pgx.Tx) error {
@@ -227,6 +233,12 @@ func (s *Store) SearchLexical(ctx context.Context, q domain.LexicalQuery) ([]dom
 	}
 	if len(q.Classification) > 0 {
 		add("l.classification = ANY($%d::text[])", enumStrings(q.Classification))
+	}
+	if len(q.MemoryKinds) > 0 {
+		add("l.memory_kind = ANY($%d::text[])", enumStrings(q.MemoryKinds))
+	}
+	if len(q.EntityTypes) > 0 {
+		add("l.entity_type = ANY($%d::text[])", q.EntityTypes)
 	}
 
 	args = append(args, q.Text)

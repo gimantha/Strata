@@ -29,8 +29,16 @@ type GraphSpace struct {
 	Slug        string
 	Name        string
 	Metadata    map[string]any
-	CreatedAt   time.Time
-	UpdatedAt   time.Time
+
+	// OntologyMode decides whether claims here are validated against a schema, and
+	// OntologyVersionID names it when they are (AGENTS.md section 8). The setting lives
+	// on the graph space rather than the workspace so the same source can be processed
+	// both ways and compared.
+	OntologyMode      OntologyMode
+	OntologyVersionID *OntologyVersionID
+
+	CreatedAt time.Time
+	UpdatedAt time.Time
 }
 
 // Collection groups source material within a graph space for retrieval and policy

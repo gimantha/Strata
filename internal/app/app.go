@@ -26,6 +26,7 @@ import (
 	"github.com/gimantha/strata/internal/llm/openai"
 	"github.com/gimantha/strata/internal/normalize"
 	"github.com/gimantha/strata/internal/observability"
+	"github.com/gimantha/strata/internal/ontology"
 	"github.com/gimantha/strata/internal/pipeline"
 	"github.com/gimantha/strata/internal/projection"
 	"github.com/gimantha/strata/internal/retrieval"
@@ -47,6 +48,7 @@ type App struct {
 	Projector *projection.Projector
 	Retriever *retrieval.Retriever
 	Assembler *contextblock.Assembler
+	Ontology  *ontology.Service
 	Embedder  embedding.Embedder
 	Bus       *eventbus.Outbox
 	Runner    *pipeline.Runner
@@ -164,6 +166,7 @@ func New(ctx context.Context, cfg config.Config) (*App, error) {
 			slog.Int("dimensions", embedder.Dimensions()))
 	}
 
+	app.Ontology = ontology.New(store, logger)
 	app.Retriever = retrieval.New(store, embedder, retrieval.Options{}, logger, telemetry.Tracer)
 
 	app.Assembler = contextblock.New(app.Retriever, store, contextblock.Options{}, logger, telemetry.Tracer)

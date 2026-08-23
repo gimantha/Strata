@@ -49,6 +49,10 @@ type ProjectedRecord struct {
 	Classification Classification
 	MemoryKind     MemoryKind
 	SourceEventID  SourceEventID
+	// EntityType is the subject's type, copied so a query can ask for organizations
+	// without joining back to the ledger for every candidate (AGENTS.md section 19.2).
+	// Empty for chunks, which are passages rather than things.
+	EntityType string
 }
 
 // VectorRecord is a projected record together with its embedding.
@@ -75,6 +79,7 @@ type VectorQuery struct {
 	Statuses       []string
 	Classification []Classification
 	MemoryKinds    []MemoryKind
+	EntityTypes    []string
 
 	Limit int
 	// MinScore drops weak matches. Vector search always returns its k nearest neighbours,
@@ -91,6 +96,8 @@ type LexicalQuery struct {
 	ValidAt        *time.Time
 	Statuses       []string
 	Classification []Classification
+	MemoryKinds    []MemoryKind
+	EntityTypes    []string
 
 	// Exact switches from stemmed full-text matching to substring matching, for
 	// identifiers, error codes, and part numbers that stemming mangles.

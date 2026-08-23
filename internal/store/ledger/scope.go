@@ -169,18 +169,32 @@ func (s *Store) CreateGraphSpace(ctx context.Context, gs domain.GraphSpace, acto
 func (s *Store) GetGraphSpace(ctx context.Context, id domain.GraphSpaceID) (domain.GraphSpace, error) {
 	const op = "ledger.GetGraphSpace"
 
-	var gs domain.GraphSpace
+	var (
+		gs              domain.GraphSpace
+		ontologyVersion *string
+	)
 	err := s.pool.QueryRow(ctx, `
-		SELECT id, workspace_id, slug, name, metadata, created_at, updated_at
+		SELECT id, workspace_id, slug, name, metadata, ontology_mode, ontology_version_id,
+		       created_at, updated_at
 		FROM graph_spaces WHERE id = $1`, id,
-	).Scan(&gs.ID, &gs.WorkspaceID, &gs.Slug, &gs.Name, &gs.Metadata, &gs.CreatedAt, &gs.UpdatedAt)
+	).Scan(&gs.ID, &gs.WorkspaceID, &gs.Slug, &gs.Name, &gs.Metadata, &gs.OntologyMode,
+		&ontologyVersion, &gs.CreatedAt, &gs.UpdatedAt)
 	if err != nil {
 		if isNoRows(err) {
 			return domain.GraphSpace{}, domain.Errorf(domain.CodeGraphSpaceNotFound, op, "graph space not found")
 		}
 		return domain.GraphSpace{}, mapError(err, op, "cannot load graph space")
 	}
+	gs.OntologyVersionID = ontologyVersionOrNil(ontologyVersion)
 	return gs, nil
+}
+
+func ontologyVersionOrNil(raw *string) *domain.OntologyVersionID {
+	if raw == nil {
+		return nil
+	}
+	id := domain.OntologyVersionID(*raw)
+	return &id
 }
 
 // ListGraphSpaces returns the graph spaces in a workspace.
@@ -188,7 +202,8 @@ func (s *Store) ListGraphSpaces(ctx context.Context, ws domain.WorkspaceID) ([]d
 	const op = "ledger.ListGraphSpaces"
 
 	rows, err := s.pool.Query(ctx, `
-		SELECT id, workspace_id, slug, name, metadata, created_at, updated_at
+		SELECT id, workspace_id, slug, name, metadata, ontology_mode, ontology_version_id,
+		       created_at, updated_at
 		FROM graph_spaces WHERE workspace_id = $1 ORDER BY created_at`, ws)
 	if err != nil {
 		return nil, mapError(err, op, "cannot list graph spaces")
@@ -197,11 +212,15 @@ func (s *Store) ListGraphSpaces(ctx context.Context, ws domain.WorkspaceID) ([]d
 
 	var out []domain.GraphSpace
 	for rows.Next() {
-		var gs domain.GraphSpace
+		var (
+			gs              domain.GraphSpace
+			ontologyVersion *string
+		)
 		if err := rows.Scan(&gs.ID, &gs.WorkspaceID, &gs.Slug, &gs.Name, &gs.Metadata,
-			&gs.CreatedAt, &gs.UpdatedAt); err != nil {
+			&gs.OntologyMode, &ontologyVersion, &gs.CreatedAt, &gs.UpdatedAt); err != nil {
 			return nil, mapError(err, op, "cannot scan graph space")
 		}
+		gs.OntologyVersionID = ontologyVersionOrNil(ontologyVersion)
 		out = append(out, gs)
 	}
 	return out, mapError(rows.Err(), op, "cannot list graph spaces")

@@ -9,6 +9,7 @@ package knowledge
 import (
 	"context"
 	"log/slog"
+	"strings"
 	"time"
 
 	"go.opentelemetry.io/otel/attribute"
@@ -41,6 +42,7 @@ type Store interface {
 	ProvenanceChain(ctx context.Context, ws domain.WorkspaceID, id domain.AssertionID) (domain.ProvenanceChain, error)
 	CreateConflictSet(ctx context.Context, set domain.ConflictSet, members []domain.AssertionID) (domain.ConflictSet, error)
 	GetSourceEvent(ctx context.Context, ws domain.WorkspaceID, id domain.SourceEventID) (domain.SourceEvent, error)
+	GraphSpaceBinding(ctx context.Context, ws domain.WorkspaceID, id domain.GraphSpaceID) (domain.OntologyBinding, error)
 }
 
 // Service commits and queries canonical knowledge.
@@ -194,6 +196,12 @@ type AssertRequest struct {
 	SourceEventID domain.SourceEventID
 	Claims        []Claim
 	Derivation    *DerivationInput
+
+	// OnViolation decides what a schema failure does in a guided graph space. The default
+	// is rejection, which suits a caller who can fix and resend; extraction sets
+	// quarantine, because a model has no such loop and its output is evidence of what the
+	// source said even when the schema refuses it (AGENTS.md section 8, phase 9).
+	OnViolation domain.ViolationDisposition
 }
 
 // AssertResult reports what was committed.
@@ -203,10 +211,20 @@ type AssertResult struct {
 	Duplicates int
 	Superseded []domain.AssertionID
 	Conflicts  []domain.ConflictSet
+	// Quarantined names claims committed but held because they failed schema validation.
+	// They are in the ledger and out of belief: not projected, not reconciled, and
+	// visible for review.
+	Quarantined []QuarantinedClaim
 	// SupersededOnArrival names claims that were already out of date when they arrived,
 	// because the source had told us about a later state of the same record first. They
 	// are recorded but never became current belief (AGENTS.md section 11.4).
 	SupersededOnArrival []domain.AssertionID
+}
+
+// QuarantinedClaim is one held claim and the reasons it was held.
+type QuarantinedClaim struct {
+	AssertionID domain.AssertionID
+	Violations  []domain.Violation
 }
 
 // Assert commits claims to the ledger.
@@ -242,6 +260,18 @@ func (s *Service) Assert(ctx context.Context, req AssertRequest) (AssertResult, 
 		return AssertResult{}, err
 	}
 
+	// What this graph space validates against. One read for the whole batch: the binding
+	// cannot change underneath a single request in any way that would matter.
+	binding, err := s.store.GraphSpaceBinding(ctx, req.Scope.WorkspaceID, req.Scope.GraphSpaceID)
+	if err != nil {
+		return AssertResult{}, err
+	}
+	if binding.Guided() {
+		span.SetAttributes(
+			attribute.String("strata.ontology_version", string(binding.Version.ID)),
+			attribute.Int("strata.ontology_version_number", binding.Version.Version))
+	}
+
 	now := s.now().UTC()
 	commit := domain.KnowledgeCommit{
 		Scope:         req.Scope,
@@ -275,11 +305,35 @@ func (s *Service) Assert(ctx context.Context, req AssertRequest) (AssertResult, 
 		predicates = map[string]domain.PredicateDefinition{}
 	)
 
+	violationsByFingerprint := map[string][]domain.Violation{}
+
 	for i, claim := range req.Claims {
+		violations, err := s.checkOntology(ctx, req.Scope, binding, claim)
+		if err != nil {
+			return AssertResult{}, err
+		}
+		if len(violations) > 0 && dispositionFor(req) == domain.DispositionReject {
+			return AssertResult{}, domain.Errorf(domain.CodeOntologyViolation, op,
+				"claim %d does not satisfy ontology version %d: %s",
+				i, binding.Version.Version, joinViolations(violations))
+		}
+
 		built, created, predicate, err := s.buildAssertion(ctx, req, claim, event, derivationID, now)
 		if err != nil {
 			return AssertResult{}, domain.Wrap(err, domain.CodeOf(err), op,
 				"claim "+itoa(i)+" could not be prepared")
+		}
+		if binding.Guided() {
+			built.OntologyVersionID = &binding.Version.ID
+		}
+		if len(violations) > 0 {
+			// Held rather than dropped: what the source said is worth keeping even when
+			// the schema refuses it, and a claim that vanishes silently is the outcome
+			// phase 9 exists to prevent.
+			built.Status = domain.AssertionQuarantined
+			built.QuarantineReason = joinViolations(violations)
+			built.Fingerprint = built.ComputeFingerprint()
+			violationsByFingerprint[built.Fingerprint] = violations
 		}
 		predicates[predicate.Name] = predicate
 		commit.Entities = append(commit.Entities, created...)
@@ -320,6 +374,17 @@ func (s *Service) Assert(ctx context.Context, req AssertRequest) (AssertResult, 
 	// with what it might contradict, and the comparison never deletes either side
 	// (AGENTS.md section 14.2).
 	for _, assertion := range committed.Assertions {
+		if assertion.Status == domain.AssertionQuarantined {
+			// A held claim is not belief, so it neither supersedes anything nor
+			// contradicts anything. Reconciling it would let a claim the schema refused
+			// retire one the schema accepted.
+			result.Quarantined = append(result.Quarantined, QuarantinedClaim{
+				AssertionID: assertion.ID,
+				Violations:  violationsByFingerprint[assertion.Fingerprint],
+			})
+			continue
+		}
+
 		predicate, ok := predicates[assertion.Predicate.Name]
 		if !ok {
 			continue
@@ -352,9 +417,73 @@ func (s *Service) Assert(ctx context.Context, req AssertRequest) (AssertResult, 
 			slog.Int("assertions", len(result.Assertions)),
 			slog.Int("duplicates", result.Duplicates),
 			slog.Int("superseded", len(result.Superseded)),
-			slog.Int("conflicts", len(result.Conflicts)))
+			slog.Int("conflicts", len(result.Conflicts)),
+			slog.Int("quarantined", len(result.Quarantined)))
 	}
 	return result, nil
+}
+
+// dispositionFor decides what a violation does, defaulting to rejection.
+func dispositionFor(req AssertRequest) domain.ViolationDisposition {
+	if req.OnViolation == domain.DispositionQuarantine {
+		return domain.DispositionQuarantine
+	}
+	return domain.DispositionReject
+}
+
+func joinViolations(violations []domain.Violation) string {
+	parts := make([]string, 0, len(violations))
+	for _, violation := range violations {
+		parts = append(parts, violation.String())
+	}
+	return strings.Join(parts, "; ")
+}
+
+// checkOntology validates one claim against the bound schema.
+//
+// It runs before entities are resolved, so a claim the schema refuses does not first create
+// an identity for a subject that should not exist. Types declared on the reference are used
+// as given; a reference by id has its type read from the ledger, because the caller who
+// supplied only an id is not asserting anything about the type.
+func (s *Service) checkOntology(ctx context.Context, scope domain.Scope, binding domain.OntologyBinding, claim Claim) ([]domain.Violation, error) {
+	if !binding.Guided() {
+		return nil, nil
+	}
+
+	subjectType, err := s.entityTypeOf(ctx, scope, claim.Subject)
+	if err != nil {
+		return nil, err
+	}
+
+	shape := domain.ClaimShape{
+		SubjectType: subjectType,
+		Predicate:   claim.Predicate,
+		Object:      claim.Object,
+	}
+	if claim.ObjectEntity != nil {
+		objectType, err := s.entityTypeOf(ctx, scope, *claim.ObjectEntity)
+		if err != nil {
+			return nil, err
+		}
+		shape.ObjectType = objectType
+		shape.Object = domain.AssertionObject{Kind: domain.ObjectEntity}
+	}
+	return binding.Version.Check(shape), nil
+}
+
+// entityTypeOf reports the type a reference carries or the type the stored identity has.
+func (s *Service) entityTypeOf(ctx context.Context, scope domain.Scope, ref EntityRef) (string, error) {
+	if ref.Type != "" {
+		return ref.Type, nil
+	}
+	if domain.IsZero(ref.ID) {
+		return "", nil
+	}
+	entity, err := s.store.GetEntity(ctx, scope.WorkspaceID, ref.ID)
+	if err != nil {
+		return "", err
+	}
+	return entity.EntityType, nil
 }
 
 // buildAssertion resolves a claim's references and assembles the record to commit.

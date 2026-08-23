@@ -44,6 +44,8 @@ Commands:
   process                  Run the pipeline for an event now
   outbox ls|retry          Inspect and revive durable work
   predicate define|ls      Manage the predicate registry
+  ontology define|ls       Manage ontology versions
+  ontology bind|validate   Switch modes, and check a schema against real knowledge
   entity ls|identity       Inspect entities and how they resolve
   entity merge|split       Merge identities, and undo a merge
   resolutions              Review how mentions were resolved
@@ -124,6 +126,13 @@ func run(args []string) error {
 		return withApp(rest, cmdSearch)
 	case "context":
 		return withApp(rest, cmdContext)
+	case "ontology":
+		return withSubcommand(rest, map[string]appCommand{
+			"define":   cmdOntologyDefine,
+			"ls":       cmdOntologyList,
+			"bind":     cmdOntologyBind,
+			"validate": cmdOntologyValidate,
+		})
 	case "assert":
 		return withApp(rest, cmdAssert)
 	case "ask":

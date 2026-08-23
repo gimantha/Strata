@@ -48,6 +48,10 @@ type QueryFilters struct {
 	Predicates      []string
 	Statuses        []AssertionStatus
 	MinConfidence   float64
+	// EntityTypes narrows to subjects of these types — ontology-constrained retrieval
+	// (AGENTS.md section 19.2). Types are normalized, so "Organization" and "organisation"
+	// filter the same way they are stored.
+	EntityTypes []string
 }
 
 // QueryRequest is one retrieval (AGENTS.md section 19.1).
@@ -90,6 +94,9 @@ func (q QueryRequest) Normalize() QueryRequest {
 	}
 	for i, predicate := range q.Filters.Predicates {
 		q.Filters.Predicates[i] = NormalizePredicateName(predicate)
+	}
+	for i, entityType := range q.Filters.EntityTypes {
+		q.Filters.EntityTypes[i] = NormalizeEntityType(entityType)
 	}
 	return q
 }

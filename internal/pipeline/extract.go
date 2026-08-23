@@ -45,6 +45,22 @@ func (ExtractStage) Version() int { return 1 }
 func (s ExtractStage) Execute(ctx context.Context, in Input) (Output, error) {
 	const op = "pipeline.ExtractStage"
 
+	// What this graph space allows. In guided mode the vocabulary goes into the prompt so
+	// the model has a chance of complying, and the same schema is enforced again at commit
+	// time for the cases where it does not (AGENTS.md section 8).
+	binding, err := s.store.GraphSpaceBinding(ctx, in.Event.WorkspaceID, in.Event.GraphSpaceID)
+	if err != nil {
+		return Output{}, err
+	}
+	var schema extraction.Schema
+	if binding.Guided() {
+		schema = extraction.Schema{
+			EntityTypes: binding.Version.EntityTypeNames(),
+			Predicates:  binding.Version.PredicateNames(),
+			Version:     binding.Version.Version,
+		}
+	}
+
 	episodes, err := s.store.ListEpisodes(ctx, in.Event.WorkspaceID, in.Event.ID)
 	if err != nil {
 		return Output{}, err
@@ -60,12 +76,13 @@ func (s ExtractStage) Execute(ctx context.Context, in Input) (Output, error) {
 	}
 
 	var (
-		requested  int
-		committed  int
-		duplicates int
-		rejected   int
-		conflicts  int
-		modelRuns  []string
+		requested   int
+		committed   int
+		duplicates  int
+		rejected    int
+		conflicts   int
+		quarantined int
+		modelRuns   []string
 	)
 
 	for _, episode := range episodes {
@@ -92,6 +109,7 @@ func (s ExtractStage) Execute(ctx context.Context, in Input) (Output, error) {
 			Scope:         in.Scope,
 			SourceEventID: in.Event.ID,
 			Units:         units,
+			Schema:        schema,
 		})
 		requested++
 		if !domain.IsZero(result.ModelRun.ID) {
@@ -120,6 +138,10 @@ func (s ExtractStage) Execute(ctx context.Context, in Input) (Output, error) {
 			Principal:     in.Event.CreatedBy,
 			SourceEventID: in.Event.ID,
 			Claims:        claims,
+			// A model has no way to fix and resend, and discarding its output would lose
+			// what the source said. Candidates the schema refuses are held for review
+			// instead of rejected outright (AGENTS.md phase 9 acceptance).
+			OnViolation: domain.DispositionQuarantine,
 		})
 		if err != nil {
 			// A claim the ledger refuses is bad candidate data, not a reason to fail the
@@ -130,9 +152,10 @@ func (s ExtractStage) Execute(ctx context.Context, in Input) (Output, error) {
 			}
 			return Output{}, err
 		}
-		committed += len(asserted.Assertions) - asserted.Duplicates
+		committed += len(asserted.Assertions) - asserted.Duplicates - len(asserted.Quarantined)
 		duplicates += asserted.Duplicates
 		conflicts += len(asserted.Conflicts)
+		quarantined += len(asserted.Quarantined)
 	}
 
 	_ = op
@@ -143,6 +166,8 @@ func (s ExtractStage) Execute(ctx context.Context, in Input) (Output, error) {
 		"duplicates":        duplicates,
 		"rejected":          rejected,
 		"conflicts":         conflicts,
+		"quarantined":       quarantined,
+		"schema_guided":     schema.Guided(),
 		"model_runs":        modelRuns,
 	}}, nil
 }

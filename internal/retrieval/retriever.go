@@ -150,6 +150,8 @@ func (r *Retriever) lexical(ctx context.Context, req domain.QueryRequest, exact 
 		ValidAt:        req.Temporal.ValidAt,
 		Statuses:       statusStrings(req.Filters.Statuses),
 		Classification: req.Filters.Classifications,
+		MemoryKinds:    req.Filters.MemoryKinds,
+		EntityTypes:    req.Filters.EntityTypes,
 		Exact:          exact,
 		// Each retriever fetches more than the final limit: fusion needs depth to work
 		// with, and a record ranked fourth by two retrievers should be able to beat one
@@ -188,6 +190,7 @@ func (r *Retriever) vector(ctx context.Context, req domain.QueryRequest) ([]cand
 		Statuses:       statusStrings(req.Filters.Statuses),
 		Classification: req.Filters.Classifications,
 		MemoryKinds:    req.Filters.MemoryKinds,
+		EntityTypes:    req.Filters.EntityTypes,
 		Limit:          req.Limit * 3,
 	})
 	if err != nil {

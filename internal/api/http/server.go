@@ -16,6 +16,7 @@ import (
 	"github.com/gimantha/strata/internal/ingest"
 	"github.com/gimantha/strata/internal/knowledge"
 	"github.com/gimantha/strata/internal/observability"
+	"github.com/gimantha/strata/internal/ontology"
 	"github.com/gimantha/strata/internal/retrieval"
 	"github.com/gimantha/strata/internal/store/ledger"
 )
@@ -32,6 +33,7 @@ type Server struct {
 	knowledge *knowledge.Service
 	retriever *retrieval.Retriever
 	assembler *contextblock.Assembler
+	ontology  *ontology.Service
 	blobs     healthChecker
 	clock     func() time.Time
 	http      *http.Server
@@ -62,6 +64,7 @@ type Deps struct {
 	Knowledge *knowledge.Service
 	Retriever *retrieval.Retriever
 	Assembler *contextblock.Assembler
+	Ontology  *ontology.Service
 	Blobs     healthChecker
 	// Clock overrides the wall clock, for deterministic tests.
 	Clock func() time.Time
@@ -84,6 +87,7 @@ func NewServer(deps Deps) *Server {
 		knowledge: deps.Knowledge,
 		retriever: deps.Retriever,
 		assembler: deps.Assembler,
+		ontology:  deps.Ontology,
 		blobs:     deps.Blobs,
 		clock:     deps.Clock,
 	}
@@ -151,6 +155,14 @@ func (s *Server) Handler() http.Handler {
 
 	// Context assembly.
 	mux.HandleFunc("POST /v1/graph-spaces/{graph_space_id}/context", s.authenticated(s.handleContext))
+
+	// Ontology versions and the mode a graph space runs in.
+	mux.HandleFunc("POST /v1/graph-spaces/{graph_space_id}/ontology/versions", s.authenticated(s.handleDefineOntology))
+	mux.HandleFunc("GET /v1/graph-spaces/{graph_space_id}/ontology/versions", s.authenticated(s.handleListOntologyVersions))
+	mux.HandleFunc("GET /v1/graph-spaces/{graph_space_id}/ontology", s.authenticated(s.handleOntologyBinding))
+	mux.HandleFunc("PUT /v1/graph-spaces/{graph_space_id}/ontology", s.authenticated(s.handleBindOntology))
+	mux.HandleFunc("POST /v1/graph-spaces/{graph_space_id}/ontology/versions/{ontology_version_id}/validate",
+		s.authenticated(s.handleValidateOntology))
 	mux.HandleFunc("POST /v1/conflicts/{conflict_id}/resolve", s.authenticated(s.handleResolveConflict))
 
 	var h http.Handler = mux

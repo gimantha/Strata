@@ -78,7 +78,12 @@ retrieval projections.
   Against top-k at an equal budget it covers more distinct facts with less than half the
   repetition, measured rather than asserted
 
-**Not built yet** (later phases, in order): ontology mode, CDC connectors, ABAC policy, memory lifecycle,
+- Two ontology modes per graph space: open mode invents and normalizes vocabulary, guided
+  mode validates every claim against an immutable schema version. What the schema refuses is
+  returned to a caller who can fix it, and quarantined — visible, cited, out of belief — when
+  a model proposed it. Neither outcome is a silent commit
+
+**Not built yet** (later phases, in order): CDC connectors, ABAC policy, memory lifecycle,
 MCP, and distributed operation.
 
 ## Quickstart
@@ -241,4 +246,6 @@ are declared by the services that consume them; implementations live under `stor
   fusion, filters, and explain
 - [docs/api/context.md](docs/api/context.md) — prompt-ready blocks, the token budget,
   citations, and the injection boundary
+- [docs/api/ontology.md](docs/api/ontology.md) — schema versions, open and guided modes,
+  validation, and what happens to what a schema refuses
 - [docs/adr/](docs/adr/) — decisions, alternatives, and trade-offs
