@@ -77,8 +77,9 @@ MCP, and distributed operation.
 
 ## Quickstart
 
-Requirements: Go 1.26 (a `toolchain` directive fetches it automatically) and PostgreSQL
-16. No Docker needed.
+Requirements: Go 1.26 (a `toolchain` directive fetches it automatically) and PostgreSQL 16
+with pgvector — either installed locally or through Docker. `scripts/dev-postgres.sh` uses
+whichever it finds.
 
 ```bash
 # 1. A local PostgreSQL cluster
@@ -86,7 +87,7 @@ Requirements: Go 1.26 (a `toolchain` directive fetches it automatically) and Pos
 
 # 2. Configuration
 set -a && source configs/dev.env && set +a
-export CG_DATABASE_URL="postgres://postgres@127.0.0.1:55432/strata"
+export CG_DATABASE_URL="postgres://postgres:postgres@127.0.0.1:55432/strata?sslmode=disable"
 
 # 3. A credential. Save the printed JSON to $CG_API_KEYS_FILE.
 go run ./cmd/cgctl keygen --principal ops-admin --system-role admin
@@ -143,27 +144,36 @@ go test ./...
 go test -race ./...
 ```
 
-Integration tests use real PostgreSQL. They pick up `TEST_DATABASE_URL` if set,
-otherwise boot a throwaway cluster from a local installation (Debian packages, Homebrew,
-or Postgres.app; override the location with `PG_BINDIR`), and skip if neither is
-possible. **Set `CG_REQUIRE_PG=1` to turn that skip into a failure** - without it a run
-with no database reports every package green while quietly skipping the integration
-tests, which is exactly the false confidence to avoid. CI sets it.
+Integration tests use real PostgreSQL, resolved in this order:
 
-With no local PostgreSQL, a container works:
+1. `TEST_DATABASE_URL`, if set.
+2. A throwaway cluster booted from a local installation (Debian packages, Homebrew, or
+   Postgres.app; override the location with `PG_BINDIR`).
+3. A server already listening on `127.0.0.1:55432` or `127.0.0.1:55433` — the ports
+   `scripts/dev-postgres.sh` uses — provided it offers pgvector and pg_trgm. A server
+   without those extensions is passed over rather than used and failed against.
+
+So on a machine with Docker and no PostgreSQL installation, `scripts/dev-postgres.sh start`
+followed by `go test ./...` works with nothing exported. The default 5432 is deliberately
+never probed: the harness creates and drops databases, and on most machines that port is
+someone's real database.
+
+**Set `CG_REQUIRE_PG=1` to turn a skip into a failure** - without it a run with no database
+reports every package green while quietly skipping the integration tests, which is exactly
+the false confidence to avoid. CI sets it.
+
+To point at a specific server instead:
 
 ```bash
-docker run -d --name strata-pg -e POSTGRES_PASSWORD=postgres -p 55432:5432 pgvector/pgvector:pg16
-export TEST_DATABASE_URL="postgres://postgres:postgres@127.0.0.1:55432/postgres"
+export TEST_DATABASE_URL="postgres://postgres:postgres@127.0.0.1:55432/postgres?sslmode=disable"
 export CG_REQUIRE_PG=1
 go test ./...
 ```
 
-That image is the stock `postgres:16` with the pgvector extension available, which is what
-CI uses. Nothing needs the extension yet; it is there so the vector projection in phase 6
-does not require changing how anyone runs the tests. Plain `postgres:16` also works today.
-For a local installation without Docker, `brew install pgvector` or
-`apt install postgresql-16-pgvector` adds it. See
+pgvector is required, not optional — the projections migration creates the extension, so
+plain `postgres:16` connects fine and then fails every integration test. The
+`pgvector/pgvector:pg16` image that `scripts/dev-postgres.sh` and CI use has it; for a local
+installation, `brew install pgvector` or `apt install postgresql-16-pgvector` adds it. See
 [ADR 0007](docs/adr/0007-pgvector-for-the-vector-projection.md).
 
 Segmentation and chunk boundaries are covered by golden files. When a change to them is

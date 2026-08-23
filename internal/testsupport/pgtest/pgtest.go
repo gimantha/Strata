@@ -8,7 +8,10 @@
 //  1. TEST_DATABASE_URL, if set (CI service container, or a shared dev cluster).
 //  2. An ephemeral cluster booted with initdb/pg_ctl, if those binaries exist.
 //     This keeps "go test ./..." working on a developer machine with no Docker.
-//  3. Otherwise the test skips - unless CG_REQUIRE_PG=1, which turns the skip into a
+//  3. A server already listening on one of this project's own ports, which is how a
+//     machine with Docker but no PostgreSQL installation gets a database. See
+//     localCandidates for why only those ports are tried.
+//  4. Otherwise the test skips - unless CG_REQUIRE_PG=1, which turns the skip into a
 //     failure so CI cannot silently lose integration coverage.
 package pgtest
 
@@ -221,13 +224,82 @@ func resolveBase() {
 			return
 		}
 		c, err := startEphemeral()
-		if err != nil {
-			baseErr = err
+		if err == nil {
+			cluster = c
+			baseDSN = c.dsn
 			return
 		}
-		cluster = c
-		baseDSN = c.dsn
+
+		// No server binaries. A developer on macOS typically has Docker instead, and
+		// this project's own tooling puts a container on a known port.
+		if dsn, found := discoverLocal(); found {
+			fmt.Fprintf(os.Stderr, "pgtest: using PostgreSQL discovered at %s "+
+				"(set TEST_DATABASE_URL to override)\n", displayHost(dsn))
+			baseDSN = dsn
+			return
+		}
+		baseErr = fmt.Errorf("%w; and no server with pgvector is listening on "+
+			"127.0.0.1:55432 or 127.0.0.1:55433", err)
 	})
+}
+
+// localCandidates are the endpoints this project's own tooling creates: scripts/dev-postgres.sh
+// and the container command in the README. They are deliberately non-default ports.
+//
+// The default 5432 is not probed and should not be added. A developer's real database very
+// often listens there, and a test harness that creates and drops databases in whatever it
+// finds on the default port is a bad surprise waiting to happen. A listener on 55432 or 55433
+// is one this repository told someone to start.
+var localCandidates = []string{
+	"postgres://postgres:postgres@127.0.0.1:55432/postgres?sslmode=disable",
+	"postgres://postgres@127.0.0.1:55432/postgres?sslmode=disable",
+	"postgres://postgres:postgres@127.0.0.1:55433/postgres?sslmode=disable",
+	"postgres://postgres@127.0.0.1:55433/postgres?sslmode=disable",
+}
+
+// discoverLocal returns the first reachable candidate that can actually run the migrations.
+//
+// Reachability alone is not enough: the projections migration needs pgvector, and a plain
+// postgres:16 container answers connections perfectly well right up to the point where every
+// integration test fails on a missing extension. Checking here turns that into a skip with a
+// clear reason instead.
+func discoverLocal() (string, bool) {
+	for _, dsn := range localCandidates {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		ok := probe(ctx, dsn)
+		cancel()
+		if ok {
+			return dsn, true
+		}
+	}
+	return "", false
+}
+
+func probe(ctx context.Context, dsn string) bool {
+	pool, err := pgxpool.New(ctx, dsn)
+	if err != nil {
+		return false
+	}
+	defer pool.Close()
+
+	for _, extension := range []string{"vector", "pg_trgm"} {
+		var present bool
+		if err := pool.QueryRow(ctx,
+			`SELECT EXISTS (SELECT 1 FROM pg_available_extensions WHERE name = $1)`,
+			extension).Scan(&present); err != nil || !present {
+			return false
+		}
+	}
+	return true
+}
+
+// displayHost renders a DSN without its credentials, for a log line.
+func displayHost(dsn string) string {
+	u, err := url.Parse(dsn)
+	if err != nil {
+		return "the configured server"
+	}
+	return u.Host
 }
 
 // ephemeralCluster is a throwaway PostgreSQL instance listening on a unix socket in
@@ -367,8 +439,10 @@ func findBinDir() (string, error) {
 		return best, nil
 	}
 
-	return "", fmt.Errorf("no PostgreSQL server binaries found; set TEST_DATABASE_URL " +
-		"(for example a container: docker run -d -e POSTGRES_PASSWORD=postgres -p 55432:5432 postgres:16) " +
+	// The image matters: the projections migration needs pgvector, so plain postgres:16
+	// connects fine and then fails every integration test on a missing extension.
+	return "", fmt.Errorf("no PostgreSQL server binaries found; run scripts/dev-postgres.sh start " +
+		"(it falls back to Docker), or set TEST_DATABASE_URL, " +
 		"or point PG_BINDIR at a directory containing initdb and pg_ctl")
 }
 

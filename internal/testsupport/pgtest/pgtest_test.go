@@ -1,6 +1,9 @@
 package pgtest
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestMajorVersionHandlesEachPlatformsNaming(t *testing.T) {
 	cases := map[string]int{
@@ -49,5 +52,32 @@ func TestServerBinaryRootsCoverTheSupportedPlatforms(t *testing.T) {
 		if !found {
 			t.Fatalf("discovery is missing the %s pattern", want)
 		}
+	}
+}
+
+// TestLocalCandidatesNeverProbeTheDefaultPort guards a safety property, not a feature.
+//
+// The harness creates and drops databases on whatever it connects to. Probing 5432 would
+// point that at whatever a developer happens to be running locally, which on most machines
+// is a real database. Every candidate must be a port this repository itself told someone to
+// start a server on.
+func TestLocalCandidatesNeverProbeTheDefaultPort(t *testing.T) {
+	for _, dsn := range localCandidates {
+		if strings.Contains(dsn, ":5432/") {
+			t.Fatalf("candidate %q probes the default PostgreSQL port", dsn)
+		}
+		if !strings.Contains(dsn, "127.0.0.1") {
+			t.Fatalf("candidate %q reaches beyond the local machine", dsn)
+		}
+	}
+}
+
+func TestDisplayHostOmitsCredentials(t *testing.T) {
+	got := displayHost("postgres://postgres:hunter2@127.0.0.1:55433/postgres?sslmode=disable")
+	if strings.Contains(got, "hunter2") {
+		t.Fatalf("the discovery notice would print a password: %q", got)
+	}
+	if got != "127.0.0.1:55433" {
+		t.Fatalf("expected host:port, got %q", got)
 	}
 }
