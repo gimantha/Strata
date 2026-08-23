@@ -13,8 +13,9 @@ this file.
 
 ## Status
 
-Phases 0 through 2 of the contract are implemented: the architecture skeleton, the
-canonical ingestion ledger, and the assertion-first knowledge model.
+Phases 0 through 3 of the contract are implemented: the architecture skeleton, the
+canonical ingestion ledger, the assertion-first knowledge model, and schema-constrained
+extraction.
 
 **Working today**
 
@@ -42,9 +43,15 @@ canonical ingestion ledger, and the assertion-first knowledge model.
   `active_at`, so "what did we believe on April 10 about March 25" is answerable
 - Contradictions recorded as conflict sets rather than resolved by guesswork
 - A provenance walk from any fact back to the archived bytes it came from
+- Optional model-driven extraction: a provider-independent interface, an OpenAI-compatible
+  adapter for any such endpoint, and a scripted provider so CI never needs a live model
+- Model-run tracking for every interaction, successes and failures alike, storing hashes
+  rather than prompts and never a credential
+- Layered injection defenses: unforgeable delimiters, schema-constrained output validated
+  locally, verbatim quote grounding, and quarantine for claims planted inside instructions
 
-**Not built yet** (later phases, in order): LLM extraction, entity resolution beyond
-exact-name matching, the full temporal reconciler, retrieval projections, hybrid
+**Not built yet** (later phases, in order): entity resolution beyond exact-name matching,
+the full temporal reconciler, retrieval projections, hybrid
 retrieval, context assembly, ontology mode, CDC connectors, ABAC policy, memory lifecycle,
 MCP, and distributed operation.
 
@@ -146,8 +153,10 @@ cmd/contextgraphd   HTTP API server, optionally with an in-process worker
 cmd/cgworker        Outbox consumer and pipeline runner
 cmd/cgctl           Administration and development CLI
 internal/domain     Pure canonical model: typed ids, enums, temporal coordinates
+internal/extraction Source material into candidate knowledge, safely
 internal/ingest     The one path by which knowledge enters
 internal/knowledge  Claims into committed canonical knowledge
+internal/llm        Provider-independent model interface and adapters
 internal/normalize  Deterministic decode, segment, chunk
 internal/pipeline   Stage orchestration and durable stage state
 internal/eventbus   Work fabric: the transactional outbox
@@ -169,4 +178,6 @@ are declared by the services that consume them; implementations live under `stor
 - [docs/api/ingest.md](docs/api/ingest.md) — ingestion API, idempotency semantics, error codes
 - [docs/api/knowledge.md](docs/api/knowledge.md) — entities, assertions, temporal queries,
   provenance
+- [docs/api/extraction.md](docs/api/extraction.md) — model configuration, injection
+  defenses, model runs
 - [docs/adr/](docs/adr/) — decisions, alternatives, and trade-offs
