@@ -62,6 +62,12 @@ func NewChunkID() ChunkID             { return ChunkID(newID()) }
 func NewPipelineRunID() PipelineRunID { return PipelineRunID(newID()) }
 func NewStageRunID() StageRunID       { return StageRunID(newID()) }
 func NewOutboxEventID() OutboxEventID { return OutboxEventID(newID()) }
+func NewEntityID() EntityID           { return EntityID(newID()) }
+func NewAssertionID() AssertionID     { return AssertionID(newID()) }
+func NewEvidenceID() EvidenceID       { return EvidenceID(newID()) }
+func NewDerivationID() DerivationID   { return DerivationID(newID()) }
+func NewPredicateID() PredicateID     { return PredicateID(newID()) }
+func NewConflictSetID() ConflictSetID { return ConflictSetID(newID()) }
 
 // NewUUIDString returns a bare UUIDv7 string, for durable rows whose identifiers
 // are not part of the domain vocabulary (audit entries, for example).

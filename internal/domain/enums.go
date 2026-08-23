@@ -252,3 +252,173 @@ var outboxStatuses = []OutboxStatus{
 func ParseOutboxStatus(s string) (OutboxStatus, error) {
 	return parseEnum("outbox status", s, outboxStatuses)
 }
+
+// AssertionStatus is the lifecycle of a claim. Status changes are knowledge-time
+// events: an assertion's content is never edited (AGENTS.md sections 2.1, 14.3).
+type AssertionStatus string
+
+const (
+	// AssertionProposed is a candidate awaiting validation.
+	AssertionProposed AssertionStatus = "proposed"
+	// AssertionActive is committed, current belief.
+	AssertionActive AssertionStatus = "active"
+	// AssertionSuperseded was replaced by later knowledge. It remains queryable as of
+	// any knowledge time before it was superseded.
+	AssertionSuperseded AssertionStatus = "superseded"
+	// AssertionRetracted was withdrawn without a replacement.
+	AssertionRetracted AssertionStatus = "retracted"
+	// AssertionQuarantined failed validation or policy and is held for review.
+	AssertionQuarantined AssertionStatus = "quarantined"
+	// AssertionDisputed conflicts with another claim that cannot yet be resolved.
+	AssertionDisputed AssertionStatus = "disputed"
+)
+
+var assertionStatuses = []AssertionStatus{
+	AssertionProposed, AssertionActive, AssertionSuperseded,
+	AssertionRetracted, AssertionQuarantined, AssertionDisputed,
+}
+
+func ParseAssertionStatus(s string) (AssertionStatus, error) {
+	return parseEnum("assertion status", s, assertionStatuses)
+}
+
+// Believable reports whether a status represents knowledge the system currently holds.
+// Disputed counts: a contested claim is still believed, just not settled.
+func (s AssertionStatus) Believable() bool {
+	return s == AssertionActive || s == AssertionDisputed
+}
+
+// ProvenanceMode records how a claim came to exist. Inference is never disguised as
+// direct observation (AGENTS.md section 6.11).
+type ProvenanceMode string
+
+const (
+	ProvenanceExtracted    ProvenanceMode = "extracted"
+	ProvenanceImported     ProvenanceMode = "imported"
+	ProvenanceInferred     ProvenanceMode = "inferred"
+	ProvenanceDerived      ProvenanceMode = "derived"
+	ProvenanceUserAsserted ProvenanceMode = "user_asserted"
+)
+
+var provenanceModes = []ProvenanceMode{
+	ProvenanceExtracted, ProvenanceImported, ProvenanceInferred,
+	ProvenanceDerived, ProvenanceUserAsserted,
+}
+
+func ParseProvenanceMode(s string) (ProvenanceMode, error) {
+	return parseEnum("provenance mode", s, provenanceModes)
+}
+
+// RequiresDerivation reports whether this mode must name what produced the claim.
+// A derived or inferred assertion without a derivation record would be an unexplainable
+// fact, which the architecture does not allow.
+func (p ProvenanceMode) RequiresDerivation() bool {
+	return p == ProvenanceInferred || p == ProvenanceDerived
+}
+
+// ObjectKind is the type of an assertion's object. Values keep their types rather than
+// being stringified (AGENTS.md section 6.9).
+type ObjectKind string
+
+const (
+	ObjectEntity    ObjectKind = "entity"
+	ObjectString    ObjectKind = "string"
+	ObjectInteger   ObjectKind = "integer"
+	ObjectDecimal   ObjectKind = "decimal"
+	ObjectBoolean   ObjectKind = "boolean"
+	ObjectTimestamp ObjectKind = "timestamp"
+	ObjectDate      ObjectKind = "date"
+	ObjectDuration  ObjectKind = "duration"
+	ObjectGeo       ObjectKind = "geo"
+	ObjectJSON      ObjectKind = "json"
+	ObjectURI       ObjectKind = "uri"
+	ObjectSymbol    ObjectKind = "symbol"
+)
+
+var objectKinds = []ObjectKind{
+	ObjectEntity, ObjectString, ObjectInteger, ObjectDecimal, ObjectBoolean,
+	ObjectTimestamp, ObjectDate, ObjectDuration, ObjectGeo, ObjectJSON, ObjectURI, ObjectSymbol,
+}
+
+func ParseObjectKind(s string) (ObjectKind, error) { return parseEnum("object kind", s, objectKinds) }
+
+// TemporalPolicy describes how a predicate's values behave over time
+// (AGENTS.md section 8).
+type TemporalPolicy string
+
+const (
+	// TemporalPolicyStateful values hold over an interval and are replaced by later
+	// values, such as an employer or an address.
+	TemporalPolicyStateful TemporalPolicy = "stateful"
+	// TemporalPolicyEvent values describe a moment and never expire, such as a signing.
+	TemporalPolicyEvent TemporalPolicy = "event"
+	// TemporalPolicyImmutable values never change once known, such as a birth date.
+	TemporalPolicyImmutable TemporalPolicy = "immutable"
+)
+
+var temporalPolicies = []TemporalPolicy{
+	TemporalPolicyStateful, TemporalPolicyEvent, TemporalPolicyImmutable,
+}
+
+func ParseTemporalPolicy(s string) (TemporalPolicy, error) {
+	return parseEnum("temporal policy", s, temporalPolicies)
+}
+
+// ConflictPolicy decides what happens when two claims about the same subject and
+// predicate cannot both hold (AGENTS.md sections 8, 14).
+type ConflictPolicy string
+
+const (
+	// ConflictPolicyCoexist allows multiple simultaneous values, such as LIKES.
+	ConflictPolicyCoexist ConflictPolicy = "coexist"
+	// ConflictPolicyLatestWins supersedes the earlier claim when a later one arrives.
+	ConflictPolicyLatestWins ConflictPolicy = "latest_wins"
+	// ConflictPolicyHighestAuthority prefers the more trusted source.
+	ConflictPolicyHighestAuthority ConflictPolicy = "highest_authority"
+	// ConflictPolicyManual keeps both claims in a conflict set for review. Nothing is
+	// deleted; the disagreement is made visible instead.
+	ConflictPolicyManual ConflictPolicy = "manual"
+)
+
+var conflictPolicies = []ConflictPolicy{
+	ConflictPolicyCoexist, ConflictPolicyLatestWins,
+	ConflictPolicyHighestAuthority, ConflictPolicyManual,
+}
+
+func ParseConflictPolicy(s string) (ConflictPolicy, error) {
+	return parseEnum("conflict policy", s, conflictPolicies)
+}
+
+// PredicateStatus distinguishes a registry entry created on the fly by extraction from
+// one an operator has blessed (AGENTS.md section 8, open versus ontology-guided mode).
+type PredicateStatus string
+
+const (
+	PredicateCandidate  PredicateStatus = "candidate"
+	PredicateApproved   PredicateStatus = "approved"
+	PredicateDeprecated PredicateStatus = "deprecated"
+)
+
+var predicateStatuses = []PredicateStatus{PredicateCandidate, PredicateApproved, PredicateDeprecated}
+
+func ParsePredicateStatus(s string) (PredicateStatus, error) {
+	return parseEnum("predicate status", s, predicateStatuses)
+}
+
+// ConflictResolution records how a conflict set ended, if it has ended.
+type ConflictResolution string
+
+const (
+	ConflictOpen             ConflictResolution = "open"
+	ConflictResolvedBySource ConflictResolution = "resolved_by_source"
+	ConflictResolvedByHuman  ConflictResolution = "resolved_by_human"
+	ConflictResolvedByPolicy ConflictResolution = "resolved_by_policy"
+)
+
+var conflictResolutions = []ConflictResolution{
+	ConflictOpen, ConflictResolvedBySource, ConflictResolvedByHuman, ConflictResolvedByPolicy,
+}
+
+func ParseConflictResolution(s string) (ConflictResolution, error) {
+	return parseEnum("conflict resolution", s, conflictResolutions)
+}
