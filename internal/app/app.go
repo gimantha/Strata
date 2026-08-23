@@ -12,9 +12,13 @@ import (
 	"github.com/gimantha/strata/internal/config"
 	"github.com/gimantha/strata/internal/domain"
 	"github.com/gimantha/strata/internal/eventbus"
+	"github.com/gimantha/strata/internal/extraction"
 	"github.com/gimantha/strata/internal/identity"
 	"github.com/gimantha/strata/internal/ingest"
 	"github.com/gimantha/strata/internal/knowledge"
+	"github.com/gimantha/strata/internal/llm"
+	"github.com/gimantha/strata/internal/llm/mock"
+	"github.com/gimantha/strata/internal/llm/openai"
 	"github.com/gimantha/strata/internal/normalize"
 	"github.com/gimantha/strata/internal/observability"
 	"github.com/gimantha/strata/internal/pipeline"
@@ -32,6 +36,7 @@ type App struct {
 	Identity  *identity.Service
 	Gateway   *ingest.Gateway
 	Knowledge *knowledge.Service
+	Extractor *extraction.Extractor
 	Bus       *eventbus.Outbox
 	Runner    *pipeline.Runner
 }
@@ -110,12 +115,28 @@ func New(ctx context.Context, cfg config.Config) (*App, error) {
 
 	app.Bus = eventbus.NewOutbox(store, logger, telemetry.Metrics, telemetry.Tracer)
 
+	// A model provider is optional. Without one the pipeline still ingests, segments, and
+	// chunks; extraction is simply not part of it.
+	provider, err := newLLMProvider(cfg)
+	if err != nil {
+		app.closeLedger()
+		return nil, err
+	}
+	stageCfg := pipeline.StageConfig{
+		ChunkMaxTokens:     cfg.ChunkMaxTokens,
+		ChunkOverlapTokens: cfg.ChunkOverlapTokens,
+		Tokenizer:          normalize.DefaultTokenizer,
+	}
+	if provider != nil {
+		app.Extractor = extraction.New(provider, store, extraction.Options{}, logger, telemetry.Tracer)
+		stageCfg.Extractor = app.Extractor
+		stageCfg.Committer = app.Knowledge
+		logger.InfoContext(ctx, "extraction enabled",
+			slog.String("provider", provider.Name()), slog.String("model", provider.Model()))
+	}
+
 	app.Runner = pipeline.NewRunner(store, cfg.PipelineVersion,
-		pipeline.DefaultStages(store, blobs, pipeline.StageConfig{
-			ChunkMaxTokens:     cfg.ChunkMaxTokens,
-			ChunkOverlapTokens: cfg.ChunkOverlapTokens,
-			Tokenizer:          normalize.DefaultTokenizer,
-		}),
+		pipeline.DefaultStages(store, blobs, stageCfg),
 		logger, telemetry.Metrics, telemetry.Tracer)
 
 	// Queue depth is observed rather than pushed, so lag is visible even when nothing
@@ -125,6 +146,30 @@ func New(ctx context.Context, cfg config.Config) (*App, error) {
 	}
 
 	return app, nil
+}
+
+// newLLMProvider builds the configured provider, or nil when extraction is disabled.
+//
+// Provider construction is the only place these packages are referenced; nothing above
+// this function knows which provider is in use (AGENTS.md section 2.11).
+func newLLMProvider(cfg config.Config) (llm.LLM, error) {
+	switch cfg.LLMProvider {
+	case "", "none":
+		return nil, nil
+	case "mock":
+		return mock.New(), nil
+	case "openai":
+		return openai.New(openai.Config{
+			BaseURL:    cfg.LLMBaseURL,
+			APIKey:     cfg.LLMAPIKey,
+			Model:      cfg.LLMModel,
+			Timeout:    cfg.LLMTimeout,
+			MaxRetries: cfg.LLMMaxRetries,
+		})
+	default:
+		return nil, domain.Errorf(domain.CodeInvalidArgument, "app.newLLMProvider",
+			"unknown model provider %q", cfg.LLMProvider)
+	}
 }
 
 // Close releases resources.

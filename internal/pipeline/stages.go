@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/gimantha/strata/internal/domain"
+	"github.com/gimantha/strata/internal/extraction"
 	"github.com/gimantha/strata/internal/normalize"
 )
 
@@ -14,6 +15,7 @@ type LedgerStore interface {
 	InsertEpisodes(ctx context.Context, episodes []domain.Episode) ([]domain.Episode, error)
 	ListEpisodes(ctx context.Context, ws domain.WorkspaceID, eventID domain.SourceEventID) ([]domain.Episode, error)
 	InsertChunks(ctx context.Context, chunks []domain.Chunk) ([]domain.Chunk, error)
+	ListChunks(ctx context.Context, ws domain.WorkspaceID, eventID domain.SourceEventID) ([]domain.Chunk, error)
 }
 
 // BlobReader reads archived source bytes.
@@ -28,6 +30,12 @@ type StageConfig struct {
 	Tokenizer          normalize.Tokenizer
 	// Now supplies knowledge time, injectable so tests are deterministic.
 	Now func() time.Time
+
+	// Extractor and Committer enable the extraction stage. Both must be present for it
+	// to run: a deployment with no model provider configured processes source material
+	// into episodes and chunks and stops there, rather than failing.
+	Extractor *extraction.Extractor
+	Committer Committer
 }
 
 func (c StageConfig) now() time.Time {
@@ -45,17 +53,30 @@ func (c StageConfig) chunkOptions() normalize.ChunkOptions {
 	}
 }
 
-// DefaultStages is the phase 1 pipeline: decode, split into episodes, chunk.
+// DefaultStages is the pipeline: decode, split into episodes, chunk, and - when a model
+// provider is configured - extract candidate knowledge.
 //
-// Extraction, entity resolution, temporal reconciliation, and projection stages join
-// this list in later phases. They are absent rather than stubbed, because an empty
+// Deterministic work always precedes the model (AGENTS.md section 10.5). Structure the
+// source already carries is read directly, and the model is asked only for what cannot be
+// read that way.
+//
+// Extraction is added only when both an extractor and a committer are supplied, so a
+// deployment with no model provider still ingests, segments, and chunks rather than
+// failing.
+//
+// Entity resolution, ontology validation, temporal reconciliation, and projection stages
+// join this list in later phases. They are absent rather than stubbed, because an empty
 // stage that records success would make replay state lie.
 func DefaultStages(store LedgerStore, blobs BlobReader, cfg StageConfig) []Stage {
-	return []Stage{
+	stages := []Stage{
 		NormalizeStage{store: store, blobs: blobs, cfg: cfg},
 		SegmentStage{store: store, blobs: blobs, cfg: cfg},
 		ChunkStage{store: store, cfg: cfg},
 	}
+	if cfg.Extractor != nil && cfg.Committer != nil {
+		stages = append(stages, NewExtractStage(store, cfg.Extractor, cfg.Committer, cfg))
+	}
+	return stages
 }
 
 // loadDocument reads the archived artifact and decodes it.

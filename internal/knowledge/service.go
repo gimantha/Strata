@@ -111,6 +111,13 @@ type Claim struct {
 	// Supersedes names claims this one corrects. The correction and the supersession
 	// commit together.
 	Supersedes []domain.AssertionID
+
+	// Quarantine holds a claim out of current belief without discarding it, for material
+	// that cannot be trusted at face value (AGENTS.md section 24). A quarantined claim is
+	// stored with its evidence and can be reviewed, but it is not believed and does not
+	// contradict anything.
+	Quarantine       bool
+	QuarantineReason string
 }
 
 // DerivationInput describes what produced reasoned claims.
@@ -252,6 +259,11 @@ func (s *Service) Assert(ctx context.Context, req AssertRequest) (AssertResult, 
 	// compared with what it might contradict, and the comparison must never delete
 	// either side (AGENTS.md section 14.2).
 	for _, assertion := range committed.Assertions {
+		// A quarantined claim is not believed, so it cannot contradict anything. Letting
+		// it open conflict sets would let untrusted material cast doubt on good knowledge.
+		if assertion.Status == domain.AssertionQuarantined {
+			continue
+		}
 		predicate, ok := predicates[assertion.Predicate.Name]
 		if !ok || predicate.AllowsMultipleValues() {
 			continue
@@ -350,7 +362,7 @@ func (s *Service) buildAssertion(ctx context.Context, req AssertRequest, claim C
 		}.Normalize(),
 		Confidence:          orOne(claim.Confidence),
 		ConfidenceBreakdown: claim.ConfidenceBreakdown,
-		Status:              domain.AssertionActive,
+		Status:              statusFor(claim),
 		ProvenanceMode:      provenance,
 		DerivationID:        derivationID,
 		SourceEventID:       req.SourceEventID,
@@ -519,6 +531,14 @@ func (s *Service) Get(ctx context.Context, ws domain.WorkspaceID, id domain.Asse
 // Provenance walks a claim back to the source material behind it.
 func (s *Service) Provenance(ctx context.Context, ws domain.WorkspaceID, id domain.AssertionID) (domain.ProvenanceChain, error) {
 	return s.store.ProvenanceChain(ctx, ws, id)
+}
+
+// statusFor decides the status a new claim is committed with.
+func statusFor(claim Claim) domain.AssertionStatus {
+	if claim.Quarantine {
+		return domain.AssertionQuarantined
+	}
+	return domain.AssertionActive
 }
 
 func orOne(v float64) float64 {

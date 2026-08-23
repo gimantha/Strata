@@ -56,6 +56,18 @@ type Config struct {
 	PipelineVersion    int
 	ChunkMaxTokens     int
 	ChunkOverlapTokens int
+
+	// LLMProvider selects the extraction model provider: none, mock, or openai.
+	//
+	// It defaults to none, so a deployment with no model configured still ingests,
+	// segments, and chunks. Extraction is added when a provider is chosen rather than
+	// being a requirement for the system to run.
+	LLMProvider   string
+	LLMBaseURL    string
+	LLMModel      string
+	LLMAPIKey     string
+	LLMTimeout    time.Duration
+	LLMMaxRetries int
 }
 
 // Load reads configuration from the process environment.
@@ -95,6 +107,13 @@ func LoadFrom(getenv func(string) string) (Config, error) {
 		WorkerMaxAttempts:  l.intVal("WORKER_MAX_ATTEMPTS", 8),
 		BackoffBase:        l.duration("BACKOFF_BASE", time.Second),
 		BackoffMax:         l.duration("BACKOFF_MAX", 5*time.Minute),
+
+		LLMProvider:   strings.ToLower(l.str("LLM_PROVIDER", "none")),
+		LLMBaseURL:    l.str("LLM_BASE_URL", ""),
+		LLMModel:      l.str("LLM_MODEL", ""),
+		LLMAPIKey:     l.str("LLM_API_KEY", ""),
+		LLMTimeout:    l.duration("LLM_TIMEOUT", 60*time.Second),
+		LLMMaxRetries: l.intVal("LLM_MAX_RETRIES", 2),
 
 		PipelineVersion:    l.intVal("PIPELINE_VERSION", 1),
 		ChunkMaxTokens:     l.intVal("CHUNK_MAX_TOKENS", 320),
@@ -170,6 +189,20 @@ func (c Config) Validate() error {
 	case "debug", "info", "warn", "error":
 	default:
 		problems = append(problems, "CG_LOG_LEVEL must be debug, info, warn, or error")
+	}
+	switch c.LLMProvider {
+	case "none", "mock":
+	case "openai":
+		// Fail at startup rather than at the first extraction: a worker that starts
+		// happily and then dead-letters every event is worse than one that will not start.
+		if c.LLMModel == "" {
+			problems = append(problems, "CG_LLM_MODEL is required when CG_LLM_PROVIDER is openai")
+		}
+	default:
+		problems = append(problems, "CG_LLM_PROVIDER must be none, mock, or openai")
+	}
+	if c.LLMMaxRetries < 0 {
+		problems = append(problems, "CG_LLM_MAX_RETRIES must not be negative")
 	}
 
 	if len(problems) > 0 {
