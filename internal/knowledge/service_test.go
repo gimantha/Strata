@@ -308,38 +308,63 @@ func TestIntegrationContextLifecycleIsSeparateFromTruth(t *testing.T) {
 	}
 }
 
-func TestIntegrationAmbiguousEntityNameIsRejected(t *testing.T) {
+func TestIntegrationAmbiguousEntityNameIsKeptSeparate(t *testing.T) {
 	h := newHarness(t)
 	ctx := context.Background()
 
-	// Two distinct people share a name. Resolution is phase 4's job; until then the
-	// service must refuse to guess rather than silently merge them.
+	// Two distinct people share a name. The resolver must not pick one: guessing here is
+	// how two different people silently become one, and that corruption is unnoticeable
+	// afterwards (AGENTS.md section 12).
+	var existing []domain.EntityID
 	for i := 0; i < 2; i++ {
-		if _, err := h.fixture.Store.CreateEntity(ctx, domain.Entity{
+		entity, err := h.fixture.Store.CreateEntity(ctx, domain.Entity{
 			WorkspaceID:   h.scope().WorkspaceID,
 			GraphSpaceID:  h.scope().GraphSpaceID,
 			CanonicalName: "Alex Kim",
 			EntityType:    "person",
-		}); err != nil {
+		})
+		if err != nil {
 			t.Fatalf("create entity: %v", err)
 		}
+		existing = append(existing, entity.ID)
 	}
 
 	eventID, episodeID, _ := h.ingestEpisode(t, "Alex Kim approved the order.", "ambiguous-1")
-	_, err := h.service.Assert(ctx, knowledge.AssertRequest{
-		Scope: h.scope(), Principal: h.principal(), SourceEventID: eventID,
-		Claims: []knowledge.Claim{{
-			Subject:   knowledge.EntityRef{Name: "Alex Kim", Type: "person"},
-			Predicate: "APPROVED",
-			Object:    domain.ObjectOfSymbol("ORDER"),
-			Evidence:  []knowledge.EvidenceInput{{EpisodeID: episodeID}},
-		}},
+	claim := h.assertOne(t, eventID, knowledge.Claim{
+		Subject:   knowledge.EntityRef{Name: "Alex Kim", Type: "person"},
+		Predicate: "APPROVED",
+		Object:    domain.ObjectOfSymbol("ORDER"),
+		Evidence:  []knowledge.EvidenceInput{{EpisodeID: episodeID}},
 	})
-	if err == nil {
-		t.Fatal("an ambiguous name must not be resolved by guessing")
+
+	// Ingestion succeeds - refusing the fact would lose it - but the claim is attached to
+	// a third, distinct identity rather than to either candidate.
+	for _, prior := range existing {
+		if claim.SubjectID == prior {
+			t.Fatal("an ambiguous name must not be resolved to one of the candidates")
+		}
 	}
-	if !domain.IsCode(err, domain.CodeConflict) {
-		t.Fatalf("expected conflict, got %s: %v", domain.CodeOf(err), err)
+
+	// The ambiguity is recorded with both candidates, so a human can merge later if they
+	// really were the same person.
+	decisions, err := h.fixture.Store.ListResolutionDecisions(ctx, h.scope(), true, 10)
+	if err != nil {
+		t.Fatalf("list decisions: %v", err)
+	}
+	var ambiguous *domain.ResolutionDecision
+	for i := range decisions {
+		if decisions[i].Method == domain.MethodAmbiguous {
+			ambiguous = &decisions[i]
+		}
+	}
+	if ambiguous == nil {
+		t.Fatalf("the ambiguity must be recorded for review, got %d decisions", len(decisions))
+	}
+	if len(ambiguous.Candidates) != 2 {
+		t.Fatalf("both candidates must be recorded, got %d", len(ambiguous.Candidates))
+	}
+	if ambiguous.ChosenEntityID != claim.SubjectID {
+		t.Fatal("the decision must name the identity that was actually used")
 	}
 }
 
@@ -436,5 +461,77 @@ func ingestRequestFor(h *harness, sourceID domain.SourceID, content string) inge
 		MediaType:      "text/plain",
 		Payload:        []byte(content),
 		IdempotencyKey: "classification-" + content[:8],
+	}
+}
+
+func TestIntegrationMergedIdentitiesShareTheirKnowledge(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	ws := h.scope().WorkspaceID
+
+	eventID, episodeID, _ := h.ingestEpisode(t, "Two records about one company.", "merge-know-1")
+
+	// Two identities, each with its own fact, recorded before anyone realized they were
+	// the same company.
+	left := h.assertOne(t, eventID, knowledge.Claim{
+		Subject:   knowledge.EntityRef{Name: "Acme Corp", Type: "organization"},
+		Predicate: "FOUNDED_IN",
+		Object:    domain.ObjectOfInteger(1998),
+		Evidence:  []knowledge.EvidenceInput{{EpisodeID: episodeID}},
+	})
+	right := h.assertOne(t, eventID, knowledge.Claim{
+		Subject:   knowledge.EntityRef{Name: "Acme Corporation Ltd", Type: "organization"},
+		Predicate: "HEADQUARTERED_IN",
+		Object:    domain.ObjectOfString("Berlin"),
+		Evidence:  []knowledge.EvidenceInput{{EpisodeID: episodeID}},
+	})
+	if left.SubjectID == right.SubjectID {
+		t.Fatal("these should start as separate identities")
+	}
+
+	// Before the merge, each identity knows only its own fact.
+	byLeft := h.query(t, domain.AssertionQuery{SubjectIDs: []domain.EntityID{left.SubjectID}})
+	if len(byLeft) != 1 {
+		t.Fatalf("expected one fact before the merge, got %d", len(byLeft))
+	}
+
+	if _, err := h.fixture.Store.MergeEntities(ctx, ws, left.SubjectID, right.SubjectID,
+		domain.ResolutionDecision{
+			WorkspaceID: ws, GraphSpaceID: h.scope().GraphSpaceID, Confidence: 1,
+			ActorID: h.fixture.Primary.Principal.ID, Reason: "same company",
+		}); err != nil {
+		t.Fatalf("merge: %v", err)
+	}
+
+	// After it, asking about either identity reaches both facts. The assertions were never
+	// rewritten; the query expands through the cluster.
+	for _, subject := range []domain.EntityID{left.SubjectID, right.SubjectID} {
+		found := h.query(t, domain.AssertionQuery{SubjectIDs: []domain.EntityID{subject}})
+		if len(found) != 2 {
+			t.Fatalf("after the merge both facts must be reachable from %s, got %d",
+				subject, len(found))
+		}
+	}
+
+	// The original assertions still name the identities they were recorded against, which
+	// is what makes the merge reversible.
+	stored, err := h.service.Get(ctx, ws, left.ID)
+	if err != nil {
+		t.Fatalf("load assertion: %v", err)
+	}
+	if stored.SubjectID != left.SubjectID {
+		t.Fatal("a merge must not rewrite the assertions that referenced the merged identity")
+	}
+
+	// Splitting them apart restores the original view.
+	if _, err := h.fixture.Store.SplitEntity(ctx, ws, left.SubjectID, domain.ResolutionDecision{
+		WorkspaceID: ws, GraphSpaceID: h.scope().GraphSpaceID, Confidence: 1,
+		ActorID: h.fixture.Primary.Principal.ID, Reason: "different subsidiaries",
+	}); err != nil {
+		t.Fatalf("split: %v", err)
+	}
+	afterSplit := h.query(t, domain.AssertionQuery{SubjectIDs: []domain.EntityID{left.SubjectID}})
+	if len(afterSplit) != 1 {
+		t.Fatalf("after the split each identity keeps its own fact again, got %d", len(afterSplit))
 	}
 }

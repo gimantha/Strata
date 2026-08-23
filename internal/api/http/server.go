@@ -131,6 +131,12 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /v1/assertions/{assertion_id}/retract", s.authenticated(s.handleRetractAssertion))
 
 	mux.HandleFunc("GET /v1/graph-spaces/{graph_space_id}/conflicts", s.authenticated(s.handleListConflicts))
+
+	// Entity resolution: identity, reversible merges, and the decision ledger.
+	mux.HandleFunc("GET /v1/entities/{entity_id}/identity", s.authenticated(s.handleEntityIdentity))
+	mux.HandleFunc("POST /v1/entities/{entity_id}/split", s.authenticated(s.handleSplitEntity))
+	mux.HandleFunc("POST /v1/graph-spaces/{graph_space_id}/entities/merge", s.authenticated(s.handleMergeEntities))
+	mux.HandleFunc("GET /v1/graph-spaces/{graph_space_id}/resolution-decisions", s.authenticated(s.handleListResolutionDecisions))
 	mux.HandleFunc("POST /v1/conflicts/{conflict_id}/resolve", s.authenticated(s.handleResolveConflict))
 
 	var h http.Handler = mux

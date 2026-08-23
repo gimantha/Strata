@@ -44,7 +44,9 @@ Commands:
   process                  Run the pipeline for an event now
   outbox ls|retry          Inspect and revive durable work
   predicate define|ls      Manage the predicate registry
-  entity ls                List entities in a graph space
+  entity ls|identity       Inspect entities and how they resolve
+  entity merge|split       Merge identities, and undo a merge
+  resolutions              Review how mentions were resolved
   assert                   Record a claim against a source event
   ask                      Query knowledge, optionally as of a past instant
   provenance               Walk a claim back to its source
@@ -102,7 +104,14 @@ func run(args []string) error {
 	case "predicate":
 		return withSubcommand(rest, map[string]appCommand{"define": cmdPredicateDefine, "ls": cmdPredicateList})
 	case "entity":
-		return withSubcommand(rest, map[string]appCommand{"ls": cmdEntityList})
+		return withSubcommand(rest, map[string]appCommand{
+			"ls":       cmdEntityList,
+			"identity": cmdEntityIdentity,
+			"merge":    cmdEntityMerge,
+			"split":    cmdEntitySplit,
+		})
+	case "resolutions":
+		return withApp(rest, cmdResolutions)
 	case "assert":
 		return withApp(rest, cmdAssert)
 	case "ask":

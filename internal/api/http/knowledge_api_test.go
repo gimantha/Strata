@@ -521,3 +521,124 @@ func TestIntegrationClaimValidationThroughTheAPI(t *testing.T) {
 		t.Fatalf("decode: %v", err)
 	}
 }
+
+func TestIntegrationEntityMergeAndSplitThroughTheAPI(t *testing.T) {
+	h := newAPIHarness(t)
+	owner := string(h.fixture.Primary.Principal.ID)
+	gs := string(h.fixture.Primary.GraphSpace.ID)
+
+	create := func(name string) string {
+		status, body := h.do(t, http.MethodPost, "/v1/graph-spaces/"+gs+"/entities", owner,
+			map[string]any{"canonical_name": name, "entity_type": "organization"}, nil)
+		if status != http.StatusCreated {
+			t.Fatalf("create entity returned %d: %s", status, body)
+		}
+		return decode(t, body)["id"].(string)
+	}
+
+	left := create("Acme Corp")
+	right := create("Acme Corporation Ltd")
+
+	// A merge must say why: it is the most damaging operation here if it is wrong.
+	status, body := h.do(t, http.MethodPost, "/v1/graph-spaces/"+gs+"/entities/merge", owner,
+		map[string]any{"from_entity_id": left, "into_entity_id": right}, nil)
+	if status != http.StatusBadRequest {
+		t.Fatalf("a merge without a reason must be refused, got %d: %s", status, body)
+	}
+
+	status, body = h.do(t, http.MethodPost, "/v1/graph-spaces/"+gs+"/entities/merge", owner,
+		map[string]any{"from_entity_id": left, "into_entity_id": right,
+			"reason": "same company, different spelling"}, nil)
+	if status != http.StatusOK {
+		t.Fatalf("merge returned %d: %s", status, body)
+	}
+	if decode(t, body)["method"] != string(domain.MethodHumanMerge) {
+		t.Fatalf("a merge must be recorded as a human decision: %s", body)
+	}
+
+	// The merged identity reports where it went, and both sides share one cluster.
+	status, body = h.do(t, http.MethodGet, "/v1/entities/"+left+"/identity", owner, nil, nil)
+	if status != http.StatusOK {
+		t.Fatalf("identity returned %d: %s", status, body)
+	}
+	identity := decode(t, body)
+	if identity["merged"] != true || identity["canonical_entity_id"] != right {
+		t.Fatalf("the merged identity must redirect to the survivor: %s", body)
+	}
+	if len(identity["cluster"].([]any)) != 2 {
+		t.Fatalf("both identities belong to one cluster: %s", body)
+	}
+
+	// The merged identity is still readable: nothing was deleted.
+	status, _ = h.do(t, http.MethodGet, "/v1/entities/"+left, owner, nil, nil)
+	if status != http.StatusOK {
+		t.Fatal("a merged identity must remain readable")
+	}
+
+	// Undo it.
+	status, body = h.do(t, http.MethodPost, "/v1/entities/"+left+"/split", owner,
+		map[string]any{"reason": "different subsidiaries after all"}, nil)
+	if status != http.StatusOK {
+		t.Fatalf("split returned %d: %s", status, body)
+	}
+
+	status, body = h.do(t, http.MethodGet, "/v1/entities/"+left+"/identity", owner, nil, nil)
+	if status != http.StatusOK {
+		t.Fatalf("identity returned %d: %s", status, body)
+	}
+	if decode(t, body)["merged"] != false {
+		t.Fatalf("after a split the identity stands on its own: %s", body)
+	}
+
+	// Both decisions survive in the ledger, with the merge marked reverted.
+	status, body = h.do(t, http.MethodGet, "/v1/graph-spaces/"+gs+"/resolution-decisions?review=true",
+		owner, nil, nil)
+	if status != http.StatusOK {
+		t.Fatalf("decisions returned %d: %s", status, body)
+	}
+	var sawRevertedMerge, sawSplit bool
+	for _, raw := range decode(t, body)["decisions"].([]any) {
+		decision := raw.(map[string]any)
+		switch decision["method"] {
+		case string(domain.MethodHumanMerge):
+			sawRevertedMerge = decision["reverted_at"] != nil
+		case string(domain.MethodHumanSplit):
+			sawSplit = true
+		}
+	}
+	if !sawRevertedMerge {
+		t.Fatalf("the reversed merge must remain, marked reverted: %s", body)
+	}
+	if !sawSplit {
+		t.Fatalf("the split must be recorded: %s", body)
+	}
+}
+
+func TestIntegrationResolutionDecisionsAreWorkspaceScoped(t *testing.T) {
+	h := newAPIHarness(t,
+		keyEntry{principalID: "acme-owner", secret: "a", systemRole: domain.RoleAdmin},
+		keyEntry{principalID: "globex-owner", secret: "b", systemRole: domain.RoleAdmin},
+	)
+	owner := string(h.fixture.Primary.Principal.ID)
+	gs := string(h.fixture.Primary.GraphSpace.ID)
+
+	_, body := h.do(t, http.MethodPost, "/v1/graph-spaces/"+gs+"/entities", owner,
+		map[string]any{"canonical_name": "Acme", "entity_type": "organization"}, nil)
+	entityID := decode(t, body)["id"].(string)
+
+	for _, path := range []string{
+		"/v1/entities/" + entityID + "/identity",
+		"/v1/graph-spaces/" + gs + "/resolution-decisions",
+	} {
+		status, body := h.do(t, http.MethodGet, path, "globex-owner", nil, nil)
+		if status != http.StatusNotFound {
+			t.Fatalf("%s leaked to another tenant with %d: %s", path, status, body)
+		}
+	}
+
+	status, body := h.do(t, http.MethodPost, "/v1/entities/"+entityID+"/split", "globex-owner",
+		map[string]any{"reason": "not mine to split"}, nil)
+	if status != http.StatusNotFound {
+		t.Fatalf("another tenant must not be able to split, got %d: %s", status, body)
+	}
+}

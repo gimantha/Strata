@@ -488,3 +488,209 @@ func splitList(value string) []string {
 	}
 	return out
 }
+
+// cmdEntityMerge redirects one identity into another. Nothing is deleted, so the operation
+// can be undone with "entity split".
+func cmdEntityMerge(ctx context.Context, a *app.App, args []string) error {
+	fs := flag.NewFlagSet("entity merge", flag.ContinueOnError)
+	graphSpace := fs.String("graph-space", "", "graph space id (required)")
+	from := fs.String("from", "", "entity id to redirect (required)")
+	into := fs.String("into", "", "entity id to keep (required)")
+	reason := fs.String("reason", "", "why these are the same thing (required)")
+	keyID := fs.String("key-id", "", "act as the principal behind this API key id")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *from == "" || *into == "" {
+		return errors.New("--from and --into are required")
+	}
+	if *reason == "" {
+		return errors.New("--reason is required: a wrong merge corrupts every fact about both identities")
+	}
+
+	principal, scope, err := resolveScopeForGraphSpace(ctx, a, *keyID, *graphSpace, domain.RoleAdmin)
+	if err != nil {
+		return err
+	}
+
+	decision, err := a.Ledger.MergeEntities(ctx, scope.WorkspaceID,
+		domain.EntityID(*from), domain.EntityID(*into), domain.ResolutionDecision{
+			WorkspaceID:  scope.WorkspaceID,
+			GraphSpaceID: scope.GraphSpaceID,
+			Confidence:   1,
+			ActorID:      principal.ID,
+			Reason:       *reason,
+		})
+	if err != nil {
+		return err
+	}
+	fmt.Printf("merged %s into %s\n  decision %s (reversible with: cgctl entity split --entity %s)\n",
+		*from, decision.ChosenEntityID, decision.ID, *from)
+	return nil
+}
+
+// cmdEntitySplit undoes a merge.
+func cmdEntitySplit(ctx context.Context, a *app.App, args []string) error {
+	fs := flag.NewFlagSet("entity split", flag.ContinueOnError)
+	entityID := fs.String("entity", "", "entity id to separate again (required)")
+	reason := fs.String("reason", "", "why the merge was wrong (required)")
+	keyID := fs.String("key-id", "", "act as the principal behind this API key id")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *entityID == "" || *reason == "" {
+		return errors.New("--entity and --reason are required")
+	}
+
+	principal, err := resolvePrincipal(ctx, a, *keyID)
+	if err != nil {
+		return err
+	}
+	allowed := make([]domain.WorkspaceID, 0, len(principal.Grants))
+	for _, grant := range principal.Grants {
+		allowed = append(allowed, grant.WorkspaceID)
+	}
+	ws, err := a.Ledger.ResolveEntityWorkspace(ctx, domain.EntityID(*entityID), allowed)
+	if err != nil {
+		return err
+	}
+	if err := a.Identity.AuthorizeWorkspace(ctx, principal, ws, domain.RoleAdmin); err != nil {
+		return err
+	}
+
+	entity, err := a.Ledger.GetEntity(ctx, ws, domain.EntityID(*entityID))
+	if err != nil {
+		return err
+	}
+	decision, err := a.Ledger.SplitEntity(ctx, ws, domain.EntityID(*entityID),
+		domain.ResolutionDecision{
+			WorkspaceID:  ws,
+			GraphSpaceID: entity.GraphSpaceID,
+			Confidence:   1,
+			ActorID:      principal.ID,
+			Reason:       *reason,
+		})
+	if err != nil {
+		return err
+	}
+	fmt.Printf("%s stands on its own again (decision %s)\n", *entityID, decision.ID)
+	return nil
+}
+
+// cmdEntityIdentity shows how an identity relates to others.
+func cmdEntityIdentity(ctx context.Context, a *app.App, args []string) error {
+	fs := flag.NewFlagSet("entity identity", flag.ContinueOnError)
+	entityID := fs.String("entity", "", "entity id (required)")
+	keyID := fs.String("key-id", "", "act as the principal behind this API key id")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *entityID == "" {
+		return errors.New("--entity is required")
+	}
+
+	principal, err := resolvePrincipal(ctx, a, *keyID)
+	if err != nil {
+		return err
+	}
+	allowed := make([]domain.WorkspaceID, 0, len(principal.Grants))
+	for _, grant := range principal.Grants {
+		allowed = append(allowed, grant.WorkspaceID)
+	}
+	id := domain.EntityID(*entityID)
+	ws, err := a.Ledger.ResolveEntityWorkspace(ctx, id, allowed)
+	if err != nil {
+		return err
+	}
+
+	entity, err := a.Ledger.GetEntity(ctx, ws, id)
+	if err != nil {
+		return err
+	}
+	canonical, err := a.Ledger.CanonicalEntityID(ctx, ws, id)
+	if err != nil {
+		return err
+	}
+	cluster, err := a.Ledger.IdentityCluster(ctx, ws, id)
+	if err != nil {
+		return err
+	}
+	identifiers, err := a.Ledger.ListIdentifiers(ctx, ws, id)
+	if err != nil {
+		return err
+	}
+	aliases, err := a.Ledger.ListAliases(ctx, ws, id)
+	if err != nil {
+		return err
+	}
+
+	fmt.Printf("entity %s\n  name: %s (%s)\n", entity.ID, entity.CanonicalName, entity.EntityType)
+	if canonical != id {
+		fmt.Printf("  merged into: %s\n", canonical)
+	}
+	if len(cluster) > 1 {
+		fmt.Printf("  identity cluster (%d):\n", len(cluster))
+		for _, member := range cluster {
+			marker := " "
+			if member == canonical {
+				marker = "*"
+			}
+			fmt.Printf("    %s %s\n", marker, member)
+		}
+	}
+	if len(identifiers) > 0 {
+		fmt.Println("  stable keys:")
+		for _, identifier := range identifiers {
+			fmt.Printf("    %s %s=%s\n", identifier.Kind, identifier.Namespace, identifier.Value)
+		}
+	}
+	if len(aliases) > 0 {
+		names := make([]string, 0, len(aliases))
+		for _, alias := range aliases {
+			names = append(names, alias.Alias)
+		}
+		fmt.Printf("  known names: %s\n", strings.Join(names, ", "))
+	}
+	return nil
+}
+
+// cmdResolutions shows the decision ledger, defaulting to the entries worth reviewing.
+func cmdResolutions(ctx context.Context, a *app.App, args []string) error {
+	fs := flag.NewFlagSet("resolutions", flag.ContinueOnError)
+	graphSpace := fs.String("graph-space", "", "graph space id (required)")
+	all := fs.Bool("all", false, "include routine automatic resolutions")
+	limit := fs.Int("limit", 50, "maximum rows")
+	keyID := fs.String("key-id", "", "act as the principal behind this API key id")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+
+	_, scope, err := resolveScopeForGraphSpace(ctx, a, *keyID, *graphSpace, domain.RoleReader)
+	if err != nil {
+		return err
+	}
+	decisions, err := a.Ledger.ListResolutionDecisions(ctx, scope, !*all, *limit)
+	if err != nil {
+		return err
+	}
+
+	tw := newTable("DECISION", "MENTION", "METHOD", "CHOSEN", "CANDIDATES", "REASON")
+	for _, decision := range decisions {
+		reason := decision.Reason
+		if decision.RevertedAt != nil {
+			reason = "[reverted] " + reason
+		}
+		row(tw, string(decision.ID), truncate(decision.MentionText, 24), string(decision.Method),
+			string(decision.ChosenEntityID), fmt.Sprint(len(decision.Candidates)),
+			truncate(reason, 40))
+	}
+	if err := tw.Flush(); err != nil {
+		return err
+	}
+
+	fmt.Printf("\n%d decision(s)\n", len(decisions))
+	if !*all {
+		fmt.Println("showing ambiguous outcomes and human overrides; pass --all for every resolution")
+	}
+	return nil
+}

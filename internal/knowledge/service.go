@@ -16,6 +16,7 @@ import (
 	tracenoop "go.opentelemetry.io/otel/trace/noop"
 
 	"github.com/gimantha/strata/internal/domain"
+	"github.com/gimantha/strata/internal/resolution"
 )
 
 // Store is the ledger surface this service needs, declared by its consumer.
@@ -26,6 +27,8 @@ type Store interface {
 	CreateEntity(ctx context.Context, e domain.Entity) (domain.Entity, error)
 	GetEntity(ctx context.Context, ws domain.WorkspaceID, id domain.EntityID) (domain.Entity, error)
 	FindEntitiesByName(ctx context.Context, scope domain.Scope, name string) ([]domain.Entity, error)
+	CanonicalEntityID(ctx context.Context, ws domain.WorkspaceID, id domain.EntityID) (domain.EntityID, error)
+	IdentityCluster(ctx context.Context, ws domain.WorkspaceID, id domain.EntityID) ([]domain.EntityID, error)
 
 	CommitKnowledge(ctx context.Context, commit domain.KnowledgeCommit) (domain.KnowledgeCommitResult, error)
 	GetAssertion(ctx context.Context, ws domain.WorkspaceID, id domain.AssertionID) (domain.Assertion, error)
@@ -39,16 +42,26 @@ type Store interface {
 
 // Service commits and queries canonical knowledge.
 type Service struct {
-	store  Store
-	now    func() time.Time
-	logger *slog.Logger
-	tracer trace.Tracer
+	store    Store
+	resolver Resolver
+	now      func() time.Time
+	logger   *slog.Logger
+	tracer   trace.Tracer
+}
+
+// Resolver decides which identity a mention refers to. It is an interface so the service
+// depends on the decision, not on how it was reached.
+type Resolver interface {
+	Resolve(ctx context.Context, scope domain.Scope, mention domain.Mention) (resolution.Result, error)
 }
 
 // Options configures the service.
 type Options struct {
 	// Now supplies knowledge time, injectable so temporal tests are deterministic.
 	Now func() time.Time
+	// Resolver decides identity. When absent the service builds the default one, which
+	// keeps callers that do not care about resolution tuning from having to wire it.
+	Resolver Resolver
 }
 
 // New builds the service.
@@ -60,14 +73,47 @@ func New(store Store, opts Options, logger *slog.Logger, tracer trace.Tracer) *S
 	if tracer == nil {
 		tracer = tracenoop.NewTracerProvider().Tracer("knowledge")
 	}
-	return &Service{store: store, now: now, logger: logger, tracer: tracer}
+
+	resolver := opts.Resolver
+	if resolver == nil {
+		if resolvable, ok := store.(resolution.Store); ok {
+			resolver = resolution.New(resolvable, resolution.DefaultOptions(), logger)
+		}
+	}
+	return &Service{store: store, resolver: resolver, now: now, logger: logger, tracer: tracer}
 }
 
-// EntityRef names a subject or object entity, either by identifier or by name.
+// EntityRef names a subject or object entity.
+//
+// The fields beyond name exist because a name is weak evidence of identity. When a source
+// supplies its own primary key or a business key, the resolver uses that instead, which is
+// the difference between recognizing a record and guessing at one
+// (AGENTS.md section 12.1).
 type EntityRef struct {
-	ID   domain.EntityID
-	Name string
-	Type string
+	ID      domain.EntityID
+	Name    string
+	Type    string
+	Aliases []string
+
+	// SourceID and ExternalID are the upstream system's identity for this record.
+	SourceID   *domain.SourceID
+	ExternalID string
+
+	// DomainKeys are configured business keys such as an email address.
+	DomainKeys []domain.DomainKey
+}
+
+// toMention converts a reference into what the resolver works with.
+func (r EntityRef) toMention(sourceEventID domain.SourceEventID) domain.Mention {
+	return domain.Mention{
+		Name:          r.Name,
+		EntityType:    r.Type,
+		Aliases:       r.Aliases,
+		SourceID:      r.SourceID,
+		ExternalID:    r.ExternalID,
+		DomainKeys:    r.DomainKeys,
+		SourceEventID: sourceEventID,
+	}
 }
 
 // EvidenceInput points a claim at the source material behind it.
@@ -291,24 +337,16 @@ func (s *Service) Assert(ctx context.Context, req AssertRequest) (AssertResult, 
 func (s *Service) buildAssertion(ctx context.Context, req AssertRequest, claim Claim, event domain.SourceEvent, derivationID *domain.DerivationID, now time.Time) (domain.Assertion, []domain.Entity, domain.PredicateDefinition, error) {
 	const op = "knowledge.buildAssertion"
 
-	var created []domain.Entity
-
-	subject, newSubject, err := s.resolveEntity(ctx, req.Scope, claim.Subject)
+	subject, err := s.resolveEntity(ctx, req.Scope, claim.Subject, req.SourceEventID)
 	if err != nil {
 		return domain.Assertion{}, nil, domain.PredicateDefinition{}, err
-	}
-	if newSubject != nil {
-		created = append(created, *newSubject)
 	}
 
 	object := claim.Object
 	if claim.ObjectEntity != nil {
-		objectEntity, newObject, err := s.resolveEntity(ctx, req.Scope, *claim.ObjectEntity)
+		objectEntity, err := s.resolveEntity(ctx, req.Scope, *claim.ObjectEntity, req.SourceEventID)
 		if err != nil {
 			return domain.Assertion{}, nil, domain.PredicateDefinition{}, err
-		}
-		if newObject != nil {
-			created = append(created, *newObject)
 		}
 		object = domain.ObjectOfEntity(objectEntity)
 	}
@@ -380,71 +418,46 @@ func (s *Service) buildAssertion(ctx context.Context, req AssertRequest, claim C
 		return domain.Assertion{}, nil, domain.PredicateDefinition{}, err
 	}
 	_ = op
-	return assertion, created, predicate, nil
+	// Identities are created by the resolver, which persists them along with the decision
+	// that produced them, so nothing further is created as part of the commit.
+	return assertion, nil, predicate, nil
 }
 
-// resolveEntity turns a reference into an identity, creating one when the name is new.
+// resolveEntity turns a reference into an identity.
 //
-// An ambiguous name is an error rather than a guess: silently picking one of several
-// matching identities is how a knowledge graph quietly merges two different people.
-// Real resolution, with aliases and embeddings, arrives in phase 4.
-func (s *Service) resolveEntity(ctx context.Context, scope domain.Scope, ref EntityRef) (domain.EntityID, *domain.Entity, error) {
+// An explicit identifier is used as given. Everything else goes through the resolution
+// ladder, which prefers stable keys over names and would rather create a duplicate than
+// merge two identities that might not be the same thing. Duplicates are mergeable later;
+// a wrong merge corrupts every fact about both (AGENTS.md section 12).
+func (s *Service) resolveEntity(ctx context.Context, scope domain.Scope, ref EntityRef, sourceEventID domain.SourceEventID) (domain.EntityID, error) {
 	const op = "knowledge.resolveEntity"
 
 	if !domain.IsZero(ref.ID) {
 		entity, err := s.store.GetEntity(ctx, scope.WorkspaceID, ref.ID)
 		if err != nil {
-			return "", nil, err
+			return "", err
 		}
 		if entity.GraphSpaceID != scope.GraphSpaceID {
-			return "", nil, domain.Errorf(domain.CodeNotFound, op, "entity not found in this graph space")
+			return "", domain.Errorf(domain.CodeNotFound, op, "entity not found in this graph space")
 		}
-		return entity.ID, nil, nil
+		// Follow any merge, so a claim about a redirected identity lands on the one that
+		// now represents it.
+		return s.store.CanonicalEntityID(ctx, scope.WorkspaceID, entity.ID)
 	}
 
-	if ref.Name == "" {
-		return "", nil, domain.Errorf(domain.CodeInvalidArgument, op,
-			"an entity reference needs an id or a name")
+	if s.resolver == nil {
+		return "", domain.Errorf(domain.CodeInternal, op, "no entity resolver is configured")
+	}
+	if ref.Name == "" && ref.ExternalID == "" && len(ref.DomainKeys) == 0 {
+		return "", domain.Errorf(domain.CodeInvalidArgument, op,
+			"an entity reference needs an id, a name, or a key")
 	}
 
-	matches, err := s.store.FindEntitiesByName(ctx, scope, ref.Name)
+	result, err := s.resolver.Resolve(ctx, scope, ref.toMention(sourceEventID))
 	if err != nil {
-		return "", nil, err
+		return "", err
 	}
-	if ref.Type != "" {
-		filtered := matches[:0]
-		for _, m := range matches {
-			if m.EntityType == ref.Type {
-				filtered = append(filtered, m)
-			}
-		}
-		matches = filtered
-	}
-
-	switch len(matches) {
-	case 1:
-		return matches[0].ID, nil, nil
-	case 0:
-		entityType := ref.Type
-		if entityType == "" {
-			entityType = "unknown"
-		}
-		entity := domain.Entity{
-			ID:            domain.NewEntityID(),
-			WorkspaceID:   scope.WorkspaceID,
-			GraphSpaceID:  scope.GraphSpaceID,
-			CanonicalName: ref.Name,
-			EntityType:    entityType,
-		}
-		if err := entity.Validate(); err != nil {
-			return "", nil, err
-		}
-		return entity.ID, &entity, nil
-	default:
-		return "", nil, domain.Errorf(domain.CodeConflict, op,
-			"%q matches %d entities in this graph space; specify an entity id",
-			ref.Name, len(matches))
-	}
+	return result.EntityID, nil
 }
 
 // reconcile decides what to do about a new claim that may contradict existing ones.
@@ -519,8 +532,54 @@ func (s *Service) Retract(ctx context.Context, ws domain.WorkspaceID, id domain.
 }
 
 // Query answers temporal and structural questions about committed knowledge.
+//
+// Entity filters are expanded through identity clusters first. A merge redirects an
+// identity without rewriting the assertions that named it, so asking about either side of a
+// merge has to reach the facts recorded under both - otherwise merging two identities would
+// appear to lose half of what is known about them (AGENTS.md section 12.3).
 func (s *Service) Query(ctx context.Context, q domain.AssertionQuery) ([]domain.Assertion, error) {
+	expandedSubjects, err := s.expandIdentities(ctx, q.Scope.WorkspaceID, q.SubjectIDs)
+	if err != nil {
+		return nil, err
+	}
+	q.SubjectIDs = expandedSubjects
+
+	expandedObjects, err := s.expandIdentities(ctx, q.Scope.WorkspaceID, q.ObjectEntityIDs)
+	if err != nil {
+		return nil, err
+	}
+	q.ObjectEntityIDs = expandedObjects
+
 	return s.store.QueryAssertions(ctx, q)
+}
+
+// expandIdentities replaces each identity with every identity that resolves to the same
+// thing.
+func (s *Service) expandIdentities(ctx context.Context, ws domain.WorkspaceID, ids []domain.EntityID) ([]domain.EntityID, error) {
+	if len(ids) == 0 {
+		return ids, nil
+	}
+
+	seen := map[domain.EntityID]bool{}
+	out := make([]domain.EntityID, 0, len(ids))
+	for _, id := range ids {
+		cluster, err := s.store.IdentityCluster(ctx, ws, id)
+		if err != nil {
+			if domain.IsCode(err, domain.CodeNotFound) {
+				// An unknown identity matches nothing, which a query should report as no
+				// results rather than as an error.
+				continue
+			}
+			return nil, err
+		}
+		for _, member := range cluster {
+			if !seen[member] {
+				seen[member] = true
+				out = append(out, member)
+			}
+		}
+	}
+	return out, nil
 }
 
 // Get loads one claim.

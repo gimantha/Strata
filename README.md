@@ -13,9 +13,9 @@ this file.
 
 ## Status
 
-Phases 0 through 3 of the contract are implemented: the architecture skeleton, the
-canonical ingestion ledger, the assertion-first knowledge model, and schema-constrained
-extraction.
+Phases 0 through 4 of the contract are implemented: the architecture skeleton, the
+canonical ingestion ledger, the assertion-first knowledge model, schema-constrained
+extraction, and conservative entity resolution.
 
 **Working today**
 
@@ -49,9 +49,14 @@ extraction.
   rather than prompts and never a credential
 - Layered injection defenses: unforgeable delimiters, schema-constrained output validated
   locally, verbatim quote grounding, and quarantine for claims planted inside instructions
+- Entity resolution up an evidence ladder: upstream primary keys, configured business keys,
+  then exact names. Similar names generate candidates for review and never resolve on their
+  own, because measured similarity cannot separate a typo from a different person
+- Reversible merges: a merged identity is redirected, never collapsed, so a mistaken merge
+  is undone by clearing a pointer rather than reconstructing history
+- A decision ledger recording every resolution with its candidates, scores, and reasons
 
-**Not built yet** (later phases, in order): entity resolution beyond exact-name matching,
-the full temporal reconciler, retrieval projections, hybrid
+**Not built yet** (later phases, in order): the full temporal reconciler, retrieval projections, hybrid
 retrieval, context assembly, ontology mode, CDC connectors, ABAC policy, memory lifecycle,
 MCP, and distributed operation.
 
@@ -158,6 +163,7 @@ internal/ingest     The one path by which knowledge enters
 internal/knowledge  Claims into committed canonical knowledge
 internal/llm        Provider-independent model interface and adapters
 internal/normalize  Deterministic decode, segment, chunk
+internal/resolution Which identity a mention refers to
 internal/pipeline   Stage orchestration and durable stage state
 internal/eventbus   Work fabric: the transactional outbox
 internal/identity   Authentication and scope resolution
@@ -180,4 +186,6 @@ are declared by the services that consume them; implementations live under `stor
   provenance
 - [docs/api/extraction.md](docs/api/extraction.md) — model configuration, injection
   defenses, model runs
+- [docs/api/resolution.md](docs/api/resolution.md) — the evidence ladder, reversible
+  merges, the decision ledger
 - [docs/adr/](docs/adr/) — decisions, alternatives, and trade-offs
