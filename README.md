@@ -13,9 +13,9 @@ this file.
 
 ## Status
 
-Phases 0 through 4 of the contract are implemented: the architecture skeleton, the
+Phases 0 through 5 of the contract are implemented: the architecture skeleton, the
 canonical ingestion ledger, the assertion-first knowledge model, schema-constrained
-extraction, and conservative entity resolution.
+extraction, conservative entity resolution, and multi-temporal reconciliation.
 
 **Working today**
 
@@ -55,8 +55,13 @@ extraction, and conservative entity resolution.
 - Reversible merges: a merged identity is redirected, never collapsed, so a mistaken merge
   is undone by clearing a pointer rather than reconstructing history
 - A decision ledger recording every resolution with its candidates, scores, and reasons
+- Reconciliation that follows the source's own ordering rather than arrival order, so a CDC
+  stream delivering updates out of order converges to the same state either way
+- Predicate conflict policies driven automatically, including authority-weighted resolution
+  from registered source trust, with equal authority producing a conflict rather than a
+  coin flip
 
-**Not built yet** (later phases, in order): the full temporal reconciler, retrieval projections, hybrid
+**Not built yet** (later phases, in order): retrieval projections, hybrid
 retrieval, context assembly, ontology mode, CDC connectors, ABAC policy, memory lifecycle,
 MCP, and distributed operation.
 

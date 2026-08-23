@@ -34,6 +34,9 @@ type Store interface {
 	GetAssertion(ctx context.Context, ws domain.WorkspaceID, id domain.AssertionID) (domain.Assertion, error)
 	QueryAssertions(ctx context.Context, q domain.AssertionQuery) ([]domain.Assertion, error)
 	FindOverlappingClaims(ctx context.Context, a domain.Assertion) ([]domain.Assertion, error)
+	SourceAuthority(ctx context.Context, ws domain.WorkspaceID, eventID domain.SourceEventID) (domain.TrustLevel, error)
+	SupersedeAssertions(ctx context.Context, ws domain.WorkspaceID, ids []domain.AssertionID, at time.Time) ([]domain.AssertionID, error)
+	SupersedeWithLink(ctx context.Context, ws domain.WorkspaceID, superseding domain.AssertionID, superseded []domain.AssertionID, at time.Time) ([]domain.AssertionID, error)
 	RetractAssertion(ctx context.Context, ws domain.WorkspaceID, id domain.AssertionID, at time.Time, reason string, actor domain.PrincipalID) (domain.Assertion, error)
 	ProvenanceChain(ctx context.Context, ws domain.WorkspaceID, id domain.AssertionID) (domain.ProvenanceChain, error)
 	CreateConflictSet(ctx context.Context, set domain.ConflictSet, members []domain.AssertionID) (domain.ConflictSet, error)
@@ -42,11 +45,12 @@ type Store interface {
 
 // Service commits and queries canonical knowledge.
 type Service struct {
-	store    Store
-	resolver Resolver
-	now      func() time.Time
-	logger   *slog.Logger
-	tracer   trace.Tracer
+	store      Store
+	resolver   Resolver
+	reconciler *Reconciler
+	now        func() time.Time
+	logger     *slog.Logger
+	tracer     trace.Tracer
 }
 
 // Resolver decides which identity a mention refers to. It is an interface so the service
@@ -80,7 +84,14 @@ func New(store Store, opts Options, logger *slog.Logger, tracer trace.Tracer) *S
 			resolver = resolution.New(resolvable, resolution.DefaultOptions(), logger)
 		}
 	}
-	return &Service{store: store, resolver: resolver, now: now, logger: logger, tracer: tracer}
+	return &Service{
+		store:      store,
+		resolver:   resolver,
+		reconciler: NewReconciler(store, logger),
+		now:        now,
+		logger:     logger,
+		tracer:     tracer,
+	}
 }
 
 // EntityRef names a subject or object entity.
@@ -192,6 +203,10 @@ type AssertResult struct {
 	Duplicates int
 	Superseded []domain.AssertionID
 	Conflicts  []domain.ConflictSet
+	// SupersededOnArrival names claims that were already out of date when they arrived,
+	// because the source had told us about a later state of the same record first. They
+	// are recorded but never became current belief (AGENTS.md section 11.4).
+	SupersededOnArrival []domain.AssertionID
 }
 
 // Assert commits claims to the ledger.
@@ -301,25 +316,34 @@ func (s *Service) Assert(ctx context.Context, req AssertRequest) (AssertResult, 
 	result.Duplicates = committed.Duplicates
 	result.Superseded = committed.Superseded
 
-	// Conflict detection runs after the commit: a claim has to exist before it can be
-	// compared with what it might contradict, and the comparison must never delete
-	// either side (AGENTS.md section 14.2).
+	// Reconciliation runs after the commit: a claim has to exist before it can be compared
+	// with what it might contradict, and the comparison never deletes either side
+	// (AGENTS.md section 14.2).
 	for _, assertion := range committed.Assertions {
-		// A quarantined claim is not believed, so it cannot contradict anything. Letting
-		// it open conflict sets would let untrusted material cast doubt on good knowledge.
-		if assertion.Status == domain.AssertionQuarantined {
-			continue
-		}
 		predicate, ok := predicates[assertion.Predicate.Name]
-		if !ok || predicate.AllowsMultipleValues() {
+		if !ok {
 			continue
 		}
-		conflict, err := s.reconcile(ctx, assertion, predicate, now)
+
+		outcome, err := s.reconciler.Reconcile(ctx, assertion.WithSourceID(event.SourceID),
+			predicate, now)
 		if err != nil {
 			return AssertResult{}, err
 		}
-		if conflict != nil {
-			result.Conflicts = append(result.Conflicts, *conflict)
+
+		result.Superseded = append(result.Superseded, outcome.Superseded...)
+		if outcome.Conflict != nil {
+			result.Conflicts = append(result.Conflicts, *outcome.Conflict)
+		}
+		if outcome.SupersededSelf {
+			// A late arrival describing a state the source has already moved past. It is
+			// recorded, because it is what the source said, but it was never current
+			// belief and must not become it.
+			if _, err := s.store.SupersedeAssertions(ctx, assertion.WorkspaceID,
+				[]domain.AssertionID{assertion.ID}, now); err != nil {
+				return AssertResult{}, err
+			}
+			result.SupersededOnArrival = append(result.SupersededOnArrival, assertion.ID)
 		}
 	}
 
@@ -458,72 +482,6 @@ func (s *Service) resolveEntity(ctx context.Context, scope domain.Scope, ref Ent
 		return "", err
 	}
 	return result.EntityID, nil
-}
-
-// reconcile decides what to do about a new claim that may contradict existing ones.
-//
-// Phase 2 handles the unambiguous cases: values that may coexist are left alone, and a
-// predicate whose policy is latest-wins supersedes what it replaces. Anything else that
-// genuinely overlaps becomes a conflict set, so the disagreement is recorded rather than
-// resolved by guesswork. Authority-weighted and out-of-order resolution arrive with the
-// full reconciler in phase 5 (AGENTS.md sections 14, 36).
-func (s *Service) reconcile(ctx context.Context, assertion domain.Assertion, predicate domain.PredicateDefinition, now time.Time) (*domain.ConflictSet, error) {
-	overlapping, err := s.store.FindOverlappingClaims(ctx, assertion)
-	if err != nil {
-		return nil, err
-	}
-
-	var competing []domain.AssertionID
-	for _, other := range overlapping {
-		// Same value is corroboration, not contradiction.
-		if other.Object.Key() == assertion.Object.Key() {
-			continue
-		}
-		competing = append(competing, other.ID)
-	}
-	if len(competing) == 0 {
-		return nil, nil
-	}
-
-	if predicate.ConflictPolicy == domain.ConflictPolicyLatestWins {
-		// The newer claim wins on knowledge time; the older one stays queryable as of
-		// any earlier instant.
-		if _, err := s.store.CommitKnowledge(ctx, domain.KnowledgeCommit{
-			Scope:         domain.Scope{WorkspaceID: assertion.WorkspaceID, GraphSpaceID: assertion.GraphSpaceID},
-			SourceEventID: assertion.SourceEventID,
-			SupersededAt:  now,
-			Assertions: []domain.AssertionCommit{{
-				Assertion:     assertion,
-				SupersedesIDs: competing,
-			}},
-		}); err != nil {
-			return nil, err
-		}
-		return nil, nil
-	}
-
-	set, err := s.store.CreateConflictSet(ctx, domain.ConflictSet{
-		WorkspaceID:  assertion.WorkspaceID,
-		GraphSpaceID: assertion.GraphSpaceID,
-		SubjectID:    assertion.SubjectID,
-		Predicate:    assertion.Predicate.Name,
-		ScopeKey:     assertion.ScopeKey,
-		Reason: "overlapping values for a " + string(predicate.ConflictPolicy) +
-			" predicate that does not permit multiple simultaneous values",
-		Resolution: domain.ConflictOpen,
-	}, append(competing, assertion.ID))
-	if err != nil {
-		return nil, err
-	}
-
-	if s.logger != nil {
-		s.logger.WarnContext(ctx, "conflicting claims recorded rather than resolved",
-			slog.String("subject_id", string(assertion.SubjectID)),
-			slog.String("predicate", assertion.Predicate.Name),
-			slog.String("conflict_set_id", string(set.ID)),
-			slog.Int("claims", len(competing)+1))
-	}
-	return &set, nil
 }
 
 // Retract withdraws a claim without replacing it.

@@ -287,6 +287,66 @@ func (s *Store) RetractAssertion(ctx context.Context, ws domain.WorkspaceID, id 
 	return retracted, nil
 }
 
+// SupersedeWithLink marks claims as replaced and records which claim replaced them.
+//
+// The link is written onto the superseding claim as part of the same transaction that
+// closes the superseded ones' knowledge-time window. It is filled exactly once, when
+// supersession happens, and never changed afterwards: like superseded_at, it is a
+// knowledge-time fact about the claim rather than an edit to what the claim says.
+func (s *Store) SupersedeWithLink(ctx context.Context, ws domain.WorkspaceID, superseding domain.AssertionID, superseded []domain.AssertionID, at time.Time) ([]domain.AssertionID, error) {
+	const op = "ledger.SupersedeWithLink"
+
+	if len(superseded) == 0 {
+		return nil, nil
+	}
+
+	var closed []domain.AssertionID
+	err := s.InTx(ctx, func(tx pgx.Tx) error {
+		var err error
+		closed, err = s.supersedeTx(ctx, tx, ws, superseded, at)
+		if err != nil {
+			return err
+		}
+		if len(closed) == 0 {
+			return nil
+		}
+		// Only a single-predecessor supersession can be expressed as one link. When a
+		// claim replaces several at once the relationship lives in their closed
+		// knowledge-time windows, which is where a reader looks anyway.
+		if len(closed) == 1 {
+			if _, err := tx.Exec(ctx, `
+				UPDATE assertions SET supersedes_id = $3
+				WHERE workspace_id = $1 AND id = $2 AND supersedes_id IS NULL`,
+				ws, superseding, closed[0]); err != nil {
+				return mapError(err, op, "cannot link supersession")
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return closed, nil
+}
+
+// SupersedeAssertions marks claims as replaced by later knowledge.
+//
+// The reconciler uses this for a late-arriving claim that the source has already moved past:
+// it was superseded before anyone learned it, so its knowledge-time window opens and closes
+// at the same instant.
+func (s *Store) SupersedeAssertions(ctx context.Context, ws domain.WorkspaceID, ids []domain.AssertionID, at time.Time) ([]domain.AssertionID, error) {
+	var superseded []domain.AssertionID
+	err := s.InTx(ctx, func(tx pgx.Tx) error {
+		var err error
+		superseded, err = s.supersedeTx(ctx, tx, ws, ids, at)
+		return err
+	})
+	if err != nil {
+		return nil, err
+	}
+	return superseded, nil
+}
+
 // QueryAssertions answers the temporal questions from AGENTS.md section 7.3.
 //
 // The two filters that matter most are independent. valid_at asks what held in the world
@@ -420,19 +480,21 @@ func (s *Store) QueryAssertions(ctx context.Context, q domain.AssertionQuery) ([
 func (s *Store) FindOverlappingClaims(ctx context.Context, a domain.Assertion) ([]domain.Assertion, error) {
 	const op = "ledger.FindOverlappingClaims"
 
-	rows, err := s.pool.Query(ctx, `SELECT `+assertionColumns+` FROM assertions
-		WHERE workspace_id = $1
-		  AND graph_space_id = $2
-		  AND subject_id = $3
-		  AND predicate_name = $4
-		  AND scope_key = $5
-		  AND status IN ('active', 'disputed')
-		  AND id <> $6
+	rows, err := s.pool.Query(ctx, `SELECT `+prefixColumns("a", assertionColumns)+`, se.source_id
+		FROM assertions a
+		JOIN source_events se ON se.id = a.source_event_id
+		WHERE a.workspace_id = $1
+		  AND a.graph_space_id = $2
+		  AND a.subject_id = $3
+		  AND a.predicate_name = $4
+		  AND a.scope_key = $5
+		  AND a.status IN ('active', 'disputed')
+		  AND a.id <> $6
 		  -- Half-open overlap: a claim that ends exactly when another begins is a clean
 		  -- handover, not a contradiction.
-		  AND (valid_to IS NULL OR $7::timestamptz IS NULL OR valid_to > $7)
-		  AND (valid_from IS NULL OR $8::timestamptz IS NULL OR valid_from < $8)
-		ORDER BY recorded_at`,
+		  AND (a.valid_to IS NULL OR $7::timestamptz IS NULL OR a.valid_to > $7)
+		  AND (a.valid_from IS NULL OR $8::timestamptz IS NULL OR a.valid_from < $8)
+		ORDER BY a.recorded_at`,
 		a.WorkspaceID, a.GraphSpaceID, a.SubjectID, a.Predicate.Name, a.ScopeKey, a.ID,
 		a.Temporal.ValidFrom, a.Temporal.ValidTo)
 	if err != nil {
@@ -442,11 +504,11 @@ func (s *Store) FindOverlappingClaims(ctx context.Context, a domain.Assertion) (
 
 	var out []domain.Assertion
 	for rows.Next() {
-		claim, err := scanAssertion(rowAdapter{rows}, op)
+		claim, sourceID, err := scanAssertionWithSource(rowAdapter{rows}, op)
 		if err != nil {
 			return nil, err
 		}
-		out = append(out, claim)
+		out = append(out, claim.WithSourceID(sourceID))
 	}
 	return out, mapError(rows.Err(), op, "cannot find overlapping claims")
 }
@@ -461,7 +523,18 @@ func idStrings[T ~string](ids []T) []string {
 
 func enumStrings[T ~string](values []T) []string { return idStrings(values) }
 
+// scanAssertionWithSource scans an assertion followed by its source id.
+func scanAssertionWithSource(row pgx.Row, op string) (domain.Assertion, domain.SourceID, error) {
+	var sourceID domain.SourceID
+	assertion, err := scanAssertionInto(row, op, &sourceID)
+	return assertion, sourceID, err
+}
+
 func scanAssertion(row pgx.Row, op string) (domain.Assertion, error) {
+	return scanAssertionInto(row, op)
+}
+
+func scanAssertionInto(row pgx.Row, op string, extra ...any) (domain.Assertion, error) {
 	var (
 		a              domain.Assertion
 		objectEntityID *string
@@ -481,7 +554,7 @@ func scanAssertion(row pgx.Row, op string) (domain.Assertion, error) {
 		derivationID   *string
 	)
 
-	err := row.Scan(&a.ID, &a.WorkspaceID, &a.GraphSpaceID, &a.SubjectID, &a.Predicate.ID,
+	dest := []any{&a.ID, &a.WorkspaceID, &a.GraphSpaceID, &a.SubjectID, &a.Predicate.ID,
 		&a.Predicate.Name, &a.Predicate.Version,
 		&a.Object.Kind, &objectEntityID, &objectText, &objectInteger, &objectDecimal, &objectBoolean,
 		&objectTime, &objectDate, &objectDuration, &objectLat, &objectLon, &objectJSON, new(string),
@@ -493,7 +566,10 @@ func scanAssertion(row pgx.Row, op string) (domain.Assertion, error) {
 		&a.Temporal.DecayStartsAt, &a.Temporal.ExpiresAt,
 		&a.Confidence, &breakdown, &a.Status, &supersedesID, &conflictSetID, &a.ProvenanceMode,
 		&derivationID, &a.SourceEventID, &a.Fingerprint, &a.RetractedAt, &a.RetractionReason,
-		&a.Classification, &a.CreatedBy.ID, &a.CreatedBy.Kind, &a.CreatedBy.DisplayName, &a.CreatedAt)
+		&a.Classification, &a.CreatedBy.ID, &a.CreatedBy.Kind, &a.CreatedBy.DisplayName, &a.CreatedAt}
+	dest = append(dest, extra...)
+
+	err := row.Scan(dest...)
 	if err != nil {
 		if isNoRows(err) {
 			return domain.Assertion{}, domain.Errorf(domain.CodeNotFound, op, "assertion not found")
@@ -722,4 +798,27 @@ func (s *Store) resolveOwningWorkspace(ctx context.Context, table, id string, al
 		return "", mapError(err, op, "cannot resolve owning workspace")
 	}
 	return found, nil
+}
+
+// SourceAuthority reports how far the source behind an event is trusted.
+//
+// Authority-weighted conflict resolution needs this: when two claims disagree, which source
+// said it is often the only thing that can settle the matter without guessing
+// (AGENTS.md sections 14.1, 24).
+func (s *Store) SourceAuthority(ctx context.Context, ws domain.WorkspaceID, eventID domain.SourceEventID) (domain.TrustLevel, error) {
+	const op = "ledger.SourceAuthority"
+
+	var trust domain.TrustLevel
+	err := s.pool.QueryRow(ctx, `
+		SELECT sr.trust_level
+		FROM source_events se
+		JOIN sources sr ON sr.id = se.source_id
+		WHERE se.workspace_id = $1 AND se.id = $2`, ws, eventID).Scan(&trust)
+	if err != nil {
+		if isNoRows(err) {
+			return "", domain.Errorf(domain.CodeNotFound, op, "source event not found")
+		}
+		return "", mapError(err, op, "cannot read source authority")
+	}
+	return trust, nil
 }

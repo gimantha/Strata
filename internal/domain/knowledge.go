@@ -247,6 +247,10 @@ type Assertion struct {
 	Classification Classification
 	CreatedBy      PrincipalRef
 	CreatedAt      time.Time
+
+	// sourceID is derived from the source event rather than stored on the assertion. It
+	// is unexported so it cannot be set independently of the event it must agree with.
+	sourceID SourceID
 }
 
 func (a Assertion) Validate() error {
@@ -309,6 +313,18 @@ func (a Assertion) ComputeFingerprint() string {
 		string(a.SourceEventID),
 		string(a.ProvenanceMode),
 	)
+}
+
+// SourceID reports which source produced this claim, when that is known from its temporal
+// coordinates. Sequences from different sources are not on one timeline, so ordering has to
+// know whether two claims even came from the same place.
+func (a Assertion) SourceID() SourceID { return a.sourceID }
+
+// WithSourceID records the originating source. It is set when a claim is loaded, rather
+// than stored twice, since the source event already names it.
+func (a Assertion) WithSourceID(id SourceID) Assertion {
+	a.sourceID = id
+	return a
 }
 
 // BelievedAt reports whether the system held this claim at knowledge time k.

@@ -232,6 +232,40 @@ Every hop is present, ending at the content-addressed bytes the claim came from.
 claim additionally carries `derivation`, including the assertions it reasoned from. A fact
 that cannot be walked back this way is a fact the system should not be asserting.
 
+## Reconciliation
+
+When a new claim overlaps an existing one for a predicate that does not permit multiple
+values, the reconciler decides what happens. Two questions are asked in order.
+
+**First: has the source already moved past this?** Source ordering is read from sequence or
+LSN, then version, then commit time, then source time. If the source says this claim
+describes an older state of the record, it is *superseded on arrival* — recorded, because it
+is what the source said, but never current belief. Arrival order is irrelevant: a CDC stream
+delivering update 102 before 101 converges to exactly the state in-order delivery would have
+produced. Positions from different sources are never compared, since they are not on one
+timeline. See [ADR 0010](../adr/0010-source-order-over-arrival-order.md).
+
+**Then: what does the predicate's policy say?**
+
+| Policy | Behavior |
+|---|---|
+| `coexist` | Nothing to reconcile; both values stand |
+| `latest_wins` | The newer claim supersedes what it replaces |
+| `highest_authority` | The more trusted source wins; equal trust produces a conflict |
+| `manual` | Both claims kept, disagreement recorded |
+
+Authority comes from the registered source's `trust_level`, so it is configuration rather
+than a guess. Equal authority is deliberately a conflict: picking a winner between two
+equally trusted systems would be arbitrary, and an arbitrary answer is an invisible wrong
+answer.
+
+Claims whose validity intervals do not actually overlap never conflict. A tenancy ending the
+day the next begins is a clean handover, because intervals are half-open.
+
+`AssertResult` reports the outcome: `superseded` for claims this one replaced,
+`superseded_on_arrival` when the new claim was the stale one, and `conflicts` for
+disagreements that were recorded rather than resolved.
+
 ## Conflicts
 
 | Method | Path | Requires |
