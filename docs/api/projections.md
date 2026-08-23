@@ -35,9 +35,25 @@ claim is one lookup away.
 | `CG_EMBEDDING_MODEL` | Required for `openai` |
 | `CG_EMBEDDING_API_KEY` | Held in memory only, never stored or logged |
 
-**An embedder is optional.** Without one, the lexical and graph projections still work: text
-search and traversal need no model. Vector search is simply unavailable, and a later rebuild
-fills it in once a provider is configured.
+### On the embedder being optional
+
+Embeddings are a *retrieval* mechanism here, not the comprehension step. Documents are
+turned into knowledge earlier and by other means: deterministic segmentation and chunking
+(phase 1), then extraction by a chat model into entities and assertions (phase 3). By the
+time projections run, "Acme supplies fasteners" is already a claim with a subject, a
+predicate, and a graph edge — not an opaque vector. `CG_LLM_PROVIDER` and
+`CG_EMBEDDING_PROVIDER` are independent, so extraction can run with embeddings off.
+
+Without an embedder you keep: full-text and exact-identifier search, structured and temporal
+assertion queries, entity lookup by name and alias, and graph traversal.
+
+What you lose is **paraphrase matching**, and the loss is real. A query for "bolts and
+screws" returns nothing against stored text reading "industrial fasteners", and neither does
+"who is the vendor" against "supplies". No shared vocabulary, no lexical hit.
+
+So: running without an embedder degrades one retrieval path, it does not stop the system
+understanding documents. That distinction is why the dependency is optional at all — an
+outage at an embeddings endpoint should not halt ingestion.
 
 The projection schema holds **1536-dimension** vectors. A model of another width is rejected
 at startup rather than at first use, because discovering the mismatch when the first

@@ -62,7 +62,9 @@ retrieval projections.
   from registered source trust, with equal authority producing a conflict rather than a
   coin flip
 - Vector, lexical, and graph projections over chunks, claims, and identities, with filters
-  applied before ranking and traversal bounded by depth
+  applied before ranking and traversal bounded by depth. Embeddings are one retrieval path,
+  not the comprehension step: documents become entities and assertions through extraction,
+  so running without an embedder costs paraphrase matching rather than understanding
 - Projections that hold no history: dropping all of them and replaying from the ledger
   produces equivalent retrieval results, which a test checks rather than assumes
 
