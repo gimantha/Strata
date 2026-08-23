@@ -30,7 +30,7 @@ claim is one lookup away.
 
 | Variable | Meaning |
 |---|---|
-| `CG_EMBEDDING_PROVIDER` | `none` (default), `mock`, or `openai` |
+| `CG_EMBEDDING_PROVIDER` | `none` (default), `hashing`, `mock`, or `openai` |
 | `CG_EMBEDDING_BASE_URL` | Any OpenAI-compatible endpoint |
 | `CG_EMBEDDING_MODEL` | Required for `openai` |
 | `CG_EMBEDDING_API_KEY` | Held in memory only, never stored or logged |
@@ -43,6 +43,11 @@ turned into knowledge earlier and by other means: deterministic segmentation and
 time projections run, "Acme supplies fasteners" is already a claim with a subject, a
 predicate, and a graph edge — not an opaque vector. `CG_LLM_PROVIDER` and
 `CG_EMBEDDING_PROVIDER` are independent, so extraction can run with embeddings off.
+
+`hashing` computes feature hashes locally: real cosine structure, no API key, and no
+generalization across synonyms — "car" and "automobile" stay unrelated. It is enough to make
+vector retrieval work offline and in tests. `mock` is a deterministic hash with no structure
+at all; it exercises the plumbing and should never be mistaken for a model.
 
 Without an embedder you keep: full-text and exact-identifier search, structured and temporal
 assertion queries, entity lookup by name and alias, and graph traversal.

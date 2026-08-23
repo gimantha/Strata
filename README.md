@@ -72,7 +72,13 @@ retrieval projections.
   evaluation corpus hybrid beats every individual mode on both recall@5 and MRR — a measured
   assertion in the test suite, not a claim
 
-**Not built yet** (later phases, in order): context assembly, ontology mode, CDC connectors, ABAC policy, memory lifecycle,
+- Context assembly under a hard token budget: greedy selection with redundancy reduction,
+  per-section shares, conflict annotation, and a citation for every rendered item — reserved
+  before the item is written, so a block never carries a marker whose reference did not fit.
+  Against top-k at an equal budget it covers more distinct facts with less than half the
+  repetition, measured rather than asserted
+
+**Not built yet** (later phases, in order): ontology mode, CDC connectors, ABAC policy, memory lifecycle,
 MCP, and distributed operation.
 
 ## Quickstart
@@ -113,6 +119,9 @@ go run ./cmd/cgctl event status --id <source_event_id>
 
 # 8. Ask it something
 go run ./cmd/cgctl search --graph-space "$GS" --query "who confirmed the renewal" --explain
+
+# 9. Get context for a prompt, with citations, inside a token budget
+go run ./cmd/cgctl context --graph-space "$GS" --query "who confirmed the renewal" --budget 800
 ```
 
 Over HTTP:
@@ -130,6 +139,10 @@ curl -s -X POST "localhost:8080/v1/graph-spaces/$GS/episodes" \
 curl -s -X POST "localhost:8080/v1/graph-spaces/$GS/query" \
   -H "Authorization: Bearer <key_id>.<secret>" \
   -d '{"query":"who confirmed the renewal","explain":true}'
+
+curl -s -X POST "localhost:8080/v1/graph-spaces/$GS/context" \
+  -H "Authorization: Bearer <key_id>.<secret>" \
+  -d '{"query":"who confirmed the renewal","token_budget":800}'
 ```
 
 See [docs/api/ingest.md](docs/api/ingest.md) for the full surface.
@@ -226,4 +239,6 @@ are declared by the services that consume them; implementations live under `stor
   projections, and rebuilding them
 - [docs/api/retrieval.md](docs/api/retrieval.md) — query planning, the five retrievers,
   fusion, filters, and explain
+- [docs/api/context.md](docs/api/context.md) — prompt-ready blocks, the token budget,
+  citations, and the injection boundary
 - [docs/adr/](docs/adr/) — decisions, alternatives, and trade-offs

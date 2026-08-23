@@ -10,6 +10,7 @@ import (
 	tracenoop "go.opentelemetry.io/otel/trace/noop"
 
 	"github.com/gimantha/strata/internal/config"
+	"github.com/gimantha/strata/internal/contextblock"
 	"github.com/gimantha/strata/internal/domain"
 	"github.com/gimantha/strata/internal/identity"
 	"github.com/gimantha/strata/internal/ingest"
@@ -30,6 +31,7 @@ type Server struct {
 	gateway   *ingest.Gateway
 	knowledge *knowledge.Service
 	retriever *retrieval.Retriever
+	assembler *contextblock.Assembler
 	blobs     healthChecker
 	clock     func() time.Time
 	http      *http.Server
@@ -59,6 +61,7 @@ type Deps struct {
 	Gateway   *ingest.Gateway
 	Knowledge *knowledge.Service
 	Retriever *retrieval.Retriever
+	Assembler *contextblock.Assembler
 	Blobs     healthChecker
 	// Clock overrides the wall clock, for deterministic tests.
 	Clock func() time.Time
@@ -80,6 +83,7 @@ func NewServer(deps Deps) *Server {
 		gateway:   deps.Gateway,
 		knowledge: deps.Knowledge,
 		retriever: deps.Retriever,
+		assembler: deps.Assembler,
 		blobs:     deps.Blobs,
 		clock:     deps.Clock,
 	}
@@ -144,6 +148,9 @@ func (s *Server) Handler() http.Handler {
 
 	// Hybrid retrieval.
 	mux.HandleFunc("POST /v1/graph-spaces/{graph_space_id}/query", s.authenticated(s.handleQuery))
+
+	// Context assembly.
+	mux.HandleFunc("POST /v1/graph-spaces/{graph_space_id}/context", s.authenticated(s.handleContext))
 	mux.HandleFunc("POST /v1/conflicts/{conflict_id}/resolve", s.authenticated(s.handleResolveConflict))
 
 	var h http.Handler = mux

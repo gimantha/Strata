@@ -654,3 +654,25 @@ func (o AssertionObject) MarshalJSON() ([]byte, error) {
 	}
 	return json.Marshal(out)
 }
+
+// ChunkProvenance is a chunk resolved to the ingestion behind it.
+//
+// Enough to cite a quoted excerpt: which passage, from which episode, from which event,
+// from which source, and how far that source is trusted.
+type ChunkProvenance struct {
+	Chunk Chunk
+
+	EpisodeSequence int64
+	EventTime       *time.Time
+	ObservedAt      time.Time
+	EpisodeLocator  Locator
+
+	SourceEventID   SourceEventID
+	SourceEventTime *time.Time
+	RecordedAt      time.Time
+
+	SourceID   SourceID
+	SourceName string
+	SourceKind SourceKind
+	TrustLevel TrustLevel
+}

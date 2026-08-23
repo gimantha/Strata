@@ -69,8 +69,13 @@ type Config struct {
 	LLMTimeout    time.Duration
 	LLMMaxRetries int
 
-	// EmbeddingProvider selects the embedder for the vector projection: none, mock, or
-	// openai. Without one, lexical and graph retrieval still work.
+	// EmbeddingProvider selects the embedder for the vector projection: none, mock,
+	// hashing, or openai. Without one, lexical and graph retrieval still work.
+	//
+	// "hashing" is feature hashing computed locally: real cosine structure, no API key,
+	// and no generalization across synonyms. It is what makes vector retrieval work
+	// offline; "mock" is a deterministic hash with no structure at all and is only a test
+	// double.
 	EmbeddingProvider string
 	EmbeddingBaseURL  string
 	EmbeddingModel    string
@@ -203,7 +208,7 @@ func (c Config) Validate() error {
 		problems = append(problems, "CG_LOG_LEVEL must be debug, info, warn, or error")
 	}
 	switch c.LLMProvider {
-	case "none", "mock":
+	case "none", "mock", "hashing":
 	case "openai":
 		// Fail at startup rather than at the first extraction: a worker that starts
 		// happily and then dead-letters every event is worse than one that will not start.
@@ -217,14 +222,15 @@ func (c Config) Validate() error {
 		problems = append(problems, "CG_LLM_MAX_RETRIES must not be negative")
 	}
 	switch c.EmbeddingProvider {
-	case "none", "mock":
+	case "none", "mock", "hashing":
 	case "openai":
 		if c.EmbeddingModel == "" {
 			problems = append(problems,
 				"CG_EMBEDDING_MODEL is required when CG_EMBEDDING_PROVIDER is openai")
 		}
 	default:
-		problems = append(problems, "CG_EMBEDDING_PROVIDER must be none, mock, or openai")
+		problems = append(problems,
+			"CG_EMBEDDING_PROVIDER must be none, mock, hashing, or openai")
 	}
 
 	if len(problems) > 0 {

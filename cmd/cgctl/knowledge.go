@@ -844,3 +844,84 @@ func cmdSearch(ctx context.Context, a *app.App, args []string) error {
 	}
 	return nil
 }
+
+// cmdContext assembles a prompt-ready context block.
+func cmdContext(ctx context.Context, a *app.App, args []string) error {
+	fs := flag.NewFlagSet("context", flag.ContinueOnError)
+	graphSpace := fs.String("graph-space", "", "graph space id (required)")
+	text := fs.String("query", "", "the question the context should answer (required)")
+	budget := fs.Int("budget", domain.DefaultTokenBudget, "token budget for the whole block")
+	maxItems := fs.Int("max-items", 0, "maximum items to select")
+	sections := fs.String("sections", "", "comma-separated: facts, history, graph, excerpts, conflicts")
+	validAt := fs.String("valid-at", "", "assemble what held at this instant, RFC3339")
+	explain := fs.Bool("explain", false, "show the budget, the selection signals, and what was dropped")
+	keyID := fs.String("key-id", "", "act as the principal behind this API key id")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *text == "" {
+		return errors.New("--query is required")
+	}
+
+	principal, scope, err := resolveScopeForGraphSpace(ctx, a, *keyID, *graphSpace, domain.RoleReader)
+	if err != nil {
+		return err
+	}
+
+	req := domain.ContextRequest{
+		Scope:       scope,
+		Query:       *text,
+		Principal:   principal.Ref(),
+		TokenBudget: *budget,
+		MaxItems:    *maxItems,
+		Explain:     *explain,
+	}
+	for _, section := range splitList(*sections) {
+		parsed, err := domain.ParseContextSection(section)
+		if err != nil {
+			return err
+		}
+		req.Sections = append(req.Sections, parsed)
+	}
+	if req.Temporal.ValidAt, err = parseOptionalTime(*validAt, "--valid-at"); err != nil {
+		return err
+	}
+
+	block, err := a.Assembler.Assemble(ctx, req)
+	if err != nil {
+		return err
+	}
+
+	fmt.Println(block.Text)
+	fmt.Printf("\n%d item(s), %d of %d tokens (%d scaffolding, estimator %s ±%.0f%%)\n",
+		len(block.Items), block.Budget.Used, block.Budget.Limit, block.Budget.Scaffolding,
+		block.Budget.Estimator, block.Budget.Tolerance*100)
+
+	if !*explain {
+		return nil
+	}
+
+	if len(block.Budget.BySection) > 0 {
+		tw := newTable("SECTION", "TOKENS")
+		for _, section := range domain.ContextSections() {
+			if tokens := block.Budget.BySection[section]; tokens > 0 {
+				row(tw, string(section), fmt.Sprintf("%d", tokens))
+			}
+		}
+		if err := tw.Flush(); err != nil {
+			return err
+		}
+	}
+
+	if len(block.Dropped) > 0 {
+		fmt.Printf("\ndropped %d candidate(s):\n", len(block.Dropped))
+		dw := newTable("REASON", "SURFACE", "DETAIL")
+		for _, dropped := range block.Dropped {
+			row(dw, string(dropped.Reason), string(dropped.Surface), truncate(dropped.Detail, 52))
+		}
+		if err := dw.Flush(); err != nil {
+			return err
+		}
+	}
+	return nil
+}

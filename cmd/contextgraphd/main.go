@@ -63,6 +63,7 @@ func run() error {
 		Gateway:   application.Gateway,
 		Knowledge: application.Knowledge,
 		Retriever: application.Retriever,
+		Assembler: application.Assembler,
 		Blobs:     application.Blobs,
 	})
 

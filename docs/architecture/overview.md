@@ -1,6 +1,6 @@
 # Architecture overview
 
-This describes what exists after phases 0 through 7, and how each part enforces the
+This describes what exists after phases 0 through 8, and how each part enforces the
 invariants in [AGENTS.md](../../AGENTS.md) section 2. Later phases extend this picture
 without changing its shape.
 
@@ -31,12 +31,11 @@ without changing its shape.
         HYBRID RETRIEVAL   plan -> five retrievers -> weighted RRF
                                      |
                                      v
-        CONTEXT ASSEMBLY                                                    [later]
+        CONTEXT ASSEMBLY   select under budget -> cite -> fence untrusted text
 ```
 
-Everything down to and including hybrid retrieval is implemented. Context assembly and
-summary projections are deliberately absent rather than stubbed: an empty stage that
-recorded success would make replay state lie.
+Everything in this diagram is implemented except summary projections, which are deliberately
+absent rather than stubbed: an empty stage that recorded success would make replay state lie.
 
 ## Where each invariant is enforced
 
@@ -173,8 +172,20 @@ by match quality ([ADR 0012](../adr/0012-weighted-rrf-with-quality-scaling.md)).
 between retrievers is the dominant signal, and it is why hybrid measurably beats every
 individual mode on the evaluation corpus rather than merely being assumed to.
 
+## Context assembly
+
+A block is selected greedily against a hard token budget, with redundancy reduction, per
+section shares, and a citation reserved for every item before that item is written
+([ADR 0013](../adr/0013-selection-under-a-hard-token-budget.md)). Quoted source text is
+fenced with a per-block random nonce and labeled untrusted, so the boundary between what a
+document says and what the graph asserts survives concatenation into a prompt.
+
+The budget is a ceiling rather than a target: content is dropped rather than exceeding it,
+and what was dropped is reported, because absence is the hardest thing to debug in an
+assembled prompt.
+
 ## What comes next
 
-Phase 8 adds context assembly: token-budgeted context blocks with citations, built from
-retrieval results. Retrieval returns references and scores today so that ranking and
-assembly, which fail in different ways, stay debuggable apart.
+Phase 9 adds ontology mode: versioned schemas, entity and predicate type constraints, and
+schema-guided extraction, with invalid candidates quarantined rather than silently
+committed.

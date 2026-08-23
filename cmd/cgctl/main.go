@@ -48,7 +48,8 @@ Commands:
   entity merge|split       Merge identities, and undo a merge
   resolutions              Review how mentions were resolved
   projections rebuild|status  Replay or inspect the retrieval projections
-  search                   Query the projections directly
+  search                   Hybrid retrieval across all five paths
+  context                  Assemble a prompt-ready context block
   assert                   Record a claim against a source event
   ask                      Query knowledge, optionally as of a past instant
   provenance               Walk a claim back to its source
@@ -121,6 +122,8 @@ func run(args []string) error {
 		})
 	case "search":
 		return withApp(rest, cmdSearch)
+	case "context":
+		return withApp(rest, cmdContext)
 	case "assert":
 		return withApp(rest, cmdAssert)
 	case "ask":

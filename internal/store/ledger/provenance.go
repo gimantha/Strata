@@ -452,3 +452,106 @@ func modelRunID(id *domain.ModelRunID) *string {
 	v := string(*id)
 	return &v
 }
+
+// ChunkProvenance resolves a projected chunk back to the source it was cut from.
+//
+// Retrieval hands back a chunk id and its text; a citation needs the episode, the ingestion
+// event, and the source name behind it. That is four tables, and doing it per candidate as
+// four round trips would make citation cost scale with how much context was assembled.
+func (s *Store) ChunkProvenance(ctx context.Context, ws domain.WorkspaceID, ids []domain.ChunkID) (map[domain.ChunkID]domain.ChunkProvenance, error) {
+	const op = "ledger.ChunkProvenance"
+
+	out := make(map[domain.ChunkID]domain.ChunkProvenance, len(ids))
+	if len(ids) == 0 {
+		return out, nil
+	}
+
+	raw := make([]string, 0, len(ids))
+	for _, id := range ids {
+		raw = append(raw, string(id))
+	}
+
+	rows, err := s.pool.Query(ctx, `
+		SELECT c.id, c.episode_id, c.source_event_id, c.sequence, c.content, c.token_count,
+		       c.char_start, c.char_end, c.locator, c.classification,
+		       ep.sequence, ep.event_time, ep.observed_at, ep.locator,
+		       se.id, se.event_time, se.recorded_at,
+		       sr.id, sr.name, sr.kind, sr.trust_level
+		FROM chunks c
+		JOIN episodes ep      ON ep.id = c.episode_id
+		JOIN source_events se ON se.id = c.source_event_id
+		JOIN sources sr       ON sr.id = se.source_id
+		WHERE c.workspace_id = $1 AND c.id = ANY($2)`, ws, raw)
+	if err != nil {
+		return nil, mapError(err, op, "cannot resolve chunk provenance")
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var p domain.ChunkProvenance
+		if err := rows.Scan(
+			&p.Chunk.ID, &p.Chunk.EpisodeID, &p.Chunk.SourceEventID, &p.Chunk.Sequence,
+			&p.Chunk.Content, &p.Chunk.TokenCount, &p.Chunk.CharStart, &p.Chunk.CharEnd,
+			&p.Chunk.Locator, &p.Chunk.Classification,
+			&p.EpisodeSequence, &p.EventTime, &p.ObservedAt, &p.EpisodeLocator,
+			&p.SourceEventID, &p.SourceEventTime, &p.RecordedAt,
+			&p.SourceID, &p.SourceName, &p.SourceKind, &p.TrustLevel,
+		); err != nil {
+			return nil, mapError(err, op, "cannot scan chunk provenance")
+		}
+		p.Chunk.WorkspaceID = ws
+		out[p.Chunk.ID] = p
+	}
+	return out, mapError(rows.Err(), op, "cannot resolve chunk provenance")
+}
+
+// ConflictMembers returns the claims held against each other in a conflict set.
+//
+// Both sides are kept and reported; the ledger records contradictions rather than resolving
+// them (ADR 0006), and context assembly annotates rather than picks.
+func (s *Store) ConflictMembers(ctx context.Context, ws domain.WorkspaceID, id domain.ConflictSetID) (domain.ConflictSet, []domain.Assertion, error) {
+	const op = "ledger.ConflictMembers"
+
+	var set domain.ConflictSet
+	err := s.pool.QueryRow(ctx, `
+		SELECT id, workspace_id, graph_space_id, subject_id, predicate, scope_key, reason,
+		       resolution, resolved_at, resolved_by, created_at
+		FROM conflict_sets WHERE workspace_id = $1 AND id = $2`, ws, id).Scan(
+		&set.ID, &set.WorkspaceID, &set.GraphSpaceID, &set.SubjectID, &set.Predicate,
+		&set.ScopeKey, &set.Reason, &set.Resolution, &set.ResolvedAt, &set.ResolvedBy,
+		&set.CreatedAt)
+	if err != nil {
+		return domain.ConflictSet{}, nil, mapError(err, op, "cannot load conflict set")
+	}
+
+	rows, err := s.pool.Query(ctx, `
+		SELECT id FROM assertions
+		WHERE workspace_id = $1 AND conflict_set_id = $2
+		ORDER BY created_at`, ws, id)
+	if err != nil {
+		return domain.ConflictSet{}, nil, mapError(err, op, "cannot list conflict members")
+	}
+	var memberIDs []domain.AssertionID
+	for rows.Next() {
+		var member domain.AssertionID
+		if err := rows.Scan(&member); err != nil {
+			rows.Close()
+			return domain.ConflictSet{}, nil, mapError(err, op, "cannot scan conflict member")
+		}
+		memberIDs = append(memberIDs, member)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return domain.ConflictSet{}, nil, mapError(err, op, "cannot list conflict members")
+	}
+
+	members := make([]domain.Assertion, 0, len(memberIDs))
+	for _, member := range memberIDs {
+		assertion, err := s.GetAssertion(ctx, ws, member)
+		if err != nil {
+			return domain.ConflictSet{}, nil, err
+		}
+		members = append(members, assertion)
+	}
+	return set, members, nil
+}

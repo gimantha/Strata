@@ -16,6 +16,7 @@ import (
 
 	strataapi "github.com/gimantha/strata/internal/api/http"
 	"github.com/gimantha/strata/internal/config"
+	"github.com/gimantha/strata/internal/contextblock"
 	"github.com/gimantha/strata/internal/domain"
 	"github.com/gimantha/strata/internal/embedding/hashing"
 	"github.com/gimantha/strata/internal/identity"
@@ -110,6 +111,7 @@ func newAPIHarness(t *testing.T, keys ...keyEntry) *apiHarness {
 	embedder := hashing.New()
 	projector := projection.New(f.Store, embedder, projection.Options{}, nil, nil)
 	retriever := retrieval.New(f.Store, embedder, retrieval.Options{}, nil, nil)
+	assembler := contextblock.New(retriever, f.Store, contextblock.Options{}, nil, nil)
 
 	server := strataapi.NewServer(strataapi.Deps{
 		Config:    cfg,
@@ -119,6 +121,7 @@ func newAPIHarness(t *testing.T, keys ...keyEntry) *apiHarness {
 		Gateway:   gateway,
 		Knowledge: knowledge.New(f.Store, knowledge.Options{}, nil, nil),
 		Retriever: retriever,
+		Assembler: assembler,
 		Blobs:     blobs,
 	})
 

@@ -10,8 +10,10 @@ import (
 	"log/slog"
 
 	"github.com/gimantha/strata/internal/config"
+	"github.com/gimantha/strata/internal/contextblock"
 	"github.com/gimantha/strata/internal/domain"
 	"github.com/gimantha/strata/internal/embedding"
+	"github.com/gimantha/strata/internal/embedding/hashing"
 	embeddingmock "github.com/gimantha/strata/internal/embedding/mock"
 	embeddingopenai "github.com/gimantha/strata/internal/embedding/openai"
 	"github.com/gimantha/strata/internal/eventbus"
@@ -44,6 +46,7 @@ type App struct {
 	Extractor *extraction.Extractor
 	Projector *projection.Projector
 	Retriever *retrieval.Retriever
+	Assembler *contextblock.Assembler
 	Embedder  embedding.Embedder
 	Bus       *eventbus.Outbox
 	Runner    *pipeline.Runner
@@ -163,6 +166,8 @@ func New(ctx context.Context, cfg config.Config) (*App, error) {
 
 	app.Retriever = retrieval.New(store, embedder, retrieval.Options{}, logger, telemetry.Tracer)
 
+	app.Assembler = contextblock.New(app.Retriever, store, contextblock.Options{}, logger, telemetry.Tracer)
+
 	app.Runner = pipeline.NewRunner(store, cfg.PipelineVersion,
 		pipeline.DefaultStages(store, blobs, stageCfg),
 		logger, telemetry.Metrics, telemetry.Tracer)
@@ -214,6 +219,8 @@ func newEmbedder(cfg config.Config) (embedding.Embedder, error) {
 		return nil, nil
 	case "mock":
 		embedder = embeddingmock.New()
+	case "hashing":
+		embedder = hashing.New()
 	case "openai":
 		built, err := embeddingopenai.New(embeddingopenai.Config{
 			BaseURL:    cfg.EmbeddingBaseURL,
