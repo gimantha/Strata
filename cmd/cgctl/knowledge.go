@@ -694,3 +694,126 @@ func cmdResolutions(ctx context.Context, a *app.App, args []string) error {
 	}
 	return nil
 }
+
+// cmdProjectionsRebuild drops a workspace's projections and replays them from the ledger.
+//
+// This is safe by construction: projections hold no history of their own, so the worst a
+// rebuild can cost is the time and the embedding spend.
+func cmdProjectionsRebuild(ctx context.Context, a *app.App, args []string) error {
+	fs := flag.NewFlagSet("projections rebuild", flag.ContinueOnError)
+	workspace := fs.String("workspace", "", "workspace id or slug (required)")
+	keyID := fs.String("key-id", "", "act as the principal behind this API key id")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+
+	_, ws, err := resolveScopeForWorkspace(ctx, a, *keyID, *workspace, domain.RoleAdmin)
+	if err != nil {
+		return err
+	}
+
+	fmt.Println("dropping projections and replaying from the ledger...")
+	stats, err := a.Projector.Rebuild(ctx, ws)
+	if err != nil {
+		return err
+	}
+
+	fmt.Printf("replayed %d event(s)\n  lexical records: %d\n  vectors: %d (%d embedded, %d reused)\n  graph edges: %d\n",
+		stats.Events, stats.Lexical, stats.Vectors, stats.Embedded, stats.Reused, stats.Edges)
+	return nil
+}
+
+// cmdProjectionsStatus reports how far each projection has consumed the ledger.
+func cmdProjectionsStatus(ctx context.Context, a *app.App, args []string) error {
+	fs := flag.NewFlagSet("projections status", flag.ContinueOnError)
+	workspace := fs.String("workspace", "", "workspace id or slug (required)")
+	keyID := fs.String("key-id", "", "act as the principal behind this API key id")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+
+	_, ws, err := resolveScopeForWorkspace(ctx, a, *keyID, *workspace, domain.RoleReader)
+	if err != nil {
+		return err
+	}
+
+	checkpoints, err := a.Ledger.ListCheckpoints(ctx, ws)
+	if err != nil {
+		return err
+	}
+	counts, err := a.Ledger.CountProjected(ctx, ws)
+	if err != nil {
+		return err
+	}
+
+	tw := newTable("PROJECTION", "RECORDS", "CONSUMED THROUGH", "LAST REBUILD", "ERROR")
+	for _, checkpoint := range checkpoints {
+		row(tw, checkpoint.Projection, fmt.Sprint(counts[checkpoint.Projection]),
+			formatOptional(checkpoint.LastRecordedAt), formatOptional(checkpoint.RebuiltAt),
+			truncate(checkpoint.LastError, 40))
+	}
+	if err := tw.Flush(); err != nil {
+		return err
+	}
+	if len(checkpoints) == 0 {
+		fmt.Println("no projections have run yet for this workspace")
+	}
+	return nil
+}
+
+// cmdSearch queries the projections directly, which is mostly a way to see that they work
+// before the hybrid retriever in phase 7 puts them together.
+func cmdSearch(ctx context.Context, a *app.App, args []string) error {
+	fs := flag.NewFlagSet("search", flag.ContinueOnError)
+	graphSpace := fs.String("graph-space", "", "graph space id (required)")
+	text := fs.String("query", "", "text to search for (required)")
+	mode := fs.String("mode", "lexical", "lexical, exact, or vector")
+	limit := fs.Int("limit", 10, "maximum results")
+	keyID := fs.String("key-id", "", "act as the principal behind this API key id")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *text == "" {
+		return errors.New("--query is required")
+	}
+
+	_, scope, err := resolveScopeForGraphSpace(ctx, a, *keyID, *graphSpace, domain.RoleReader)
+	if err != nil {
+		return err
+	}
+
+	var hits []domain.Hit
+	switch *mode {
+	case "lexical", "exact":
+		hits, err = a.Ledger.SearchLexical(ctx, domain.LexicalQuery{
+			Scope: scope, Text: *text, Exact: *mode == "exact", Limit: *limit,
+		})
+	case "vector":
+		if a.Embedder == nil {
+			return errors.New("vector search needs an embedding provider; set CG_EMBEDDING_PROVIDER")
+		}
+		vectors, embedErr := a.Embedder.Embed(ctx, []string{*text})
+		if embedErr != nil {
+			return embedErr
+		}
+		hits, err = a.Ledger.SearchVectors(ctx, domain.VectorQuery{
+			Scope: scope, Embedding: vectors[0], Limit: *limit,
+		})
+	default:
+		return fmt.Errorf("unknown mode %q: use lexical, exact, or vector", *mode)
+	}
+	if err != nil {
+		return err
+	}
+
+	tw := newTable("SCORE", "SURFACE", "RECORD", "CONTENT")
+	for _, hit := range hits {
+		row(tw, fmt.Sprintf("%.4f", hit.Score), string(hit.Surface), hit.RecordID,
+			truncate(strings.ReplaceAll(hit.Content, "\n", " "), 60))
+	}
+	if err := tw.Flush(); err != nil {
+		return err
+	}
+	fmt.Printf("\n%d result(s)\n", len(hits))
+	return nil
+}

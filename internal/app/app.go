@@ -11,6 +11,9 @@ import (
 
 	"github.com/gimantha/strata/internal/config"
 	"github.com/gimantha/strata/internal/domain"
+	"github.com/gimantha/strata/internal/embedding"
+	embeddingmock "github.com/gimantha/strata/internal/embedding/mock"
+	embeddingopenai "github.com/gimantha/strata/internal/embedding/openai"
 	"github.com/gimantha/strata/internal/eventbus"
 	"github.com/gimantha/strata/internal/extraction"
 	"github.com/gimantha/strata/internal/identity"
@@ -22,6 +25,7 @@ import (
 	"github.com/gimantha/strata/internal/normalize"
 	"github.com/gimantha/strata/internal/observability"
 	"github.com/gimantha/strata/internal/pipeline"
+	"github.com/gimantha/strata/internal/projection"
 	"github.com/gimantha/strata/internal/store/blob"
 	"github.com/gimantha/strata/internal/store/ledger"
 )
@@ -37,6 +41,8 @@ type App struct {
 	Gateway   *ingest.Gateway
 	Knowledge *knowledge.Service
 	Extractor *extraction.Extractor
+	Projector *projection.Projector
+	Embedder  embedding.Embedder
 	Bus       *eventbus.Outbox
 	Runner    *pipeline.Runner
 }
@@ -135,6 +141,24 @@ func New(ctx context.Context, cfg config.Config) (*App, error) {
 			slog.String("provider", provider.Name()), slog.String("model", provider.Model()))
 	}
 
+	// Retrieval projections are maintained whenever the pipeline runs. An embedder is
+	// optional: without one the lexical and graph projections still work, since text search
+	// and traversal need no model.
+	embedder, err := newEmbedder(cfg)
+	if err != nil {
+		app.closeLedger()
+		return nil, err
+	}
+	app.Embedder = embedder
+	app.Projector = projection.New(store, embedder, projection.Options{}, logger, telemetry.Tracer)
+	stageCfg.Projector = app.Projector
+	if embedder != nil {
+		logger.InfoContext(ctx, "vector projection enabled",
+			slog.String("provider", embedder.Name()),
+			slog.String("model", embedder.Model()),
+			slog.Int("dimensions", embedder.Dimensions()))
+	}
+
 	app.Runner = pipeline.NewRunner(store, cfg.PipelineVersion,
 		pipeline.DefaultStages(store, blobs, stageCfg),
 		logger, telemetry.Metrics, telemetry.Tracer)
@@ -170,6 +194,46 @@ func newLLMProvider(cfg config.Config) (llm.LLM, error) {
 		return nil, domain.Errorf(domain.CodeInvalidArgument, "app.newLLMProvider",
 			"unknown model provider %q", cfg.LLMProvider)
 	}
+}
+
+// newEmbedder builds the configured embedder, or nil when vector search is disabled.
+//
+// The dimension is checked here rather than at first use: a mismatch with the projection
+// schema is a configuration error, and discovering it when the first document is indexed is
+// far worse than refusing to start.
+func newEmbedder(cfg config.Config) (embedding.Embedder, error) {
+	const op = "app.newEmbedder"
+
+	var embedder embedding.Embedder
+	switch cfg.EmbeddingProvider {
+	case "", "none":
+		return nil, nil
+	case "mock":
+		embedder = embeddingmock.New()
+	case "openai":
+		built, err := embeddingopenai.New(embeddingopenai.Config{
+			BaseURL:    cfg.EmbeddingBaseURL,
+			APIKey:     cfg.EmbeddingAPIKey,
+			Model:      cfg.EmbeddingModel,
+			Dimensions: embedding.Dimensions,
+			Timeout:    cfg.LLMTimeout,
+			MaxRetries: cfg.LLMMaxRetries,
+		})
+		if err != nil {
+			return nil, err
+		}
+		embedder = built
+	default:
+		return nil, domain.Errorf(domain.CodeInvalidArgument, op,
+			"unknown embedding provider %q", cfg.EmbeddingProvider)
+	}
+
+	if embedder.Dimensions() != embedding.Dimensions {
+		return nil, domain.Errorf(domain.CodeInvalidArgument, op,
+			"the embedding model produces %d dimensions but the projection schema holds %d",
+			embedder.Dimensions(), embedding.Dimensions)
+	}
+	return embedder, nil
 }
 
 // Close releases resources.

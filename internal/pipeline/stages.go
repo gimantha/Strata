@@ -36,6 +36,10 @@ type StageConfig struct {
 	// into episodes and chunks and stops there, rather than failing.
 	Extractor *extraction.Extractor
 	Committer Committer
+
+	// Projector enables the projection stage. Without it the ledger is still complete;
+	// only retrieval is unavailable, and a later rebuild fills the projections in.
+	Projector Projector
 }
 
 func (c StageConfig) now() time.Time {
@@ -75,6 +79,9 @@ func DefaultStages(store LedgerStore, blobs BlobReader, cfg StageConfig) []Stage
 	}
 	if cfg.Extractor != nil && cfg.Committer != nil {
 		stages = append(stages, NewExtractStage(store, cfg.Extractor, cfg.Committer, cfg))
+	}
+	if cfg.Projector != nil {
+		stages = append(stages, NewProjectStage(cfg.Projector, cfg))
 	}
 	return stages
 }

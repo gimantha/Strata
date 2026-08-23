@@ -68,6 +68,13 @@ type Config struct {
 	LLMAPIKey     string
 	LLMTimeout    time.Duration
 	LLMMaxRetries int
+
+	// EmbeddingProvider selects the embedder for the vector projection: none, mock, or
+	// openai. Without one, lexical and graph retrieval still work.
+	EmbeddingProvider string
+	EmbeddingBaseURL  string
+	EmbeddingModel    string
+	EmbeddingAPIKey   string
 }
 
 // Load reads configuration from the process environment.
@@ -114,6 +121,11 @@ func LoadFrom(getenv func(string) string) (Config, error) {
 		LLMAPIKey:     l.str("LLM_API_KEY", ""),
 		LLMTimeout:    l.duration("LLM_TIMEOUT", 60*time.Second),
 		LLMMaxRetries: l.intVal("LLM_MAX_RETRIES", 2),
+
+		EmbeddingProvider: strings.ToLower(l.str("EMBEDDING_PROVIDER", "none")),
+		EmbeddingBaseURL:  l.str("EMBEDDING_BASE_URL", ""),
+		EmbeddingModel:    l.str("EMBEDDING_MODEL", ""),
+		EmbeddingAPIKey:   l.str("EMBEDDING_API_KEY", ""),
 
 		PipelineVersion:    l.intVal("PIPELINE_VERSION", 1),
 		ChunkMaxTokens:     l.intVal("CHUNK_MAX_TOKENS", 320),
@@ -203,6 +215,16 @@ func (c Config) Validate() error {
 	}
 	if c.LLMMaxRetries < 0 {
 		problems = append(problems, "CG_LLM_MAX_RETRIES must not be negative")
+	}
+	switch c.EmbeddingProvider {
+	case "none", "mock":
+	case "openai":
+		if c.EmbeddingModel == "" {
+			problems = append(problems,
+				"CG_EMBEDDING_MODEL is required when CG_EMBEDDING_PROVIDER is openai")
+		}
+	default:
+		problems = append(problems, "CG_EMBEDDING_PROVIDER must be none, mock, or openai")
 	}
 
 	if len(problems) > 0 {

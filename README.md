@@ -13,9 +13,10 @@ this file.
 
 ## Status
 
-Phases 0 through 5 of the contract are implemented: the architecture skeleton, the
+Phases 0 through 6 of the contract are implemented: the architecture skeleton, the
 canonical ingestion ledger, the assertion-first knowledge model, schema-constrained
-extraction, conservative entity resolution, and multi-temporal reconciliation.
+extraction, conservative entity resolution, multi-temporal reconciliation, and rebuildable
+retrieval projections.
 
 **Working today**
 
@@ -60,9 +61,12 @@ extraction, conservative entity resolution, and multi-temporal reconciliation.
 - Predicate conflict policies driven automatically, including authority-weighted resolution
   from registered source trust, with equal authority producing a conflict rather than a
   coin flip
+- Vector, lexical, and graph projections over chunks, claims, and identities, with filters
+  applied before ranking and traversal bounded by depth
+- Projections that hold no history: dropping all of them and replaying from the ledger
+  produces equivalent retrieval results, which a test checks rather than assumes
 
-**Not built yet** (later phases, in order): retrieval projections, hybrid
-retrieval, context assembly, ontology mode, CDC connectors, ABAC policy, memory lifecycle,
+**Not built yet** (later phases, in order): hybrid retrieval, context assembly, ontology mode, CDC connectors, ABAC policy, memory lifecycle,
 MCP, and distributed operation.
 
 ## Quickstart
@@ -163,6 +167,7 @@ cmd/contextgraphd   HTTP API server, optionally with an in-process worker
 cmd/cgworker        Outbox consumer and pipeline runner
 cmd/cgctl           Administration and development CLI
 internal/domain     Pure canonical model: typed ids, enums, temporal coordinates
+internal/embedding  Provider-independent embeddings for the vector projection
 internal/extraction Source material into candidate knowledge, safely
 internal/ingest     The one path by which knowledge enters
 internal/knowledge  Claims into committed canonical knowledge
@@ -170,6 +175,7 @@ internal/llm        Provider-independent model interface and adapters
 internal/normalize  Deterministic decode, segment, chunk
 internal/resolution Which identity a mention refers to
 internal/pipeline   Stage orchestration and durable stage state
+internal/projection Rebuildable vector, lexical, and graph indexes
 internal/eventbus   Work fabric: the transactional outbox
 internal/identity   Authentication and scope resolution
 internal/store      Canonical ledger and blob storage
@@ -193,4 +199,6 @@ are declared by the services that consume them; implementations live under `stor
   defenses, model runs
 - [docs/api/resolution.md](docs/api/resolution.md) — the evidence ladder, reversible
   merges, the decision ledger
+- [docs/api/projections.md](docs/api/projections.md) — vector, lexical, and graph
+  retrieval, and rebuilding them
 - [docs/adr/](docs/adr/) — decisions, alternatives, and trade-offs

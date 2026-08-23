@@ -47,6 +47,8 @@ Commands:
   entity ls|identity       Inspect entities and how they resolve
   entity merge|split       Merge identities, and undo a merge
   resolutions              Review how mentions were resolved
+  projections rebuild|status  Replay or inspect the retrieval projections
+  search                   Query the projections directly
   assert                   Record a claim against a source event
   ask                      Query knowledge, optionally as of a past instant
   provenance               Walk a claim back to its source
@@ -112,6 +114,13 @@ func run(args []string) error {
 		})
 	case "resolutions":
 		return withApp(rest, cmdResolutions)
+	case "projections":
+		return withSubcommand(rest, map[string]appCommand{
+			"rebuild": cmdProjectionsRebuild,
+			"status":  cmdProjectionsStatus,
+		})
+	case "search":
+		return withApp(rest, cmdSearch)
 	case "assert":
 		return withApp(rest, cmdAssert)
 	case "ask":
