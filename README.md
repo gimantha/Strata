@@ -119,11 +119,18 @@ tests, which is exactly the false confidence to avoid. CI sets it.
 With no local PostgreSQL, a container works:
 
 ```bash
-docker run -d --name strata-pg -e POSTGRES_PASSWORD=postgres -p 55432:5432 postgres:16
+docker run -d --name strata-pg -e POSTGRES_PASSWORD=postgres -p 55432:5432 pgvector/pgvector:pg16
 export TEST_DATABASE_URL="postgres://postgres:postgres@127.0.0.1:55432/postgres"
 export CG_REQUIRE_PG=1
 go test ./...
 ```
+
+That image is the stock `postgres:16` with the pgvector extension available, which is what
+CI uses. Nothing needs the extension yet; it is there so the vector projection in phase 6
+does not require changing how anyone runs the tests. Plain `postgres:16` also works today.
+For a local installation without Docker, `brew install pgvector` or
+`apt install postgresql-16-pgvector` adds it. See
+[ADR 0007](docs/adr/0007-pgvector-for-the-vector-projection.md).
 
 Segmentation and chunk boundaries are covered by golden files. When a change to them is
 intended:

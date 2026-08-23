@@ -15,7 +15,11 @@ jobs:
 
     services:
       postgres:
-        image: postgres:16
+        # pgvector's image is the stock postgres:16 with the extension available. It is
+        # used from the start so the vector projection in phase 6 needs no CI change, and
+        # so nobody discovers the extension is missing halfway through building it. The
+        # extension is not enabled here; a migration will enable it when it is needed.
+        image: pgvector/pgvector:pg16
         env:
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: postgres

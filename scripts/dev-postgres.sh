@@ -4,6 +4,10 @@
 # No Docker required: this uses the PostgreSQL server binaries directly, the same way the
 # integration test harness does when TEST_DATABASE_URL is unset.
 #
+# Phase 6 will need the pgvector extension. A local installation provides it via
+# "brew install pgvector" or "apt install postgresql-16-pgvector"; the container route in
+# the README uses an image that already has it.
+#
 #   scripts/dev-postgres.sh start   # boot a cluster and print its connection URL
 #   scripts/dev-postgres.sh stop    # shut it down
 #   scripts/dev-postgres.sh reset   # drop and recreate the strata database
