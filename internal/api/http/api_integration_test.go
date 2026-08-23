@@ -19,6 +19,7 @@ import (
 	"github.com/gimantha/strata/internal/domain"
 	"github.com/gimantha/strata/internal/identity"
 	"github.com/gimantha/strata/internal/ingest"
+	"github.com/gimantha/strata/internal/knowledge"
 	"github.com/gimantha/strata/internal/normalize"
 	"github.com/gimantha/strata/internal/pipeline"
 	"github.com/gimantha/strata/internal/store/blob"
@@ -102,12 +103,13 @@ func newAPIHarness(t *testing.T, keys ...keyEntry) *apiHarness {
 	gateway := ingest.New(f.Store, blobs, ingest.Options{PipelineVersion: 1}, nil, nil, nil)
 
 	server := strataapi.NewServer(strataapi.Deps{
-		Config:   cfg,
-		Logger:   discardLogger(),
-		Identity: identityService,
-		Ledger:   f.Store,
-		Gateway:  gateway,
-		Blobs:    blobs,
+		Config:    cfg,
+		Logger:    discardLogger(),
+		Identity:  identityService,
+		Ledger:    f.Store,
+		Gateway:   gateway,
+		Knowledge: knowledge.New(f.Store, knowledge.Options{}, nil, nil),
+		Blobs:     blobs,
 	})
 
 	ts := httptest.NewServer(server.Handler())

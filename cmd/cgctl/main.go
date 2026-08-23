@@ -43,6 +43,12 @@ Commands:
   event status             Show an event's processing status
   process                  Run the pipeline for an event now
   outbox ls|retry          Inspect and revive durable work
+  predicate define|ls      Manage the predicate registry
+  entity ls                List entities in a graph space
+  assert                   Record a claim against a source event
+  ask                      Query knowledge, optionally as of a past instant
+  provenance               Walk a claim back to its source
+  conflicts                List recorded disagreements
   version                  Print the schema version this binary expects
 
 Run "cgctl <command> -h" for command flags.
@@ -93,6 +99,18 @@ func run(args []string) error {
 		return withApp(rest, cmdProcess)
 	case "outbox":
 		return withSubcommand(rest, map[string]appCommand{"ls": cmdOutboxList, "retry": cmdOutboxRetry})
+	case "predicate":
+		return withSubcommand(rest, map[string]appCommand{"define": cmdPredicateDefine, "ls": cmdPredicateList})
+	case "entity":
+		return withSubcommand(rest, map[string]appCommand{"ls": cmdEntityList})
+	case "assert":
+		return withApp(rest, cmdAssert)
+	case "ask":
+		return withApp(rest, cmdAsk)
+	case "provenance":
+		return withApp(rest, cmdProvenance)
+	case "conflicts":
+		return withApp(rest, cmdConflicts)
 	default:
 		return fmt.Errorf("unknown command %q; run \"cgctl help\"", command)
 	}

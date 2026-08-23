@@ -14,6 +14,7 @@ import (
 	"github.com/gimantha/strata/internal/eventbus"
 	"github.com/gimantha/strata/internal/identity"
 	"github.com/gimantha/strata/internal/ingest"
+	"github.com/gimantha/strata/internal/knowledge"
 	"github.com/gimantha/strata/internal/normalize"
 	"github.com/gimantha/strata/internal/observability"
 	"github.com/gimantha/strata/internal/pipeline"
@@ -30,6 +31,7 @@ type App struct {
 	Blobs     *blob.FS
 	Identity  *identity.Service
 	Gateway   *ingest.Gateway
+	Knowledge *knowledge.Service
 	Bus       *eventbus.Outbox
 	Runner    *pipeline.Runner
 }
@@ -103,6 +105,8 @@ func New(ctx context.Context, cfg config.Config) (*App, error) {
 		MaxPayloadBytes: cfg.MaxBodyBytes,
 		MaxAttempts:     cfg.WorkerMaxAttempts,
 	}, logger, telemetry.Metrics, telemetry.Tracer)
+
+	app.Knowledge = knowledge.New(store, knowledge.Options{}, logger, telemetry.Tracer)
 
 	app.Bus = eventbus.NewOutbox(store, logger, telemetry.Metrics, telemetry.Tracer)
 

@@ -13,8 +13,8 @@ this file.
 
 ## Status
 
-Phases 0 and 1 of the contract are implemented: the architecture skeleton and the
-canonical ingestion ledger.
+Phases 0 through 2 of the contract are implemented: the architecture skeleton, the
+canonical ingestion ledger, and the assertion-first knowledge model.
 
 **Working today**
 
@@ -32,11 +32,21 @@ canonical ingestion ledger.
   and chunks that keep exact positional provenance
 - Processing status, structured logs, OpenTelemetry traces and metrics, and a security
   audit trail
+- Entities as stable identities, with aliases, and a predicate registry carrying the
+  semantics that make contradiction handling something other than guesswork
+- Immutable assertions with typed objects across twelve kinds, four independent layers of
+  time, evidence, and derivations for anything reasoned rather than observed
+- Corrections by supersession and withdrawal by retraction, both knowledge-time events
+  that never edit or delete what was believed before
+- Temporal queries combining `valid_at`, `known_at`, `valid_between`, `event_between`, and
+  `active_at`, so "what did we believe on April 10 about March 25" is answerable
+- Contradictions recorded as conflict sets rather than resolved by guesswork
+- A provenance walk from any fact back to the archived bytes it came from
 
-**Not built yet** (later phases, in order): entities and assertions, extraction, entity
-resolution, temporal reconciliation, retrieval projections, hybrid retrieval, context
-assembly, ontology mode, CDC connectors, ABAC policy, memory lifecycle, MCP, and
-distributed operation.
+**Not built yet** (later phases, in order): LLM extraction, entity resolution beyond
+exact-name matching, the full temporal reconciler, retrieval projections, hybrid
+retrieval, context assembly, ontology mode, CDC connectors, ABAC policy, memory lifecycle,
+MCP, and distributed operation.
 
 ## Quickstart
 
@@ -130,6 +140,7 @@ cmd/cgworker        Outbox consumer and pipeline runner
 cmd/cgctl           Administration and development CLI
 internal/domain     Pure canonical model: typed ids, enums, temporal coordinates
 internal/ingest     The one path by which knowledge enters
+internal/knowledge  Claims into committed canonical knowledge
 internal/normalize  Deterministic decode, segment, chunk
 internal/pipeline   Stage orchestration and durable stage state
 internal/eventbus   Work fabric: the transactional outbox
@@ -148,5 +159,7 @@ are declared by the services that consume them; implementations live under `stor
 
 - [docs/architecture/overview.md](docs/architecture/overview.md) — how the pieces fit and
   which invariants each one enforces
-- [docs/api/ingest.md](docs/api/ingest.md) — HTTP API, idempotency semantics, error codes
+- [docs/api/ingest.md](docs/api/ingest.md) — ingestion API, idempotency semantics, error codes
+- [docs/api/knowledge.md](docs/api/knowledge.md) — entities, assertions, temporal queries,
+  provenance
 - [docs/adr/](docs/adr/) — decisions, alternatives, and trade-offs

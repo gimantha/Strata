@@ -1,6 +1,6 @@
 # Architecture overview
 
-This describes what exists after phases 0 and 1, and how each part enforces the
+This describes what exists after phases 0 through 2, and how each part enforces the
 invariants in [AGENTS.md](../../AGENTS.md) section 2. Later phases extend this picture
 without changing its shape.
 
@@ -22,7 +22,7 @@ without changing its shape.
                                      |
                                      v
   CANONICAL LEDGER   Source | SourceEvent | Artifact | Episode | Chunk
-                     Entity | Assertion | Evidence | Derivation             [later]
+                     Entity | Assertion | Evidence | Derivation | ConflictSet
                                      |
                                      v
         PROJECTIONS   graph | vector | lexical | summaries                  [later]
@@ -31,8 +31,13 @@ without changing its shape.
         RETRIEVAL and CONTEXT ASSEMBLY                                      [later]
 ```
 
-Everything above the ledger is implemented. Everything below it is deliberately absent
-rather than stubbed: an empty stage that recorded success would make replay state lie.
+Everything down to and including the ledger is implemented. The projections and retrieval
+below it are deliberately absent rather than stubbed: an empty stage that recorded success
+would make replay state lie.
+
+Claims currently enter the ledger through the assertion API rather than from extraction.
+Phase 3 adds extraction stages to the pipeline, which will call the same
+`knowledge.Assert` path the API uses.
 
 ## Where each invariant is enforced
 
@@ -41,7 +46,10 @@ rather than stubbed: an empty stage that recorded success would make replay stat
 | Raw source is preserved | The gateway archives content-addressed bytes **before** committing the event; `artifacts` holds the address, and the pipeline fails loudly if the bytes are gone |
 | The canonical ledger is authoritative | Episodes and chunks are derived: deleting them and reprocessing reproduces them exactly, which an integration test asserts |
 | All ingestion is event-shaped | Every route, including batch and raw-document upload, calls the same `Gateway.Accept` |
-| Temporal semantics are first-class | `source_events` stores world, source, and knowledge clocks as distinct columns; `domain.TemporalCoordinates` carries all four layers for the assertions phase 2 adds |
+| Temporal semantics are first-class | `source_events` and `assertions` store world, knowledge, source, and lifecycle clocks as distinct columns; corrections supersede rather than overwrite, so `valid_at` and `known_at` are independently queryable |
+| Assertions are immutable | Only knowledge-time markers change after commit: status, `superseded_at`, `retracted_at`, `conflict_set_id`. Content and world validity are never edited |
+| Provenance is walkable | Every claim reaches its evidence, chunk, episode, artifact, source event, and source in one query; reasoned claims also name their derivation and inputs |
+| Contradictions are visible | Overlapping claims for a functional predicate become a conflict set with both sides kept and marked disputed |
 | Tenant scope is mandatory | Every canonical table carries `workspace_id`, and every query takes it as an argument; scope is resolved from identity, never from a request body |
 | Idempotency is mandatory | Unique indexes on the idempotency key and on upstream identity; episodes and chunks keyed by sequence; the outbox keyed by dedupe key; stage runs keyed by stage and version |
 | Observability is part of correctness | Every ingest and stage is traced, W3C trace context is carried on outbox rows across the async boundary, and queue lag is an observable gauge |
@@ -112,8 +120,26 @@ is, including per-stage state and queued work. The phase-15 consistency modes
 (`wait_for_event`, `ledger_only`) are not implemented yet; today the honest answer is that
 processing is asynchronous and its state is queryable.
 
+## Knowledge
+
+An entity is a stable identity; facts about it are assertions, never columns on it. An
+assertion is one immutable claim carrying a typed object and four independent layers of
+time.
+
+A correction creates a new claim and marks the old one superseded in the same transaction.
+That changes knowledge time without touching world validity, which is what makes all three
+of these different questions answerable from the same rows: what holds now, what held on a
+past date, and what the system believed on a past date about a past date.
+
+Objects keep their types in typed columns, with a canonical key for equality
+([ADR 0005](../adr/0005-typed-object-columns-for-assertions.md)). Contradictions are
+recorded as conflict sets rather than resolved by guesswork
+([ADR 0006](../adr/0006-conflicts-recorded-not-resolved.md)); the full reconciler, with
+authority weighting and out-of-order handling, is phase 5.
+
 ## What comes next
 
-Phase 2 adds entities, assertions, and evidence on top of these episodes and chunks,
-which is where `TemporalCoordinates`, supersession, and the assertion-first model in
-[ADR 0003](../adr/0003-assertion-first-domain-model.md) start doing real work.
+Phase 3 adds extraction: a provider-independent LLM interface, model-run tracking, and
+pipeline stages that turn chunks into candidate claims. Those candidates commit through the
+same `knowledge.Assert` path, so everything above - evidence, supersession, conflict
+detection, provenance - applies unchanged to extracted knowledge.

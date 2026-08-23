@@ -54,14 +54,15 @@ func run() error {
 	logger.InfoContext(ctx, "starting contextgraphd", slog.Any("config", cfg.Redacted()))
 
 	server := http.NewServer(http.Deps{
-		Config:   cfg,
-		Logger:   logger,
-		Metrics:  application.Telemetry.Metrics,
-		Tracer:   application.Telemetry.Tracer,
-		Identity: application.Identity,
-		Ledger:   application.Ledger,
-		Gateway:  application.Gateway,
-		Blobs:    application.Blobs,
+		Config:    cfg,
+		Logger:    logger,
+		Metrics:   application.Telemetry.Metrics,
+		Tracer:    application.Telemetry.Tracer,
+		Identity:  application.Identity,
+		Ledger:    application.Ledger,
+		Gateway:   application.Gateway,
+		Knowledge: application.Knowledge,
+		Blobs:     application.Blobs,
 	})
 
 	var (

@@ -683,3 +683,43 @@ func marshalBreakdown(b *domain.ConfidenceBreakdown) ([]byte, error) {
 	}
 	return json.Marshal(b)
 }
+
+// ResolveAssertionWorkspace finds which of a principal's workspaces owns an assertion.
+//
+// It lets an endpoint accept a bare identifier while keeping the tenancy check intact:
+// a claim in a workspace the caller has no grant for is reported as absent, so
+// identifiers cannot be probed across tenants (AGENTS.md section 22.1).
+func (s *Store) ResolveAssertionWorkspace(ctx context.Context, id domain.AssertionID, allowed []domain.WorkspaceID) (domain.WorkspaceID, error) {
+	return s.resolveOwningWorkspace(ctx, "assertions", string(id), allowed, "assertion")
+}
+
+// ResolveEntityWorkspace does the same for an entity identifier.
+func (s *Store) ResolveEntityWorkspace(ctx context.Context, id domain.EntityID, allowed []domain.WorkspaceID) (domain.WorkspaceID, error) {
+	return s.resolveOwningWorkspace(ctx, "entities", string(id), allowed, "entity")
+}
+
+// ResolveConflictSetWorkspace does the same for a conflict set identifier.
+func (s *Store) ResolveConflictSetWorkspace(ctx context.Context, id domain.ConflictSetID, allowed []domain.WorkspaceID) (domain.WorkspaceID, error) {
+	return s.resolveOwningWorkspace(ctx, "conflict_sets", string(id), allowed, "conflict set")
+}
+
+// resolveOwningWorkspace looks up a row's workspace, restricted to the ones the caller
+// may see. The table name is supplied only by this package, never by a request.
+func (s *Store) resolveOwningWorkspace(ctx context.Context, table, id string, allowed []domain.WorkspaceID, label string) (domain.WorkspaceID, error) {
+	const op = "ledger.resolveOwningWorkspace"
+
+	if len(allowed) == 0 {
+		return "", domain.Errorf(domain.CodeNotFound, op, "%s not found", label)
+	}
+	var found domain.WorkspaceID
+	err := s.pool.QueryRow(ctx,
+		`SELECT workspace_id FROM `+table+` WHERE id = $1 AND workspace_id = ANY($2::uuid[])`,
+		id, idStrings(allowed)).Scan(&found)
+	if err != nil {
+		if isNoRows(err) {
+			return "", domain.Errorf(domain.CodeNotFound, op, "%s not found", label)
+		}
+		return "", mapError(err, op, "cannot resolve owning workspace")
+	}
+	return found, nil
+}

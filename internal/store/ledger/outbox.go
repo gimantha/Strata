@@ -26,9 +26,6 @@ func (s *Store) insertOutboxTx(ctx context.Context, tx pgx.Tx, o domain.OutboxEv
 	if o.Status == "" {
 		o.Status = domain.OutboxPending
 	}
-	if o.VisibleAt.IsZero() {
-		o.VisibleAt = nowUTC()
-	}
 	if len(o.Payload) == 0 {
 		o.Payload = json.RawMessage("{}")
 	}
@@ -41,11 +38,11 @@ func (s *Store) insertOutboxTx(ctx context.Context, tx pgx.Tx, o domain.OutboxEv
 		INSERT INTO outbox_events (id, workspace_id, graph_space_id, source_event_id, topic, event_type,
 		                           schema_version, payload, dedupe_key, status, max_attempts,
 		                           visible_at, trace_parent)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,coalesce($12, now()),$13)
 		ON CONFLICT (workspace_id, dedupe_key) DO NOTHING`,
 		o.ID, o.WorkspaceID, nullableString(o.GraphSpaceID), nullableString(o.SourceEventID),
 		o.Topic, o.EventType, o.SchemaVersion, []byte(o.Payload), o.DedupeKey,
-		o.Status, o.MaxAttempts, o.VisibleAt, o.TraceParent)
+		o.Status, o.MaxAttempts, visibleAtOrNil(o.VisibleAt), o.TraceParent)
 	return mapError(err, op, "cannot insert outbox event")
 }
 
@@ -333,6 +330,21 @@ func (s *Store) OutboxDepth(ctx context.Context) (observability.OutboxDepthSnaps
 		return snap, mapError(err, op, "cannot read outbox lag")
 	}
 	return snap, nil
+}
+
+// visibleAtOrNil leaves visibility to the database when the caller did not schedule the
+// work for later.
+//
+// Claim eligibility is evaluated against the database clock, so publishing with the
+// application clock would make freshly queued work briefly unclaimable whenever the two
+// disagree - and permanently late if the application clock runs ahead. Every timestamp
+// governing the claim lifecycle comes from one clock: the database's.
+func visibleAtOrNil(t time.Time) *time.Time {
+	if t.IsZero() {
+		return nil
+	}
+	utc := t.UTC()
+	return &utc
 }
 
 func scanOutbox(rows pgx.Rows, op string) (domain.OutboxEvent, error) {
