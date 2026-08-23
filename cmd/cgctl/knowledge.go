@@ -11,6 +11,7 @@ import (
 	"github.com/gimantha/strata/internal/app"
 	"github.com/gimantha/strata/internal/domain"
 	"github.com/gimantha/strata/internal/knowledge"
+	"github.com/gimantha/strata/internal/retrieval"
 )
 
 // cmdPredicateDefine sets a predicate's semantics, which is what lets the reconciler tell
@@ -761,14 +762,16 @@ func cmdProjectionsStatus(ctx context.Context, a *app.App, args []string) error 
 	return nil
 }
 
-// cmdSearch queries the projections directly, which is mostly a way to see that they work
-// before the hybrid retriever in phase 7 puts them together.
+// cmdSearch runs hybrid retrieval.
 func cmdSearch(ctx context.Context, a *app.App, args []string) error {
 	fs := flag.NewFlagSet("search", flag.ContinueOnError)
 	graphSpace := fs.String("graph-space", "", "graph space id (required)")
-	text := fs.String("query", "", "text to search for (required)")
-	mode := fs.String("mode", "lexical", "lexical, exact, or vector")
+	text := fs.String("query", "", "what to search for (required)")
+	modes := fs.String("modes", "", "comma-separated: lexical, exact, vector, entity, graph; empty lets the planner decide")
+	validAt := fs.String("valid-at", "", "only what held at this instant, RFC3339")
+	surfaces := fs.String("surfaces", "", "comma-separated: chunk, episode, entity, assertion")
 	limit := fs.Int("limit", 10, "maximum results")
+	explain := fs.Bool("explain", false, "show the plan and the signals behind each score")
 	keyID := fs.String("key-id", "", "act as the principal behind this API key id")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -777,43 +780,67 @@ func cmdSearch(ctx context.Context, a *app.App, args []string) error {
 		return errors.New("--query is required")
 	}
 
-	_, scope, err := resolveScopeForGraphSpace(ctx, a, *keyID, *graphSpace, domain.RoleReader)
+	principal, scope, err := resolveScopeForGraphSpace(ctx, a, *keyID, *graphSpace, domain.RoleReader)
 	if err != nil {
 		return err
 	}
 
-	var hits []domain.Hit
-	switch *mode {
-	case "lexical", "exact":
-		hits, err = a.Ledger.SearchLexical(ctx, domain.LexicalQuery{
-			Scope: scope, Text: *text, Exact: *mode == "exact", Limit: *limit,
-		})
-	case "vector":
-		if a.Embedder == nil {
-			return errors.New("vector search needs an embedding provider; set CG_EMBEDDING_PROVIDER")
-		}
-		vectors, embedErr := a.Embedder.Embed(ctx, []string{*text})
-		if embedErr != nil {
-			return embedErr
-		}
-		hits, err = a.Ledger.SearchVectors(ctx, domain.VectorQuery{
-			Scope: scope, Embedding: vectors[0], Limit: *limit,
-		})
-	default:
-		return fmt.Errorf("unknown mode %q: use lexical, exact, or vector", *mode)
+	req := domain.QueryRequest{
+		Scope:     scope,
+		Query:     *text,
+		Principal: principal.Ref(),
+		Limit:     *limit,
+		Explain:   *explain,
 	}
+	for _, mode := range splitList(*modes) {
+		parsed, err := domain.ParseRetrievalMode(mode)
+		if err != nil {
+			return err
+		}
+		req.Modes = append(req.Modes, parsed)
+	}
+	for _, surface := range splitList(*surfaces) {
+		parsed, err := domain.ParseSurface(surface)
+		if err != nil {
+			return err
+		}
+		req.Filters.Surfaces = append(req.Filters.Surfaces, parsed)
+	}
+	if req.Temporal.ValidAt, err = parseOptionalTime(*validAt, "--valid-at"); err != nil {
+		return err
+	}
+
+	result, err := a.Retriever.Query(ctx, req)
 	if err != nil {
 		return err
 	}
 
-	tw := newTable("SCORE", "SURFACE", "RECORD", "CONTENT")
-	for _, hit := range hits {
-		row(tw, fmt.Sprintf("%.4f", hit.Score), string(hit.Surface), hit.RecordID,
-			truncate(strings.ReplaceAll(hit.Content, "\n", " "), 60))
+	tw := newTable("SCORE", "SURFACE", "FOUND BY", "CONTENT")
+	for _, item := range result.Items {
+		found := make([]string, 0, len(item.FoundBy))
+		for _, mode := range item.FoundBy {
+			found = append(found, string(mode))
+		}
+		row(tw, fmt.Sprintf("%.5f", item.Score), string(item.Surface),
+			strings.Join(found, "+"),
+			truncate(strings.ReplaceAll(item.Content, "\n", " "), 56))
 	}
 	if err := tw.Flush(); err != nil {
 		return err
 	}
-	fmt.Printf("\n%d result(s)\n", len(hits))
+	fmt.Printf("\n%d result(s) from %d candidate(s)\n", len(result.Items), result.Total)
+
+	if result.Plan != nil {
+		fmt.Println("\nplan:")
+		for _, line := range retrieval.Explain(*result.Plan) {
+			fmt.Println("  " + line)
+		}
+		for _, item := range result.Items {
+			if item.Path != nil {
+				fmt.Printf("  %s reached via %s at depth %d\n",
+					truncate(item.Content, 30), item.Path.ViaPredicate, item.Path.Depth)
+			}
+		}
+	}
 	return nil
 }

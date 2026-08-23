@@ -15,6 +15,7 @@ import (
 	"github.com/gimantha/strata/internal/ingest"
 	"github.com/gimantha/strata/internal/knowledge"
 	"github.com/gimantha/strata/internal/observability"
+	"github.com/gimantha/strata/internal/retrieval"
 	"github.com/gimantha/strata/internal/store/ledger"
 )
 
@@ -28,6 +29,7 @@ type Server struct {
 	ledger    *ledger.Store
 	gateway   *ingest.Gateway
 	knowledge *knowledge.Service
+	retriever *retrieval.Retriever
 	blobs     healthChecker
 	clock     func() time.Time
 	http      *http.Server
@@ -56,6 +58,7 @@ type Deps struct {
 	Ledger    *ledger.Store
 	Gateway   *ingest.Gateway
 	Knowledge *knowledge.Service
+	Retriever *retrieval.Retriever
 	Blobs     healthChecker
 	// Clock overrides the wall clock, for deterministic tests.
 	Clock func() time.Time
@@ -76,6 +79,7 @@ func NewServer(deps Deps) *Server {
 		ledger:    deps.Ledger,
 		gateway:   deps.Gateway,
 		knowledge: deps.Knowledge,
+		retriever: deps.Retriever,
 		blobs:     deps.Blobs,
 		clock:     deps.Clock,
 	}
@@ -137,6 +141,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /v1/entities/{entity_id}/split", s.authenticated(s.handleSplitEntity))
 	mux.HandleFunc("POST /v1/graph-spaces/{graph_space_id}/entities/merge", s.authenticated(s.handleMergeEntities))
 	mux.HandleFunc("GET /v1/graph-spaces/{graph_space_id}/resolution-decisions", s.authenticated(s.handleListResolutionDecisions))
+
+	// Hybrid retrieval.
+	mux.HandleFunc("POST /v1/graph-spaces/{graph_space_id}/query", s.authenticated(s.handleQuery))
 	mux.HandleFunc("POST /v1/conflicts/{conflict_id}/resolve", s.authenticated(s.handleResolveConflict))
 
 	var h http.Handler = mux

@@ -1,6 +1,6 @@
 # Architecture overview
 
-This describes what exists after phases 0 through 2, and how each part enforces the
+This describes what exists after phases 0 through 7, and how each part enforces the
 invariants in [AGENTS.md](../../AGENTS.md) section 2. Later phases extend this picture
 without changing its shape.
 
@@ -17,27 +17,26 @@ without changing its shape.
                           WORK FABRIC (transactional outbox)
                                      |
                                      v
-        PIPELINE   normalize -> segment -> chunk        [phase 1 stages]
-                   -> extract -> resolve entities -> reconcile temporally   [later]
+        PIPELINE   normalize -> segment -> chunk -> extract
+                   -> resolve entities -> reconcile temporally -> project
                                      |
                                      v
   CANONICAL LEDGER   Source | SourceEvent | Artifact | Episode | Chunk
                      Entity | Assertion | Evidence | Derivation | ConflictSet
                                      |
                                      v
-        PROJECTIONS   graph | vector | lexical | summaries                  [later]
+        PROJECTIONS   graph | vector | lexical                 summaries   [later]
                                      |
                                      v
-        RETRIEVAL and CONTEXT ASSEMBLY                                      [later]
+        HYBRID RETRIEVAL   plan -> five retrievers -> weighted RRF
+                                     |
+                                     v
+        CONTEXT ASSEMBLY                                                    [later]
 ```
 
-Everything down to and including the ledger is implemented. The projections and retrieval
-below it are deliberately absent rather than stubbed: an empty stage that recorded success
-would make replay state lie.
-
-Claims currently enter the ledger through the assertion API rather than from extraction.
-Phase 3 adds extraction stages to the pipeline, which will call the same
-`knowledge.Assert` path the API uses.
+Everything down to and including hybrid retrieval is implemented. Context assembly and
+summary projections are deliberately absent rather than stubbed: an empty stage that
+recorded success would make replay state lie.
 
 ## Where each invariant is enforced
 
@@ -134,12 +133,48 @@ past date, and what the system believed on a past date about a past date.
 Objects keep their types in typed columns, with a canonical key for equality
 ([ADR 0005](../adr/0005-typed-object-columns-for-assertions.md)). Contradictions are
 recorded as conflict sets rather than resolved by guesswork
-([ADR 0006](../adr/0006-conflicts-recorded-not-resolved.md)); the full reconciler, with
-authority weighting and out-of-order handling, is phase 5.
+([ADR 0006](../adr/0006-conflicts-recorded-not-resolved.md)).
+
+Claims from extraction commit through the same `knowledge.Assert` path the API uses, so
+evidence, supersession, conflict detection, and provenance apply unchanged to extracted
+knowledge.
+
+## Extraction, resolution, reconciliation
+
+Extraction reads chunks and returns candidate claims with quoted spans. Untrusted document
+text is fenced with a random nonce, the model is constrained to a schema, every claim must
+quote the chunk it came from, and an instruction found inside a quoted span quarantines that
+span rather than the document
+([ADR 0008](../adr/0008-defense-in-depth-for-prompt-injection.md)). No single one of those is
+sufficient, which is the point.
+
+Resolution climbs an evidence ladder: an external identifier is decisive, an exact canonical
+name is strong, and fuzzy similarity only ever produces a candidate for review
+([ADR 0009](../adr/0009-fuzzy-matching-generates-candidates-only.md)) — measured on real
+data, the similarity of a typo and the similarity of two different people overlap. A merge
+redirects rather than collapses, so undoing one clears a pointer instead of reconstructing
+history.
+
+Reconciliation orders claims by the source's own clock rather than by arrival
+([ADR 0010](../adr/0010-source-order-over-arrival-order.md)), so a CDC stream delivering
+updates out of order converges to the same state either way. Predicate policy decides what
+happens when claims overlap; equal authority produces a conflict rather than a coin flip.
+
+## Projections and retrieval
+
+Projections carry no state of their own and are rebuilt through the same code path that
+maintains them incrementally
+([ADR 0011](../adr/0011-projections-hold-no-history.md)). Dropping every projection and
+replaying produces equivalent retrieval results, which a test asserts.
+
+A query is planned from its shape — identifiers get exact matching, names get entity and
+graph, prose gets vector and lexical — then fused by weighted Reciprocal Rank Fusion scaled
+by match quality ([ADR 0012](../adr/0012-weighted-rrf-with-quality-scaling.md)). Agreement
+between retrievers is the dominant signal, and it is why hybrid measurably beats every
+individual mode on the evaluation corpus rather than merely being assumed to.
 
 ## What comes next
 
-Phase 3 adds extraction: a provider-independent LLM interface, model-run tracking, and
-pipeline stages that turn chunks into candidate claims. Those candidates commit through the
-same `knowledge.Assert` path, so everything above - evidence, supersession, conflict
-detection, provenance - applies unchanged to extracted knowledge.
+Phase 8 adds context assembly: token-budgeted context blocks with citations, built from
+retrieval results. Retrieval returns references and scores today so that ranking and
+assembly, which fail in different ways, stay debuggable apart.

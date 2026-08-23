@@ -42,7 +42,9 @@ type Telemetry struct {
 // endpoint is configured it installs no-op providers, so tests and local runs need
 // no collector while the instrumentation calls stay identical.
 func Setup(ctx context.Context, cfg config.Config) (*Telemetry, error) {
-	logger := NewLogger(cfg, os.Stdout)
+	// Logs go to stderr so a command's actual output stays pipeable. `cgctl graph-space ls |
+	// awk` is a documented workflow, and interleaved JSON log lines break it.
+	logger := NewLogger(cfg, os.Stderr)
 
 	// The propagator is installed unconditionally: trace context must be extracted
 	// and injected even when this process is not exporting spans itself.

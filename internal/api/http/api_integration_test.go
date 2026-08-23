@@ -17,11 +17,14 @@ import (
 	strataapi "github.com/gimantha/strata/internal/api/http"
 	"github.com/gimantha/strata/internal/config"
 	"github.com/gimantha/strata/internal/domain"
+	"github.com/gimantha/strata/internal/embedding/hashing"
 	"github.com/gimantha/strata/internal/identity"
 	"github.com/gimantha/strata/internal/ingest"
 	"github.com/gimantha/strata/internal/knowledge"
 	"github.com/gimantha/strata/internal/normalize"
 	"github.com/gimantha/strata/internal/pipeline"
+	"github.com/gimantha/strata/internal/projection"
+	"github.com/gimantha/strata/internal/retrieval"
 	"github.com/gimantha/strata/internal/store/blob"
 	"github.com/gimantha/strata/internal/testsupport/pgtest"
 )
@@ -102,6 +105,12 @@ func newAPIHarness(t *testing.T, keys ...keyEntry) *apiHarness {
 	}
 	gateway := ingest.New(f.Store, blobs, ingest.Options{PipelineVersion: 1}, nil, nil, nil)
 
+	// Retrieval is wired with a deterministic embedder so the query endpoint is exercised
+	// over real projections rather than a stub.
+	embedder := hashing.New()
+	projector := projection.New(f.Store, embedder, projection.Options{}, nil, nil)
+	retriever := retrieval.New(f.Store, embedder, retrieval.Options{}, nil, nil)
+
 	server := strataapi.NewServer(strataapi.Deps{
 		Config:    cfg,
 		Logger:    discardLogger(),
@@ -109,6 +118,7 @@ func newAPIHarness(t *testing.T, keys ...keyEntry) *apiHarness {
 		Ledger:    f.Store,
 		Gateway:   gateway,
 		Knowledge: knowledge.New(f.Store, knowledge.Options{}, nil, nil),
+		Retriever: retriever,
 		Blobs:     blobs,
 	})
 
@@ -116,7 +126,7 @@ func newAPIHarness(t *testing.T, keys ...keyEntry) *apiHarness {
 	t.Cleanup(ts.Close)
 
 	runner := pipeline.NewRunner(f.Store, 1, pipeline.DefaultStages(f.Store, blobs, pipeline.StageConfig{
-		ChunkMaxTokens: 64, ChunkOverlapTokens: 8,
+		ChunkMaxTokens: 64, ChunkOverlapTokens: 8, Projector: projector,
 	}), nil, nil, nil)
 
 	return &apiHarness{fixture: f, server: ts, runner: runner, creds: creds}
@@ -344,8 +354,22 @@ func TestIntegrationIngestAndStatusFlow(t *testing.T) {
 		t.Fatalf("status must report the pipeline: %s", body)
 	}
 	stages, ok := pipelineStatus["stages"].([]any)
-	if !ok || len(stages) != 3 {
-		t.Fatalf("expected 3 stages in the status response: %s", body)
+	if !ok {
+		t.Fatalf("status must report per-stage state: %s", body)
+	}
+	// Named rather than counted: the stage list grows as phases land, and a count assertion
+	// would fail on the addition instead of on a regression.
+	succeeded := map[string]bool{}
+	for _, entry := range stages {
+		stage, _ := entry.(map[string]any)
+		if stage["status"] == "succeeded" {
+			succeeded[stage["name"].(string)] = true
+		}
+	}
+	for _, name := range []string{"normalize", "segment", "chunk"} {
+		if !succeeded[name] {
+			t.Fatalf("stage %q should have succeeded: %s", name, body)
+		}
 	}
 }
 

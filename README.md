@@ -67,8 +67,12 @@ retrieval projections.
   so running without an embedder costs paraphrase matching rather than understanding
 - Projections that hold no history: dropping all of them and replaying from the ledger
   produces equivalent retrieval results, which a test checks rather than assumes
+- Hybrid retrieval over all five paths, fused by weighted RRF and planned from the shape of
+  the query, with the plan and per-retriever ranks reported rather than hidden. On the
+  evaluation corpus hybrid beats every individual mode on both recall@5 and MRR — a measured
+  assertion in the test suite, not a claim
 
-**Not built yet** (later phases, in order): hybrid retrieval, context assembly, ontology mode, CDC connectors, ABAC policy, memory lifecycle,
+**Not built yet** (later phases, in order): context assembly, ontology mode, CDC connectors, ABAC policy, memory lifecycle,
 MCP, and distributed operation.
 
 ## Quickstart
@@ -105,6 +109,9 @@ go run ./cmd/cgctl ingest file --graph-space "$GS" --source support-chat \
 # 7. Process it
 go run ./cmd/cgworker &     # or set CG_EMBEDDED_WORKER=true on the server
 go run ./cmd/cgctl event status --id <source_event_id>
+
+# 8. Ask it something
+go run ./cmd/cgctl search --graph-space "$GS" --query "who confirmed the renewal" --explain
 ```
 
 Over HTTP:
@@ -118,6 +125,10 @@ curl -s -X POST "localhost:8080/v1/graph-spaces/$GS/episodes" \
   -H "Authorization: Bearer <key_id>.<secret>" \
   -H "Idempotency-Key: turn-1" \
   -d '{"source_name":"support-chat","content":"Alice Chen confirmed the renewal."}'
+
+curl -s -X POST "localhost:8080/v1/graph-spaces/$GS/query" \
+  -H "Authorization: Bearer <key_id>.<secret>" \
+  -d '{"query":"who confirmed the renewal","explain":true}'
 ```
 
 See [docs/api/ingest.md](docs/api/ingest.md) for the full surface.
@@ -202,5 +213,7 @@ are declared by the services that consume them; implementations live under `stor
 - [docs/api/resolution.md](docs/api/resolution.md) — the evidence ladder, reversible
   merges, the decision ledger
 - [docs/api/projections.md](docs/api/projections.md) — vector, lexical, and graph
-  retrieval, and rebuilding them
+  projections, and rebuilding them
+- [docs/api/retrieval.md](docs/api/retrieval.md) — query planning, the five retrievers,
+  fusion, filters, and explain
 - [docs/adr/](docs/adr/) — decisions, alternatives, and trade-offs

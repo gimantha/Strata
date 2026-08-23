@@ -26,6 +26,7 @@ import (
 	"github.com/gimantha/strata/internal/observability"
 	"github.com/gimantha/strata/internal/pipeline"
 	"github.com/gimantha/strata/internal/projection"
+	"github.com/gimantha/strata/internal/retrieval"
 	"github.com/gimantha/strata/internal/store/blob"
 	"github.com/gimantha/strata/internal/store/ledger"
 )
@@ -42,6 +43,7 @@ type App struct {
 	Knowledge *knowledge.Service
 	Extractor *extraction.Extractor
 	Projector *projection.Projector
+	Retriever *retrieval.Retriever
 	Embedder  embedding.Embedder
 	Bus       *eventbus.Outbox
 	Runner    *pipeline.Runner
@@ -158,6 +160,8 @@ func New(ctx context.Context, cfg config.Config) (*App, error) {
 			slog.String("model", embedder.Model()),
 			slog.Int("dimensions", embedder.Dimensions()))
 	}
+
+	app.Retriever = retrieval.New(store, embedder, retrieval.Options{}, logger, telemetry.Tracer)
 
 	app.Runner = pipeline.NewRunner(store, cfg.PipelineVersion,
 		pipeline.DefaultStages(store, blobs, stageCfg),

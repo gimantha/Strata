@@ -62,6 +62,7 @@ func run() error {
 		Ledger:    application.Ledger,
 		Gateway:   application.Gateway,
 		Knowledge: application.Knowledge,
+		Retriever: application.Retriever,
 		Blobs:     application.Blobs,
 	})
 
