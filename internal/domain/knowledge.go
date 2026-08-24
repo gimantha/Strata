@@ -674,6 +674,97 @@ func (o AssertionObject) MarshalJSON() ([]byte, error) {
 	return json.Marshal(out)
 }
 
+// UnmarshalJSON reads the wire form back into a typed object.
+//
+// The counterpart of MarshalJSON, and a lesson from finding a symbol arriving with no text
+// after a package round trip: a type with a custom marshaller and no matching unmarshaller is
+// silently lossy, and the loss shows up wherever the value is written and read back — a
+// portable package, a queued job, a cached response.
+func (o *AssertionObject) UnmarshalJSON(data []byte) error {
+	const op = "domain.AssertionObject.UnmarshalJSON"
+
+	var wire struct {
+		Kind     string          `json:"kind"`
+		EntityID string          `json:"entity_id"`
+		Value    json.RawMessage `json:"value"`
+	}
+	if err := json.Unmarshal(data, &wire); err != nil {
+		return err
+	}
+
+	kind, err := ParseObjectKind(wire.Kind)
+	if err != nil {
+		if wire.Kind == "" {
+			// An absent kind is an empty object rather than a malformed one: a claim may
+			// legitimately carry no object until one is set.
+			*o = AssertionObject{}
+			return nil
+		}
+		return err
+	}
+	rebuilt := AssertionObject{Kind: kind}
+
+	switch kind {
+	case ObjectEntity:
+		rebuilt.EntityID = EntityID(wire.EntityID)
+	case ObjectString, ObjectURI, ObjectSymbol:
+		if err := json.Unmarshal(wire.Value, &rebuilt.Text); err != nil {
+			return Wrap(err, CodeInvalidArgument, op, "malformed text object")
+		}
+	case ObjectInteger:
+		if err := json.Unmarshal(wire.Value, &rebuilt.Integer); err != nil {
+			return Wrap(err, CodeInvalidArgument, op, "malformed integer object")
+		}
+	case ObjectDecimal:
+		if err := json.Unmarshal(wire.Value, &rebuilt.Decimal); err != nil {
+			return Wrap(err, CodeInvalidArgument, op, "malformed decimal object")
+		}
+	case ObjectBoolean:
+		if err := json.Unmarshal(wire.Value, &rebuilt.Boolean); err != nil {
+			return Wrap(err, CodeInvalidArgument, op, "malformed boolean object")
+		}
+	case ObjectTimestamp:
+		var text string
+		if err := json.Unmarshal(wire.Value, &text); err != nil {
+			return Wrap(err, CodeInvalidArgument, op, "malformed timestamp object")
+		}
+		parsed, err := time.Parse(time.RFC3339Nano, text)
+		if err != nil {
+			return Wrap(err, CodeInvalidArgument, op, "malformed timestamp object")
+		}
+		rebuilt.Timestamp = parsed.UTC()
+	case ObjectDate:
+		var text string
+		if err := json.Unmarshal(wire.Value, &text); err != nil {
+			return Wrap(err, CodeInvalidArgument, op, "malformed date object")
+		}
+		parsed, err := time.Parse(DateLayout, text)
+		if err != nil {
+			return Wrap(err, CodeInvalidArgument, op, "malformed date object")
+		}
+		rebuilt.Date = parsed.UTC()
+	case ObjectDuration:
+		var text string
+		if err := json.Unmarshal(wire.Value, &text); err != nil {
+			return Wrap(err, CodeInvalidArgument, op, "malformed duration object")
+		}
+		parsed, err := time.ParseDuration(text)
+		if err != nil {
+			return Wrap(err, CodeInvalidArgument, op, "malformed duration object")
+		}
+		rebuilt.Duration = parsed
+	case ObjectGeo:
+		if err := json.Unmarshal(wire.Value, &rebuilt.Geo); err != nil {
+			return Wrap(err, CodeInvalidArgument, op, "malformed geo object")
+		}
+	case ObjectJSON:
+		rebuilt.JSON = append(json.RawMessage(nil), wire.Value...)
+	}
+
+	*o = rebuilt
+	return nil
+}
+
 // ChunkProvenance is a chunk resolved to the ingestion behind it.
 //
 // Enough to cite a quoted excerpt: which passage, from which episode, from which event,

@@ -68,6 +68,8 @@ func run() error {
 		Connector: application.Connector,
 		Policy:    application.Policy,
 		Memory:    application.Memory,
+		Exporter:  application.Exporter,
+		Importer:  application.Importer,
 		Blobs:     application.Blobs,
 	})
 

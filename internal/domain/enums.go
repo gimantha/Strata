@@ -26,9 +26,15 @@ const (
 	SourceKindCode     SourceKind = "code"
 	SourceKindAPI      SourceKind = "api"
 	SourceKindStream   SourceKind = "stream"
+	// SourceKindImport marks knowledge that arrived in a portable package rather than
+	// being observed here (AGENTS.md section 29). Distinguishable at a glance, because
+	// "we concluded this" and "another deployment concluded this" are different claims
+	// about how much to trust it.
+	SourceKindImport SourceKind = "import"
 )
 
 var sourceKinds = []SourceKind{
+	SourceKindImport,
 	SourceKindChat, SourceKindFile, SourceKindDocument, SourceKindDatabase,
 	SourceKindWebhook, SourceKindTool, SourceKindCode, SourceKindAPI, SourceKindStream,
 }

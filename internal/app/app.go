@@ -31,6 +31,7 @@ import (
 	"github.com/gimantha/strata/internal/ontology"
 	"github.com/gimantha/strata/internal/pipeline"
 	"github.com/gimantha/strata/internal/policy"
+	"github.com/gimantha/strata/internal/portable"
 	"github.com/gimantha/strata/internal/projection"
 	"github.com/gimantha/strata/internal/retrieval"
 	"github.com/gimantha/strata/internal/store/blob"
@@ -55,6 +56,8 @@ type App struct {
 	Connector *cdc.Runner
 	Policy    *policy.Service
 	Memory    *memory.Service
+	Exporter  *portable.Exporter
+	Importer  *portable.Importer
 	Embedder  embedding.Embedder
 	Bus       *eventbus.Outbox
 	Runner    *pipeline.Runner
@@ -180,6 +183,7 @@ func New(ctx context.Context, cfg config.Config) (*App, error) {
 	app.Policy = policy.New(store, policy.NewLedgerAuditor(store), policy.Options{}, logger)
 	app.Ontology = ontology.New(store, logger)
 	app.Memory = memory.New(store, app.Knowledge, app.Projector, memory.Options{}, logger, telemetry.Tracer)
+
 	app.Connector = cdc.New(app.Gateway, store, cdc.Options{}, logger, telemetry.Tracer)
 	app.Retriever = retrieval.New(store, embedder, retrieval.Options{
 		Traces:          store,
@@ -191,6 +195,14 @@ func New(ctx context.Context, cfg config.Config) (*App, error) {
 	app.Runner = pipeline.NewRunner(store, cfg.PipelineVersion,
 		pipeline.DefaultStages(store, blobs, stageCfg),
 		logger, telemetry.Metrics, telemetry.Tracer)
+
+	// After the runner: an import processes its own event synchronously so the claims it
+	// commits can cite an episode that already exists.
+	portableOpts := portable.Options{Instance: cfg.ServiceName}
+	app.Exporter = portable.NewExporter(store, portableOpts, logger)
+	app.Importer = portable.NewImporter(store, app.Knowledge,
+		importRecorder{gateway: app.Gateway, runner: app.Runner, store: store},
+		portableOpts, logger)
 
 	// Queue depth is observed rather than pushed, so lag is visible even when nothing
 	// is being processed (AGENTS.md section 30.2).

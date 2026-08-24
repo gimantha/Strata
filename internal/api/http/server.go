@@ -20,6 +20,7 @@ import (
 	"github.com/gimantha/strata/internal/observability"
 	"github.com/gimantha/strata/internal/ontology"
 	"github.com/gimantha/strata/internal/policy"
+	"github.com/gimantha/strata/internal/portable"
 	"github.com/gimantha/strata/internal/retrieval"
 	"github.com/gimantha/strata/internal/store/ledger"
 )
@@ -40,6 +41,8 @@ type Server struct {
 	connector *cdc.Runner
 	policy    *policy.Service
 	memory    *memory.Service
+	exporter  *portable.Exporter
+	importer  *portable.Importer
 	blobs     healthChecker
 	clock     func() time.Time
 	http      *http.Server
@@ -74,6 +77,8 @@ type Deps struct {
 	Connector *cdc.Runner
 	Policy    *policy.Service
 	Memory    *memory.Service
+	Exporter  *portable.Exporter
+	Importer  *portable.Importer
 	Blobs     healthChecker
 	// Clock overrides the wall clock, for deterministic tests.
 	Clock func() time.Time
@@ -100,6 +105,8 @@ func NewServer(deps Deps) *Server {
 		connector: deps.Connector,
 		policy:    deps.Policy,
 		memory:    deps.Memory,
+		exporter:  deps.Exporter,
+		importer:  deps.Importer,
 		blobs:     deps.Blobs,
 		clock:     deps.Clock,
 	}
@@ -172,6 +179,11 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /v1/graph-spaces/{graph_space_id}/consolidate", s.authenticated(s.handleConsolidate))
 	mux.HandleFunc("POST /v1/assertions/{assertion_id}/forget", s.authenticated(s.handleForget))
 	mux.HandleFunc("POST /v1/assertions/{assertion_id}/reactivate", s.authenticated(s.handleReactivate))
+
+	// Portable context packages: a self-contained artifact that rebuilds knowledge
+	// elsewhere, distinct from the row dump below.
+	mux.HandleFunc("GET /v1/graph-spaces/{graph_space_id}/package", s.authenticated(s.handleExportPackage))
+	mux.HandleFunc("POST /v1/graph-spaces/{graph_space_id}/package", s.authenticated(s.handleImportPackage))
 
 	// Export and query-time explainability. Both are read paths that could leak across
 	// tenants, and both are audited.

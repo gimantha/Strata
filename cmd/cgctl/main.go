@@ -44,6 +44,8 @@ Commands:
   process                  Run the pipeline for an event now
   outbox ls|retry          Inspect and revive durable work
   predicate define|ls      Manage the predicate registry
+  package export|import    Move knowledge between deployments
+  package verify           Check a package's integrity, no database needed
   consolidate              Derive stable facts from repeated observation
   forget|reactivate        Take a claim out of active context, or put it back
   policy define|ls         Manage attribute-based access policy
@@ -133,6 +135,16 @@ func run(args []string) error {
 		return withApp(rest, cmdSearch)
 	case "context":
 		return withApp(rest, cmdContext)
+	case "package":
+		if len(rest) > 0 && rest[0] == "verify" {
+			// Verification needs no database, so it does not open one. A package that
+			// arrives on a machine with no deployment should still be checkable.
+			return cmdPackageVerify(context.Background(), rest[1:])
+		}
+		return withSubcommand(rest, map[string]appCommand{
+			"export": cmdPackageExport,
+			"import": cmdPackageImport,
+		})
 	case "consolidate":
 		return withApp(rest, cmdConsolidate)
 	case "forget":

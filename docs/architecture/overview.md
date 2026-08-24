@@ -1,6 +1,6 @@
 # Architecture overview
 
-This describes what exists after phases 0 through 12, and how each part enforces the
+This describes what exists after phases 0 through 13, and how each part enforces the
 invariants in [AGENTS.md](../../AGENTS.md) section 2. Later phases extend this picture
 without changing its shape.
 
@@ -56,6 +56,7 @@ absent rather than stubbed: an empty stage that recorded success would make repl
 | No hidden global graph | There is no unscoped list or read path anywhere, including administrative listings |
 | Provider independence | `internal/domain` imports nothing but the standard library and a UUID package, enforced by `scripts/check-domain-deps.sh` in CI |
 | Row updates never rebuild a subgraph | A change states what the row now says; unchanged claims collide on their fingerprint and keep their assertion id, and only moved values are superseded. A test asserts identity, not counts |
+| An import trusts nothing it is given | Identifiers are re-resolved by the target, knowledge time is the importer's own, predicates arrive as candidates, and nothing commits until the package digest verifies |
 | Decay never deletes | Decay is a floored multiplier on ranking; expiry filters, and both leave the claim asserted, cited, and answerable as of an earlier instant |
 | Unauthorized data is never retrieved and then hidden | A policy decision carries query filters; every retriever applies them in SQL, graph traversal applies them inside the walk, and canonical reads re-check each record in hand |
 | Invalid schema candidates are never silently committed | A guided graph space validates every claim; a caller gets `ontology_violation`, a model's candidate is committed as `quarantined` with its reasons, and quarantined claims are neither projected nor reconciled |
@@ -250,7 +251,22 @@ as they are.
 Forgetting is four named operations — deactivate, retract, retention, erasure — and the two
 destructive ones are refused here rather than hidden behind a flag on the reversible one.
 
+## Agents and portability
+
+An MCP server exposes a small, stable tool surface over stdio: search, context, ingest, entity,
+assertion, explain, temporal query. Every result carries canonical ids so an agent follows a
+reference rather than requesting a larger payload, and every call runs under the same policy
+evaluation as an HTTP request from the same principal — MCP is a transport, not a trust
+boundary.
+
+A portable package moves knowledge between deployments
+([ADR 0018](../adr/0018-packages-are-verified-streams-not-trusted-dumps.md)). It streams as
+newline-delimited JSON with a chained-digest manifest as its trailer, and an importer trusts
+nothing in it: identifiers are provenance rather than identity, knowledge time is the
+importer's own, predicate semantics arrive as candidates, and nothing is committed until the
+digest over every record verifies.
+
 ## What comes next
 
-Phase 13 adds MCP and portable packages: exposing the graph as tools an agent can call, and
-packaging a graph space so it can be moved between deployments.
+Phase 14 adds distributed production mode: running the worker fleet across processes, an event
+bus beyond the local outbox, and the operational concerns that come with more than one node.

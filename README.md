@@ -101,6 +101,14 @@ retrieval projections.
   every observation behind it; and forgetting as four named operations rather than one
   ambiguous delete flag
 
+- An MCP tool surface an agent can call — search, context, ingest, entity, assertion, explain,
+  temporal query — carrying canonical ids so an agent follows references instead of asking for
+  bigger payloads, and running under the same policy as every other caller
+- Portable context packages: a streamed, chain-digested JSONL format that rebuilds knowledge in
+  an empty instance. An importer trusts nothing in it — identifiers are provenance rather than
+  identity, knowledge time is the importer's own, and nothing is committed until the digest
+  over every record verifies
+
 **Not built yet** (later phases, in order): ABAC policy, memory lifecycle,
 MCP, and distributed operation.
 
@@ -225,6 +233,7 @@ go test ./internal/normalize -update    # then review the diff
 cmd/contextgraphd   HTTP API server, optionally with an in-process worker
 cmd/cgworker        Outbox consumer and pipeline runner
 cmd/cgctl           Administration and development CLI
+cmd/cgmcp           MCP server over stdio
 internal/domain     Pure canonical model: typed ids, enums, temporal coordinates
 internal/embedding  Provider-independent embeddings for the vector projection
 internal/extraction Source material into candidate knowledge, safely
@@ -272,4 +281,6 @@ are declared by the services that consume them; implementations live under `stor
   traces, and export
 - [docs/api/memory.md](docs/api/memory.md) — expiry, decay, consolidation, and the four
   ways of forgetting
+- [docs/api/mcp.md](docs/api/mcp.md) — the MCP tool surface, and portable packages with
+  their integrity manifests
 - [docs/adr/](docs/adr/) — decisions, alternatives, and trade-offs

@@ -1,6 +1,7 @@
 package domain
 
 import (
+	"encoding/json"
 	"testing"
 	"time"
 )
@@ -248,3 +249,68 @@ func TestAssertionStatusBelievable(t *testing.T) {
 }
 
 func ptrTime(t time.Time) *time.Time { return &t }
+
+func TestAssertionObjectSurvivesAJSONRoundTrip(t *testing.T) {
+	// A type with a custom marshaller and no matching unmarshaller is silently lossy, and
+	// the loss appears wherever a value is written and read back: a portable package, a
+	// queued job, a cached response. This was found by a symbol arriving with no text
+	// after a package round trip.
+	moment := time.Date(2026, 3, 1, 9, 30, 0, 0, time.UTC)
+	day := time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC)
+
+	cases := map[string]AssertionObject{
+		"entity":    ObjectOfEntity(EntityID("01a0-entity")),
+		"string":    ObjectOfString("industrial fasteners"),
+		"uri":       ObjectOfURI("https://example.test/spec"),
+		"symbol":    ObjectOfSymbol("PREMIUM"),
+		"integer":   ObjectOfInteger(50000),
+		"decimal":   ObjectOfDecimal("1234.5678"),
+		"boolean":   ObjectOfBool(true),
+		"timestamp": ObjectOfTimestamp(moment),
+		"date":      ObjectOfDate(day),
+		"duration":  ObjectOfDuration(90 * time.Minute),
+		"geo":       ObjectOfGeo(55.86, -4.25),
+		"json":      ObjectOfJSON(json.RawMessage(`{"a":1}`)),
+	}
+
+	for name, original := range cases {
+		t.Run(name, func(t *testing.T) {
+			encoded, err := json.Marshal(original)
+			if err != nil {
+				t.Fatalf("marshal: %v", err)
+			}
+
+			var decoded AssertionObject
+			if err := json.Unmarshal(encoded, &decoded); err != nil {
+				t.Fatalf("unmarshal: %v", err)
+			}
+
+			if decoded.Kind != original.Kind {
+				t.Fatalf("kind changed: %s then %s", original.Kind, decoded.Kind)
+			}
+			// The canonical key is what equality and fingerprinting use, so agreeing on it
+			// is the property that actually matters.
+			if decoded.Key() != original.Key() {
+				t.Fatalf("key changed: %q then %q", original.Key(), decoded.Key())
+			}
+			if !decoded.Equal(original) {
+				t.Fatalf("value changed: %+v then %+v", original, decoded)
+			}
+			if err := decoded.Validate(); err != nil {
+				t.Fatalf("the decoded object is invalid: %v", err)
+			}
+		})
+	}
+}
+
+func TestEmptyAssertionObjectDecodesAsEmpty(t *testing.T) {
+	// A claim may legitimately carry no object yet, and an absent kind must not be an
+	// error the caller has to special-case.
+	var decoded AssertionObject
+	if err := json.Unmarshal([]byte(`{}`), &decoded); err != nil {
+		t.Fatalf("an empty object should decode: %v", err)
+	}
+	if decoded.Kind != "" {
+		t.Fatalf("expected an empty object, got %+v", decoded)
+	}
+}
