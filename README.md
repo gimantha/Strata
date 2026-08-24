@@ -83,7 +83,13 @@ retrieval projections.
   returned to a caller who can fix it, and quarantined — visible, cited, out of belief — when
   a model proposed it. Neither outcome is a silent commit
 
-**Not built yet** (later phases, in order): CDC connectors, ABAC policy, memory lifecycle,
+- Change data capture as first-class ingestion: a generic change contract, a JSONL replay
+  adapter, per-stream checkpoints, and deterministic column-to-claim mapping with no model
+  involved. A row update supersedes only what moved and leaves every other assertion
+  untouched — measured by assertion identity, not by counting rows — and a deleted row is
+  retracted rather than erased
+
+**Not built yet** (later phases, in order): ABAC policy, memory lifecycle,
 MCP, and distributed operation.
 
 ## Quickstart
@@ -248,4 +254,6 @@ are declared by the services that consume them; implementations live under `stor
   citations, and the injection boundary
 - [docs/api/ontology.md](docs/api/ontology.md) — schema versions, open and guided modes,
   validation, and what happens to what a schema refuses
+- [docs/api/cdc.md](docs/api/cdc.md) — the change contract, mappings, checkpoints,
+  tombstones, and out-of-order handling
 - [docs/adr/](docs/adr/) — decisions, alternatives, and trade-offs

@@ -10,6 +10,7 @@ import (
 	"log/slog"
 
 	"github.com/gimantha/strata/internal/config"
+	"github.com/gimantha/strata/internal/connector/cdc"
 	"github.com/gimantha/strata/internal/contextblock"
 	"github.com/gimantha/strata/internal/domain"
 	"github.com/gimantha/strata/internal/embedding"
@@ -49,6 +50,7 @@ type App struct {
 	Retriever *retrieval.Retriever
 	Assembler *contextblock.Assembler
 	Ontology  *ontology.Service
+	Connector *cdc.Runner
 	Embedder  embedding.Embedder
 	Bus       *eventbus.Outbox
 	Runner    *pipeline.Runner
@@ -140,10 +142,15 @@ func New(ctx context.Context, cfg config.Config) (*App, error) {
 		ChunkOverlapTokens: cfg.ChunkOverlapTokens,
 		Tokenizer:          normalize.DefaultTokenizer,
 	}
+	// CDC needs no model provider: a row is already structured, so the mapping reads it
+	// deterministically. That is why the committer is wired here rather than only in the
+	// extraction branch below.
+	stageCfg.Changes = store
+	stageCfg.Committer = app.Knowledge
+
 	if provider != nil {
 		app.Extractor = extraction.New(provider, store, extraction.Options{}, logger, telemetry.Tracer)
 		stageCfg.Extractor = app.Extractor
-		stageCfg.Committer = app.Knowledge
 		logger.InfoContext(ctx, "extraction enabled",
 			slog.String("provider", provider.Name()), slog.String("model", provider.Model()))
 	}
@@ -167,6 +174,7 @@ func New(ctx context.Context, cfg config.Config) (*App, error) {
 	}
 
 	app.Ontology = ontology.New(store, logger)
+	app.Connector = cdc.New(app.Gateway, store, cdc.Options{}, logger, telemetry.Tracer)
 	app.Retriever = retrieval.New(store, embedder, retrieval.Options{}, logger, telemetry.Tracer)
 
 	app.Assembler = contextblock.New(app.Retriever, store, contextblock.Options{}, logger, telemetry.Tracer)

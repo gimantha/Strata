@@ -1,6 +1,6 @@
 # Architecture overview
 
-This describes what exists after phases 0 through 9, and how each part enforces the
+This describes what exists after phases 0 through 10, and how each part enforces the
 invariants in [AGENTS.md](../../AGENTS.md) section 2. Later phases extend this picture
 without changing its shape.
 
@@ -17,14 +17,14 @@ without changing its shape.
                           WORK FABRIC (transactional outbox)
                                      |
                                      v
-        PIPELINE   normalize -> segment -> chunk -> extract (schema-guided or open)
+        PIPELINE   normalize -> segment -> chunk -> map changes -> extract
                    -> resolve entities -> validate against ontology
                    -> reconcile temporally -> project
                                      |
                                      v
   CANONICAL LEDGER   Source | SourceEvent | Artifact | Episode | Chunk
                      Entity | Assertion | Evidence | Derivation | ConflictSet
-                     OntologyVersion
+                     OntologyVersion | CDCStream
                                      |
                                      v
         PROJECTIONS   graph | vector | lexical                 summaries   [later]
@@ -55,6 +55,7 @@ absent rather than stubbed: an empty stage that recorded success would make repl
 | Observability is part of correctness | Every ingest and stage is traced, W3C trace context is carried on outbox rows across the async boundary, and queue lag is an observable gauge |
 | No hidden global graph | There is no unscoped list or read path anywhere, including administrative listings |
 | Provider independence | `internal/domain` imports nothing but the standard library and a UUID package, enforced by `scripts/check-domain-deps.sh` in CI |
+| Row updates never rebuild a subgraph | A change states what the row now says; unchanged claims collide on their fingerprint and keep their assertion id, and only moved values are superseded. A test asserts identity, not counts |
 | Invalid schema candidates are never silently committed | A guided graph space validates every claim; a caller gets `ontology_violation`, a model's candidate is committed as `quarantined` with its reasons, and quarantined claims are neither projected nor reconciled |
 
 ## Ingestion, step by step
@@ -199,8 +200,23 @@ What a schema refuses never becomes knowledge quietly. A caller stating a claim 
 committed as quarantined, carrying its reasons, and held out of belief — not projected, not
 retrievable, not reconciled.
 
+## Change data capture
+
+A row change is a source event like any other, and knowledge is derived from it rather than
+rebuilt on it ([ADR 0015](../adr/0015-cdc-is-events-not-rebuilds.md)). An update supersedes
+the claims whose values moved and leaves every other assertion untouched, which is what keeps
+identity, history, and every reference to a claim intact across a hundred column edits.
+
+Mapping is deterministic: a row is already structured, so the columns say what the predicates
+are and the primary key says what the subject is. CDC therefore works with no model provider
+configured at all.
+
+A checkpoint advances only after its events are durable; a crash in between replays them, and
+replaying is free because the gateway keys on each change. A deleted row retracts its claims
+rather than erasing them — the source stopped saying it, which is not the same as it never
+having been true.
+
 ## What comes next
 
-Phase 10 adds CDC and connectors: change-data-capture ingestion that converges to the same
-state whatever order updates arrive in, which the reconciler already assumes and phase 5
-already tests.
+Phase 11 adds security and multi-tenancy in depth: authentication, ABAC policy evaluation,
+and classification-aware filtering applied before ranking rather than after.

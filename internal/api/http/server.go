@@ -10,6 +10,7 @@ import (
 	tracenoop "go.opentelemetry.io/otel/trace/noop"
 
 	"github.com/gimantha/strata/internal/config"
+	"github.com/gimantha/strata/internal/connector/cdc"
 	"github.com/gimantha/strata/internal/contextblock"
 	"github.com/gimantha/strata/internal/domain"
 	"github.com/gimantha/strata/internal/identity"
@@ -34,6 +35,7 @@ type Server struct {
 	retriever *retrieval.Retriever
 	assembler *contextblock.Assembler
 	ontology  *ontology.Service
+	connector *cdc.Runner
 	blobs     healthChecker
 	clock     func() time.Time
 	http      *http.Server
@@ -65,6 +67,7 @@ type Deps struct {
 	Retriever *retrieval.Retriever
 	Assembler *contextblock.Assembler
 	Ontology  *ontology.Service
+	Connector *cdc.Runner
 	Blobs     healthChecker
 	// Clock overrides the wall clock, for deterministic tests.
 	Clock func() time.Time
@@ -88,6 +91,7 @@ func NewServer(deps Deps) *Server {
 		retriever: deps.Retriever,
 		assembler: deps.Assembler,
 		ontology:  deps.Ontology,
+		connector: deps.Connector,
 		blobs:     deps.Blobs,
 		clock:     deps.Clock,
 	}
@@ -155,6 +159,9 @@ func (s *Server) Handler() http.Handler {
 
 	// Context assembly.
 	mux.HandleFunc("POST /v1/graph-spaces/{graph_space_id}/context", s.authenticated(s.handleContext))
+
+	// Change data capture: a push connector's batch of row changes.
+	mux.HandleFunc("POST /v1/graph-spaces/{graph_space_id}/changes", s.authenticated(s.handleChanges))
 
 	// Ontology versions and the mode a graph space runs in.
 	mux.HandleFunc("POST /v1/graph-spaces/{graph_space_id}/ontology/versions", s.authenticated(s.handleDefineOntology))

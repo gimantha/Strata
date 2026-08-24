@@ -13,6 +13,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -77,6 +78,8 @@ func Decode(mediaType string, raw []byte, opts Options) (Document, error) {
 	}
 
 	switch base {
+	case domain.MediaTypeChangeRow:
+		return decodeChangeRow(raw)
 	case MediaTypeJSON:
 		return decodeJSON(raw)
 	case MediaTypeMarkdown:
@@ -152,6 +155,59 @@ func decodeJSON(raw []byte) (Document, error) {
 	}
 	doc := singleSegment(canonical, MediaTypeJSON)
 	doc.Segments[0].Locator.JSONPointer = ""
+	return doc, nil
+}
+
+// decodeChangeRow renders one CDC row as readable text.
+//
+// The archived payload is the whole change envelope — offsets, transaction ids, before and
+// after images — because that is what makes a disputed fact explicable later. None of it
+// belongs in a search index. What gets segmented is the row itself, one "column: value" line
+// each, so a projected chunk reads like the record rather than like the plumbing that
+// carried it.
+func decodeChangeRow(raw []byte) (Document, error) {
+	const op = "normalize.decodeChangeRow"
+
+	var event domain.ChangeEvent
+	if err := json.Unmarshal(raw, &event); err != nil {
+		return Document{}, domain.Wrap(err, domain.CodeInvalidArgument, op,
+			"malformed change event")
+	}
+
+	image := event.Image()
+	columns := make([]string, 0, len(image))
+	for column := range image {
+		columns = append(columns, column)
+	}
+	// Sorted, so the same row always produces the same text: chunk offsets, content
+	// hashes, and re-embedding decisions all depend on that being true.
+	sort.Strings(columns)
+
+	var b strings.Builder
+	b.WriteString(event.Stream)
+	b.WriteString(" ")
+	b.WriteString(string(event.Operation))
+	b.WriteString(" ")
+	b.WriteString(event.RecordID())
+	b.WriteString("\n")
+	for _, column := range columns {
+		b.WriteString(column)
+		b.WriteString(": ")
+		b.WriteString(normalizeNewlines(fmt.Sprint(image[column])))
+		b.WriteString("\n")
+	}
+
+	text := strings.TrimRight(b.String(), "\n")
+	doc := singleSegment(text, MediaTypePlain)
+	doc.MediaType = domain.MediaTypeChangeRow
+	doc.Segments[0].EventTime = event.EventTime
+	doc.Segments[0].Locator.RowKey = event.RecordID()
+	doc.Metadata = map[string]any{
+		"shape":     "change_row",
+		"stream":    event.Stream,
+		"operation": string(event.Operation),
+		"columns":   len(columns),
+	}
 	return doc, nil
 }
 

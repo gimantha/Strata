@@ -89,20 +89,50 @@ func (r *Reconciler) Reconcile(ctx context.Context, assertion domain.Assertion, 
 		}, nil
 	}
 
+	// A source correcting itself is not a disagreement. If the same source already told us
+	// something else about this slot and its own ordering puts that earlier, the new claim
+	// is the correction and the old one is history — no policy, no authority weighting, no
+	// conflict set. This is the counterpart of the staleness check above: if an older claim
+	// from a source loses to a newer one, a newer claim from that source wins.
+	//
+	// Without it every ordinary database column update ends as a recorded contradiction
+	// between two values the source never held simultaneously.
+	var selfCorrected []domain.AssertionID
+	if corrected, rest := r.partitionSelfCorrections(assertion, competing); len(corrected) > 0 {
+		outcome, err := r.supersede(ctx, assertion, corrected, now,
+			"the same source reported a later value for this record")
+		if err != nil {
+			return Outcome{}, err
+		}
+		if len(rest) == 0 {
+			return outcome, nil
+		}
+		// Some competing claims came from elsewhere. Those are a real disagreement and
+		// still go through policy, carrying the corrections already made.
+		selfCorrected = outcome.Superseded
+		competing = rest
+	}
+
+	var outcome Outcome
 	switch predicate.ConflictPolicy {
 	case domain.ConflictPolicyLatestWins:
-		return r.supersede(ctx, assertion, competing, now,
+		outcome, err = r.supersede(ctx, assertion, competing, now,
 			"the predicate's policy is that the latest claim wins")
 
 	case domain.ConflictPolicyHighestAuthority:
-		return r.resolveByAuthority(ctx, assertion, competing, now)
+		outcome, err = r.resolveByAuthority(ctx, assertion, competing, now)
 
 	default:
 		// Functional predicates with no resolution policy, and anything explicitly marked
 		// for manual review, keep both claims and record the disagreement.
-		return r.conflict(ctx, assertion, competing,
+		outcome, err = r.conflict(ctx, assertion, competing,
 			"overlapping values for a predicate that does not permit them")
 	}
+	if err != nil {
+		return Outcome{}, err
+	}
+	outcome.Superseded = append(selfCorrected, outcome.Superseded...)
+	return outcome, nil
 }
 
 // isStale reports whether the source has already told us about a later state of this record.
@@ -125,6 +155,29 @@ func (r *Reconciler) isStale(assertion domain.Assertion, competing []domain.Asse
 		}
 	}
 	return false, domain.Assertion{}
+}
+
+// partitionSelfCorrections splits competing claims into ones this source has superseded by
+// reporting a later value, and everything else.
+func (r *Reconciler) partitionSelfCorrections(assertion domain.Assertion, competing []domain.Assertion) (corrected, rest []domain.Assertion) {
+	position := domain.SourcePositionOf(assertion)
+	position.SourceID = assertion.SourceID()
+	if !position.Comparable() || position.SourceID == "" {
+		return nil, competing
+	}
+
+	for _, other := range competing {
+		otherPosition := domain.SourcePositionOf(other)
+		otherPosition.SourceID = other.SourceID()
+
+		sameSource := otherPosition.SourceID != "" && otherPosition.SourceID == position.SourceID
+		if sameSource && domain.CompareSourcePosition(position, otherPosition) == domain.OrderAfter {
+			corrected = append(corrected, other)
+			continue
+		}
+		rest = append(rest, other)
+	}
+	return corrected, rest
 }
 
 // resolveByAuthority prefers the more trusted source, and refuses to choose between equals.

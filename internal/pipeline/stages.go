@@ -41,6 +41,10 @@ type StageConfig struct {
 	// Projector enables the projection stage. Without it the ledger is still complete;
 	// only retrieval is unavailable, and a later rebuild fills the projections in.
 	Projector Projector
+
+	// Changes enables the CDC stage. It needs a committer too, for the same reason
+	// extraction does: without somewhere to put claims there is nothing for it to do.
+	Changes ChangeStore
 }
 
 func (c StageConfig) now() time.Time {
@@ -77,6 +81,11 @@ func DefaultStages(store LedgerStore, blobs BlobReader, cfg StageConfig) []Stage
 		NormalizeStage{store: store, blobs: blobs, cfg: cfg},
 		SegmentStage{store: store, blobs: blobs, cfg: cfg},
 		ChunkStage{store: store, cfg: cfg},
+	}
+	// Changes run before extraction so a row's claims exist before a model ever sees the
+	// same event, and so a deployment with no model provider still ingests databases.
+	if cfg.Changes != nil && cfg.Committer != nil {
+		stages = append(stages, NewChangeStage(store, cfg.Changes, cfg.Committer, blobs, cfg))
 	}
 	if cfg.Extractor != nil && cfg.Committer != nil {
 		stages = append(stages, NewExtractStage(store, cfg.Extractor, cfg.Committer, cfg))

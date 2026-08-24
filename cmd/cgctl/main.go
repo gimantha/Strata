@@ -44,6 +44,8 @@ Commands:
   process                  Run the pipeline for an event now
   outbox ls|retry          Inspect and revive durable work
   predicate define|ls      Manage the predicate registry
+  stream register|ls       Map database streams onto knowledge
+  stream replay            Consume a JSONL change log through the connector
   ontology define|ls       Manage ontology versions
   ontology bind|validate   Switch modes, and check a schema against real knowledge
   entity ls|identity       Inspect entities and how they resolve
@@ -126,6 +128,12 @@ func run(args []string) error {
 		return withApp(rest, cmdSearch)
 	case "context":
 		return withApp(rest, cmdContext)
+	case "stream":
+		return withSubcommand(rest, map[string]appCommand{
+			"register": cmdStreamRegister,
+			"ls":       cmdStreamList,
+			"replay":   cmdStreamReplay,
+		})
 	case "ontology":
 		return withSubcommand(rest, map[string]appCommand{
 			"define":   cmdOntologyDefine,

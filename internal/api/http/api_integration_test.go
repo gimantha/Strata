@@ -16,6 +16,7 @@ import (
 
 	strataapi "github.com/gimantha/strata/internal/api/http"
 	"github.com/gimantha/strata/internal/config"
+	"github.com/gimantha/strata/internal/connector/cdc"
 	"github.com/gimantha/strata/internal/contextblock"
 	"github.com/gimantha/strata/internal/domain"
 	"github.com/gimantha/strata/internal/embedding/hashing"
@@ -112,6 +113,7 @@ func newAPIHarness(t *testing.T, keys ...keyEntry) *apiHarness {
 	projector := projection.New(f.Store, embedder, projection.Options{}, nil, nil)
 	retriever := retrieval.New(f.Store, embedder, retrieval.Options{}, nil, nil)
 	assembler := contextblock.New(retriever, f.Store, contextblock.Options{}, nil, nil)
+	connector := cdc.New(gateway, f.Store, cdc.Options{}, nil, nil)
 
 	server := strataapi.NewServer(strataapi.Deps{
 		Config:    cfg,
@@ -122,6 +124,7 @@ func newAPIHarness(t *testing.T, keys ...keyEntry) *apiHarness {
 		Knowledge: knowledge.New(f.Store, knowledge.Options{}, nil, nil),
 		Retriever: retriever,
 		Assembler: assembler,
+		Connector: connector,
 		Blobs:     blobs,
 	})
 
@@ -130,6 +133,7 @@ func newAPIHarness(t *testing.T, keys ...keyEntry) *apiHarness {
 
 	runner := pipeline.NewRunner(f.Store, 1, pipeline.DefaultStages(f.Store, blobs, pipeline.StageConfig{
 		ChunkMaxTokens: 64, ChunkOverlapTokens: 8, Projector: projector,
+		Changes: f.Store, Committer: knowledge.New(f.Store, knowledge.Options{}, nil, nil),
 	}), nil, nil, nil)
 
 	return &apiHarness{fixture: f, server: ts, runner: runner, creds: creds}
