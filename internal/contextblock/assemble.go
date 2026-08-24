@@ -102,6 +102,8 @@ func (a *Assembler) Assemble(ctx context.Context, req domain.ContextRequest) (do
 		Principal: req.Principal,
 		Temporal:  req.Temporal,
 		Filters:   req.Filters,
+		Policy:    req.Policy,
+		Purpose:   req.Purpose,
 		Limit:     req.MaxItems * a.opts.CandidateMultiple,
 		Explain:   req.Explain,
 	})

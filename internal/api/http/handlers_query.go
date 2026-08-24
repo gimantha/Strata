@@ -34,7 +34,7 @@ type queryRequest struct {
 // token-budgeted context block with citations is a separate endpoint in phase 8, because
 // retrieval and assembly fail differently and should be debuggable apart.
 func (s *Server) handleQuery(w http.ResponseWriter, r *http.Request) {
-	scope, ok := s.authorizedGraphSpace(w, r, domain.RoleReader)
+	scope, filters, ok := s.policyFor(w, r, domain.RoleReader, domain.ActionRead)
 	if !ok {
 		return
 	}
@@ -58,6 +58,8 @@ func (s *Server) handleQuery(w http.ResponseWriter, r *http.Request) {
 			ValidAt: req.ValidAt, KnownAt: req.KnownAt, ActiveAt: req.ActiveAt,
 		},
 		Filters:    domain.QueryFilters{MinConfidence: req.MinConfidence, Predicates: req.Predicates},
+		Policy:     filters,
+		Purpose:    purposeOf(r),
 		Limit:      req.Limit,
 		GraphDepth: req.GraphDepth,
 		Explain:    req.Explain,

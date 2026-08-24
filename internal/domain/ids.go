@@ -42,6 +42,7 @@ type (
 	PredicateID          string
 	OntologyVersionID    string
 	CDCStreamID          string
+	PolicySetID          string
 	ConflictSetID        string
 	ResolutionDecisionID string
 )
@@ -73,6 +74,7 @@ func NewOntologyVersionID() OntologyVersionID {
 	return OntologyVersionID(newID())
 }
 func NewCDCStreamID() CDCStreamID     { return CDCStreamID(newID()) }
+func NewPolicySetID() PolicySetID     { return PolicySetID(newID()) }
 func NewConflictSetID() ConflictSetID { return ConflictSetID(newID()) }
 
 // NewUUIDString returns a bare UUIDv7 string, for durable rows whose identifiers

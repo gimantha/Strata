@@ -63,6 +63,11 @@ type ContextRequest struct {
 	// TokenBudget is the ceiling for the rendered block, measured by the configured
 	// estimator. It is a hard ceiling: assembly drops content rather than exceeding it.
 	TokenBudget int
+	// Policy narrows what may be assembled, and Purpose is the caller's stated reason.
+	// Applied inside retrieval and again when hydrating canonical records, because a
+	// citation reproduces source material and is a disclosure path of its own.
+	Policy  PolicyFilters
+	Purpose string
 	// Sections restricts what may appear. Empty means every section.
 	Sections []ContextSection
 	// MaxItems bounds the number of selected items regardless of budget.

@@ -408,6 +408,9 @@ func (s *Store) QueryAssertions(ctx context.Context, q domain.AssertionQuery) ([
 	if !domain.IsZero(q.SourceEventID) {
 		add("source_event_id = $%d", q.SourceEventID)
 	}
+	if len(q.Classifications) > 0 {
+		add("classification = ANY($%d::text[])", enumStrings(q.Classifications))
+	}
 	if q.MinConfidence > 0 {
 		add("confidence >= $%d", q.MinConfidence)
 	}

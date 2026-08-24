@@ -25,6 +25,9 @@ type Tenant struct {
 }
 
 // Scope is the resolved scope for this tenant's graph space.
+// Slug names the tenant, for test messages that need to say which one leaked.
+func (t Tenant) Slug() string { return t.Workspace.Slug }
+
 func (t Tenant) Scope() domain.Scope {
 	return domain.Scope{WorkspaceID: t.Workspace.ID, GraphSpaceID: t.GraphSpace.ID}
 }

@@ -29,6 +29,7 @@ import (
 	"github.com/gimantha/strata/internal/observability"
 	"github.com/gimantha/strata/internal/ontology"
 	"github.com/gimantha/strata/internal/pipeline"
+	"github.com/gimantha/strata/internal/policy"
 	"github.com/gimantha/strata/internal/projection"
 	"github.com/gimantha/strata/internal/retrieval"
 	"github.com/gimantha/strata/internal/store/blob"
@@ -51,6 +52,7 @@ type App struct {
 	Assembler *contextblock.Assembler
 	Ontology  *ontology.Service
 	Connector *cdc.Runner
+	Policy    *policy.Service
 	Embedder  embedding.Embedder
 	Bus       *eventbus.Outbox
 	Runner    *pipeline.Runner
@@ -173,9 +175,13 @@ func New(ctx context.Context, cfg config.Config) (*App, error) {
 			slog.Int("dimensions", embedder.Dimensions()))
 	}
 
+	app.Policy = policy.New(store, policy.NewLedgerAuditor(store), policy.Options{}, logger)
 	app.Ontology = ontology.New(store, logger)
 	app.Connector = cdc.New(app.Gateway, store, cdc.Options{}, logger, telemetry.Tracer)
-	app.Retriever = retrieval.New(store, embedder, retrieval.Options{}, logger, telemetry.Tracer)
+	app.Retriever = retrieval.New(store, embedder, retrieval.Options{
+		Traces:          store,
+		RedactQueryText: cfg.RedactQueryText,
+	}, logger, telemetry.Tracer)
 
 	app.Assembler = contextblock.New(app.Retriever, store, contextblock.Options{}, logger, telemetry.Tracer)
 

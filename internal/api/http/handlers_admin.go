@@ -353,3 +353,42 @@ func (s *Server) authorizedGraphSpace(w http.ResponseWriter, r *http.Request, ne
 	}
 	return scope, true
 }
+
+// policyFor resolves the graph space and evaluates the caller's access in one step.
+//
+// Every read path calls this instead of authorizedGraphSpace, because a role check alone
+// answers "may this principal use this graph space" and not "which of its contents may they
+// see". The returned filters are what the handler must pass into its queries; nothing
+// downstream is allowed to fetch first and filter later (AGENTS.md section 22.4).
+func (s *Server) policyFor(w http.ResponseWriter, r *http.Request, need domain.Role, action domain.PolicyAction) (domain.Scope, domain.PolicyFilters, bool) {
+	scope, ok := s.authorizedGraphSpace(w, r, need)
+	if !ok {
+		return domain.Scope{}, domain.PolicyFilters{}, false
+	}
+	if s.policy == nil {
+		// No policy service configured: role-based access alone, and no narrowing. Stated
+		// here rather than assumed, so a misconfigured deployment fails open visibly in
+		// one place instead of invisibly in twelve.
+		return scope, domain.PolicyFilters{}, true
+	}
+
+	decision, err := s.policy.Authorize(r.Context(), domain.AccessRequest{
+		Principal: principalFrom(r.Context()),
+		Action:    action,
+		Scope:     scope,
+		Purpose:   r.Header.Get("X-Strata-Purpose"),
+	})
+	if err != nil {
+		s.writeError(w, r, err)
+		return domain.Scope{}, domain.PolicyFilters{}, false
+	}
+	if !decision.Allowed {
+		s.writeError(w, r, domain.Errorf(domain.CodePermissionDenied, "http.policyFor",
+			"%s", decision.Reason))
+		return domain.Scope{}, domain.PolicyFilters{}, false
+	}
+	return scope, decision.Filters, true
+}
+
+// purposeOf reads the caller's stated reason for asking, when policy requires one.
+func purposeOf(r *http.Request) string { return r.Header.Get("X-Strata-Purpose") }

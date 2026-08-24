@@ -66,6 +66,7 @@ func run() error {
 		Assembler: application.Assembler,
 		Ontology:  application.Ontology,
 		Connector: application.Connector,
+		Policy:    application.Policy,
 		Blobs:     application.Blobs,
 	})
 

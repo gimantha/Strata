@@ -441,3 +441,24 @@ func (s *Store) CountAuditEvents(ctx context.Context, ws domain.WorkspaceID, act
 		`SELECT count(*) FROM audit_events WHERE workspace_id = $1 AND action = $2`, ws, action).Scan(&n)
 	return n, mapError(err, op, "cannot count audit events")
 }
+
+// GetPrincipal loads a registered principal.
+//
+// Grants are not included: they are read separately and per request, so a revocation takes
+// effect immediately rather than whenever a cached principal happens to be refreshed.
+func (s *Store) GetPrincipal(ctx context.Context, id domain.PrincipalID) (domain.Principal, error) {
+	const op = "ledger.GetPrincipal"
+
+	var p domain.Principal
+	err := s.pool.QueryRow(ctx, `
+		SELECT id, kind, display_name, system_role FROM principals WHERE id = $1`, id).
+		Scan(&p.ID, &p.Kind, &p.DisplayName, &p.SystemRole)
+	if err != nil {
+		if isNoRows(err) {
+			return domain.Principal{}, domain.Errorf(domain.CodeNotFound, op,
+				"principal %s is not registered", id)
+		}
+		return domain.Principal{}, mapError(err, op, "cannot load principal")
+	}
+	return p, nil
+}

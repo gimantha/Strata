@@ -18,6 +18,7 @@ import (
 	"github.com/gimantha/strata/internal/knowledge"
 	"github.com/gimantha/strata/internal/observability"
 	"github.com/gimantha/strata/internal/ontology"
+	"github.com/gimantha/strata/internal/policy"
 	"github.com/gimantha/strata/internal/retrieval"
 	"github.com/gimantha/strata/internal/store/ledger"
 )
@@ -36,6 +37,7 @@ type Server struct {
 	assembler *contextblock.Assembler
 	ontology  *ontology.Service
 	connector *cdc.Runner
+	policy    *policy.Service
 	blobs     healthChecker
 	clock     func() time.Time
 	http      *http.Server
@@ -68,6 +70,7 @@ type Deps struct {
 	Assembler *contextblock.Assembler
 	Ontology  *ontology.Service
 	Connector *cdc.Runner
+	Policy    *policy.Service
 	Blobs     healthChecker
 	// Clock overrides the wall clock, for deterministic tests.
 	Clock func() time.Time
@@ -92,6 +95,7 @@ func NewServer(deps Deps) *Server {
 		assembler: deps.Assembler,
 		ontology:  deps.Ontology,
 		connector: deps.Connector,
+		policy:    deps.Policy,
 		blobs:     deps.Blobs,
 		clock:     deps.Clock,
 	}
@@ -159,6 +163,19 @@ func (s *Server) Handler() http.Handler {
 
 	// Context assembly.
 	mux.HandleFunc("POST /v1/graph-spaces/{graph_space_id}/context", s.authenticated(s.handleContext))
+
+	// Export and query-time explainability. Both are read paths that could leak across
+	// tenants, and both are audited.
+	mux.HandleFunc("GET /v1/graph-spaces/{graph_space_id}/export", s.authenticated(s.handleExport))
+	mux.HandleFunc("GET /v1/graph-spaces/{graph_space_id}/traces", s.authenticated(s.handleListTraces))
+	mux.HandleFunc("GET /v1/traces/{trace_id}", s.authenticated(s.handleGetTrace))
+
+	// Policy: attribute-based rules, clearances, and what they would decide.
+	mux.HandleFunc("POST /v1/graph-spaces/{graph_space_id}/policies", s.authenticated(s.handleDefinePolicy))
+	mux.HandleFunc("GET /v1/graph-spaces/{graph_space_id}/policies", s.authenticated(s.handleListPolicies))
+	mux.HandleFunc("GET /v1/graph-spaces/{graph_space_id}/policy", s.authenticated(s.handleActivePolicy))
+	mux.HandleFunc("POST /v1/graph-spaces/{graph_space_id}/policy/explain", s.authenticated(s.handleExplainPolicy))
+	mux.HandleFunc("PUT /v1/graph-spaces/{graph_space_id}/clearances/{principal_id}", s.authenticated(s.handleSetClearance))
 
 	// Change data capture: a push connector's batch of row changes.
 	mux.HandleFunc("POST /v1/graph-spaces/{graph_space_id}/changes", s.authenticated(s.handleChanges))

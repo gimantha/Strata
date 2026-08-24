@@ -107,6 +107,24 @@ func (c Classification) rank() int {
 // Classification propagates downstream and may only be raised implicitly; lowering it
 // requires an explicit policy decision, which this phase has no mechanism for. So when
 // two labels meet, the stricter one wins (AGENTS.md section 22.3).
+// LeastPermissive returns whichever ceiling admits less.
+//
+// The counterpart of MostRestrictive, which raises a label to protect data. This lowers a
+// clearance to protect against over-granting: two limits on what someone may see combine to
+// the tighter one, never the looser. An empty limit means "unset" and yields to the other.
+func LeastPermissive(a, b Classification) Classification {
+	switch {
+	case a == "":
+		return b
+	case b == "":
+		return a
+	case b.rank() < a.rank():
+		return b
+	default:
+		return a
+	}
+}
+
 func MostRestrictive(a, b Classification) Classification {
 	if b.rank() > a.rank() {
 		return b

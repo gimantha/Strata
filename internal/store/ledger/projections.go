@@ -30,8 +30,9 @@ func (s *Store) UpsertVectors(ctx context.Context, records []domain.VectorRecord
 			INSERT INTO vector_records (id, workspace_id, graph_space_id, surface, record_id,
 			                            embedding_model, embedding_version, embedding,
 			                            valid_from, valid_to, status, classification, memory_kind,
-			                            source_event_id, content_hash, entity_type)
-			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
+			                            source_event_id, content_hash, entity_type,
+			                            source_id, predicate)
+			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
 			ON CONFLICT (workspace_id, surface, record_id, embedding_model, embedding_version)
 			DO UPDATE SET embedding = EXCLUDED.embedding,
 			              valid_from = EXCLUDED.valid_from,
@@ -40,13 +41,15 @@ func (s *Store) UpsertVectors(ctx context.Context, records []domain.VectorRecord
 			              classification = EXCLUDED.classification,
 			              memory_kind = EXCLUDED.memory_kind,
 			              content_hash = EXCLUDED.content_hash,
-			              entity_type = EXCLUDED.entity_type`,
+			              entity_type = EXCLUDED.entity_type,
+			              source_id = EXCLUDED.source_id,
+			              predicate = EXCLUDED.predicate`,
 			domain.NewUUIDString(), record.Scope.WorkspaceID, record.Scope.GraphSpaceID,
 			record.Surface, record.RecordID, record.Model, record.Version,
 			formatVector(record.Embedding),
 			record.ValidFrom, record.ValidTo, record.Status, record.Classification,
 			record.MemoryKind, nullableString(record.SourceEventID), record.ContentHash,
-			record.EntityType)
+			record.EntityType, nullableString(record.SourceID), record.Predicate)
 	}
 
 	return s.InTx(ctx, func(tx pgx.Tx) error {
@@ -116,6 +119,7 @@ func (s *Store) SearchVectors(ctx context.Context, q domain.VectorQuery) ([]doma
 	if len(q.EntityTypes) > 0 {
 		add("v.entity_type = ANY($%d::text[])", q.EntityTypes)
 	}
+	applyPolicyFilters(add, "v", q.Policy)
 
 	args = append(args, formatVector(q.Embedding))
 	probe := len(args)
@@ -164,8 +168,9 @@ func (s *Store) UpsertLexical(ctx context.Context, records []domain.ProjectedRec
 		batch.Queue(`
 			INSERT INTO lexical_records (id, workspace_id, graph_space_id, surface, record_id,
 			                             content, valid_from, valid_to, status, classification,
-			                             memory_kind, source_event_id, entity_type)
-			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+			                             memory_kind, source_event_id, entity_type,
+			                             source_id, predicate)
+			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
 			ON CONFLICT (workspace_id, surface, record_id)
 			DO UPDATE SET content = EXCLUDED.content,
 			              valid_from = EXCLUDED.valid_from,
@@ -173,11 +178,14 @@ func (s *Store) UpsertLexical(ctx context.Context, records []domain.ProjectedRec
 			              status = EXCLUDED.status,
 			              classification = EXCLUDED.classification,
 			              memory_kind = EXCLUDED.memory_kind,
-			              entity_type = EXCLUDED.entity_type`,
+			              entity_type = EXCLUDED.entity_type,
+			              source_id = EXCLUDED.source_id,
+			              predicate = EXCLUDED.predicate`,
 			domain.NewUUIDString(), record.Scope.WorkspaceID, record.Scope.GraphSpaceID,
 			record.Surface, record.RecordID, record.Content,
 			record.ValidFrom, record.ValidTo, record.Status, record.Classification,
-			record.MemoryKind, nullableString(record.SourceEventID), record.EntityType)
+			record.MemoryKind, nullableString(record.SourceEventID), record.EntityType,
+			nullableString(record.SourceID), record.Predicate)
 	}
 
 	return s.InTx(ctx, func(tx pgx.Tx) error {
@@ -240,6 +248,7 @@ func (s *Store) SearchLexical(ctx context.Context, q domain.LexicalQuery) ([]dom
 	if len(q.EntityTypes) > 0 {
 		add("l.entity_type = ANY($%d::text[])", q.EntityTypes)
 	}
+	applyPolicyFilters(add, "l", q.Policy)
 
 	args = append(args, q.Text)
 	term := len(args)
@@ -302,17 +311,18 @@ func (s *Store) UpsertGraphEdges(ctx context.Context, edges []domain.GraphEdge) 
 		batch.Queue(`
 			INSERT INTO graph_edges (id, workspace_id, graph_space_id, subject_id, predicate,
 			                         object_entity_id, assertion_id, valid_from, valid_to,
-			                         status, confidence, classification)
-			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+			                         status, confidence, classification, source_id)
+			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
 			ON CONFLICT (assertion_id)
 			DO UPDATE SET status = EXCLUDED.status,
 			              valid_from = EXCLUDED.valid_from,
 			              valid_to = EXCLUDED.valid_to,
 			              confidence = EXCLUDED.confidence,
-			              classification = EXCLUDED.classification`,
+			              classification = EXCLUDED.classification,
+			              source_id = EXCLUDED.source_id`,
 			domain.NewUUIDString(), edge.WorkspaceID, edge.GraphSpaceID, edge.SubjectID,
 			edge.Predicate, edge.ObjectEntityID, edge.AssertionID, edge.ValidFrom, edge.ValidTo,
-			edge.Status, edge.Confidence, edge.Classification)
+			edge.Status, edge.Confidence, edge.Classification, nullableString(edge.SourceID))
 	}
 
 	return s.InTx(ctx, func(tx pgx.Tx) error {
@@ -385,6 +395,7 @@ func (s *Store) ExpandGraph(ctx context.Context, q domain.GraphExpandQuery) ([]d
 				  AND ($6::timestamptz IS NULL OR
 				       ((ge.valid_from IS NULL OR ge.valid_from <= $6) AND
 				        (ge.valid_to IS NULL OR ge.valid_to > $6)))
+				  `+edgePolicyClause+`
 				UNION ALL
 				-- Traversal follows edges in both directions: "who supplies Acme" and "what
 				-- does Acme supply" are the same graph seen from opposite ends.
@@ -398,6 +409,7 @@ func (s *Store) ExpandGraph(ctx context.Context, q domain.GraphExpandQuery) ([]d
 				  AND ($6::timestamptz IS NULL OR
 				       ((ge.valid_from IS NULL OR ge.valid_from <= $6) AND
 				        (ge.valid_to IS NULL OR ge.valid_to > $6)))
+				  `+edgePolicyClause+`
 			) next ON true
 			WHERE w.depth < $7
 			  AND NOT next.entity_id = ANY(w.path)
@@ -411,7 +423,10 @@ func (s *Store) ExpandGraph(ctx context.Context, q domain.GraphExpandQuery) ([]d
 		ORDER BY walk.entity_id, walk.depth
 		LIMIT $8`,
 		q.Scope.WorkspaceID, idStrings(q.Roots), nullableString(q.Scope.GraphSpaceID),
-		statuses, predicates, validAt, q.Depth, q.Limit)
+		statuses, predicates, validAt, q.Depth, q.Limit,
+		policyClassifications(q.Policy), orNilIDs(q.Policy.AllowedSources),
+		orNilIDs(q.Policy.DeniedSources), orNilStrings(q.Policy.AllowedPredicates),
+		orNilStrings(q.Policy.DeniedPredicates))
 	if err != nil {
 		return nil, mapError(err, op, "cannot expand graph")
 	}
@@ -666,4 +681,90 @@ func (s *Store) ListSourceEventIDsAfter(ctx context.Context, ws domain.Workspace
 		out = append(out, event)
 	}
 	return out, mapError(rows.Err(), op, "cannot list source events")
+}
+
+// applyPolicyFilters narrows a projection query to what a principal may see
+// (AGENTS.md section 22.4).
+//
+// In the WHERE clause rather than after the scan, on purpose. Filtering results would mean
+// unauthorized rows had already been read into memory, ranked against authorized ones, and
+// counted — and would make a restricted query return fewer results than asked for while
+// looking like there was nothing to find.
+func applyPolicyFilters(add func(clause string, value any), alias string, filters domain.PolicyFilters) {
+	if !filters.Restrictive() {
+		return
+	}
+
+	// The ceiling and any carve-outs collapse into one permitted set, so the query has a
+	// single membership test rather than a ceiling comparison the database cannot index.
+	add(alias+".classification = ANY($%d::text[])",
+		enumStrings(filters.PermittedClassifications()))
+
+	if len(filters.AllowedSources) > 0 {
+		add(alias+".source_id = ANY($%d::uuid[])", idStrings(filters.AllowedSources))
+	}
+	if len(filters.DeniedSources) > 0 {
+		add("("+alias+".source_id IS NULL OR NOT ("+alias+".source_id = ANY($%d::uuid[])))",
+			idStrings(filters.DeniedSources))
+	}
+	if len(filters.AllowedMemoryKinds) > 0 {
+		add(alias+".memory_kind = ANY($%d::text[])", enumStrings(filters.AllowedMemoryKinds))
+	}
+	if len(filters.DeniedMemoryKinds) > 0 {
+		add("NOT ("+alias+".memory_kind = ANY($%d::text[]))", enumStrings(filters.DeniedMemoryKinds))
+	}
+	if len(filters.AllowedEntityTypes) > 0 {
+		// Chunks carry no entity type and are not entity-scoped material, so a rule about
+		// entity types must not silently hide every passage.
+		add("("+alias+".entity_type = '' OR "+alias+".entity_type = ANY($%d::text[]))",
+			filters.AllowedEntityTypes)
+	}
+	if len(filters.DeniedEntityTypes) > 0 {
+		add("NOT ("+alias+".entity_type = ANY($%d::text[]))", filters.DeniedEntityTypes)
+	}
+	if len(filters.AllowedPredicates) > 0 {
+		add("("+alias+".predicate = '' OR "+alias+".predicate = ANY($%d::text[]))",
+			filters.AllowedPredicates)
+	}
+	if len(filters.DeniedPredicates) > 0 {
+		add("NOT ("+alias+".predicate = ANY($%d::text[]))", filters.DeniedPredicates)
+	}
+}
+
+// edgePolicyClause narrows graph traversal to edges a principal may follow.
+//
+// Applied inside the walk rather than to its results, because traversal leaks by reaching:
+// an entity found only through a restricted edge is disclosed by its presence, even if the
+// edge's own claim is filtered out of the answer. Filtering afterwards would also change
+// depth, since a hidden edge would still have counted as a hop.
+//
+// Written as static SQL with nullable array parameters rather than assembled per query. A
+// recursive CTE with two lateral branches has to apply exactly the same condition in both,
+// and a clause built by string concatenation is one edit away from applying it in only one.
+const edgePolicyClause = `AND ($9::text[] IS NULL OR ge.classification = ANY($9::text[]))
+				  AND ($10::uuid[] IS NULL OR ge.source_id = ANY($10::uuid[]))
+				  AND ($11::uuid[] IS NULL OR ge.source_id IS NULL OR NOT (ge.source_id = ANY($11::uuid[])))
+				  AND ($12::text[] IS NULL OR ge.predicate = ANY($12::text[]))
+				  AND ($13::text[] IS NULL OR NOT (ge.predicate = ANY($13::text[])))`
+
+// policyClassifications renders the permitted set, or nil when policy does not narrow.
+func policyClassifications(filters domain.PolicyFilters) []string {
+	if !filters.Restrictive() {
+		return nil
+	}
+	return enumStrings(filters.PermittedClassifications())
+}
+
+func orNilIDs[T ~string](values []T) []string {
+	if len(values) == 0 {
+		return nil
+	}
+	return idStrings(values)
+}
+
+func orNilStrings(values []string) []string {
+	if len(values) == 0 {
+		return nil
+	}
+	return values
 }

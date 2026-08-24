@@ -89,6 +89,12 @@ retrieval projections.
   untouched — measured by assertion identity, not by counting rows — and a deleted row is
   retracted rather than erased
 
+- Attribute-based policy that returns filters rather than verdicts: a decision carries the
+  classification ceiling, source, predicate, and type narrowing that every retriever pushes
+  into its own SQL, so unauthorized rows are never read, never ranked, and never counted.
+  Cross-workspace isolation is tested through lexical, vector, graph, entity, context,
+  provenance, export, and trace paths rather than asserted
+
 **Not built yet** (later phases, in order): ABAC policy, memory lifecycle,
 MCP, and distributed operation.
 
@@ -256,4 +262,6 @@ are declared by the services that consume them; implementations live under `stor
   validation, and what happens to what a schema refuses
 - [docs/api/cdc.md](docs/api/cdc.md) — the change contract, mappings, checkpoints,
   tombstones, and out-of-order handling
+- [docs/api/security.md](docs/api/security.md) — grants, ABAC policy, clearances, audit,
+  traces, and export
 - [docs/adr/](docs/adr/) — decisions, alternatives, and trade-offs

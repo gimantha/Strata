@@ -1,6 +1,6 @@
 # Architecture overview
 
-This describes what exists after phases 0 through 10, and how each part enforces the
+This describes what exists after phases 0 through 11, and how each part enforces the
 invariants in [AGENTS.md](../../AGENTS.md) section 2. Later phases extend this picture
 without changing its shape.
 
@@ -56,6 +56,7 @@ absent rather than stubbed: an empty stage that recorded success would make repl
 | No hidden global graph | There is no unscoped list or read path anywhere, including administrative listings |
 | Provider independence | `internal/domain` imports nothing but the standard library and a UUID package, enforced by `scripts/check-domain-deps.sh` in CI |
 | Row updates never rebuild a subgraph | A change states what the row now says; unchanged claims collide on their fingerprint and keep their assertion id, and only moved values are superseded. A test asserts identity, not counts |
+| Unauthorized data is never retrieved and then hidden | A policy decision carries query filters; every retriever applies them in SQL, graph traversal applies them inside the walk, and canonical reads re-check each record in hand |
 | Invalid schema candidates are never silently committed | A guided graph space validates every claim; a caller gets `ontology_violation`, a model's candidate is committed as `quarantined` with its reasons, and quarantined claims are neither projected nor reconciled |
 
 ## Ingestion, step by step
@@ -216,7 +217,24 @@ replaying is free because the gateway keys on each change. A deleted row retract
 rather than erasing them — the source stopped saying it, which is not the same as it never
 having been true.
 
+## Security
+
+Three layers: authentication resolves a key to a principal, a grant decides which workspaces
+that principal may touch, and policy decides which of a workspace's contents they may see.
+
+A policy decision is a filter rather than a verdict
+([ADR 0016](../adr/0016-policy-returns-filters-not-verdicts.md)). It carries the
+classification ceiling and the source, predicate, and type narrowing that each retriever
+pushes into its own `WHERE` clause — including inside graph traversal, which leaks by
+reaching rather than by returning. Unauthorized rows are never read into memory, never ranked
+against permitted ones, and never counted.
+
+Every decision is audited, refusals included, and audit rows never quote the material they
+guard. Retrieval traces record what was asked under which policy; the query text is stored
+only where the deployment permits it.
+
 ## What comes next
 
-Phase 11 adds security and multi-tenancy in depth: authentication, ABAC policy evaluation,
-and classification-aware filtering applied before ranking rather than after.
+Phase 12 adds memory lifecycle and consolidation: deriving stable semantic facts from
+repeated episodes, decay that affects ranking rather than truth, and the four distinct
+forgetting operations that must not share one ambiguous delete flag.

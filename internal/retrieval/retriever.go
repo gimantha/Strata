@@ -15,6 +15,12 @@ import (
 	"github.com/gimantha/strata/internal/embedding"
 )
 
+// TraceSink persists query-time explainability, when the deployment wants it
+// (AGENTS.md section 6.12).
+type TraceSink interface {
+	RecordTrace(ctx context.Context, trace domain.RetrievalTrace) (domain.RetrievalTrace, error)
+}
+
 // Store is the projection surface retrieval reads, declared by its consumer.
 type Store interface {
 	SearchLexical(ctx context.Context, q domain.LexicalQuery) ([]domain.Hit, error)
@@ -29,6 +35,8 @@ type Retriever struct {
 	store    Store
 	embedder embedding.Embedder
 	weights  Weights
+	traces   TraceSink
+	redact   bool
 	now      func() time.Time
 	logger   *slog.Logger
 	tracer   trace.Tracer
@@ -38,6 +46,13 @@ type Retriever struct {
 type Options struct {
 	Weights Weights
 	Now     func() time.Time
+	// Traces persists what each query considered and returned. Optional: a deployment
+	// that does not want query text retained simply does not configure one, and one that
+	// does can still redact the text per request.
+	Traces TraceSink
+	// RedactQueryText stores the hash of a query without its words, for deployments where
+	// what people asked is itself sensitive (AGENTS.md section 6.12).
+	RedactQueryText bool
 }
 
 // New builds a retriever. The embedder may be nil, in which case the vector leg is skipped
@@ -54,6 +69,8 @@ func New(store Store, embedder embedding.Embedder, opts Options, logger *slog.Lo
 		store:    store,
 		embedder: embedder,
 		weights:  opts.Weights.withDefaults(),
+		traces:   opts.Traces,
+		redact:   opts.RedactQueryText,
 		now:      now,
 		logger:   logger,
 		tracer:   tracer,
@@ -73,6 +90,8 @@ func (r *Retriever) Query(ctx context.Context, req domain.QueryRequest) (domain.
 	}
 
 	plan := planner{hasEmbedder: r.embedder != nil}.plan(req)
+
+	queryStarted := r.now()
 
 	var (
 		candidates []candidate
@@ -123,6 +142,7 @@ func (r *Retriever) Query(ctx context.Context, req domain.QueryRequest) (domain.
 	if req.Explain {
 		result.Plan = &plan
 	}
+	result.TraceID = r.record(ctx, req, candidates, items, r.now().Sub(queryStarted))
 
 	span.SetAttributes(
 		attribute.Int("strata.candidates", result.Total),
@@ -152,6 +172,7 @@ func (r *Retriever) lexical(ctx context.Context, req domain.QueryRequest, exact 
 		Classification: req.Filters.Classifications,
 		MemoryKinds:    req.Filters.MemoryKinds,
 		EntityTypes:    req.Filters.EntityTypes,
+		Policy:         req.Policy,
 		Exact:          exact,
 		// Each retriever fetches more than the final limit: fusion needs depth to work
 		// with, and a record ranked fourth by two retrievers should be able to beat one
@@ -191,6 +212,7 @@ func (r *Retriever) vector(ctx context.Context, req domain.QueryRequest) ([]cand
 		Classification: req.Filters.Classifications,
 		MemoryKinds:    req.Filters.MemoryKinds,
 		EntityTypes:    req.Filters.EntityTypes,
+		Policy:         req.Policy,
 		Limit:          req.Limit * 3,
 	})
 	if err != nil {
@@ -207,10 +229,17 @@ func (r *Retriever) entity(ctx context.Context, req domain.QueryRequest) ([]cand
 	}
 
 	out := make([]candidate, 0, len(entities))
-	for i, entity := range entities {
+	rank := 0
+	for _, entity := range entities {
+		// Entities carry no classification of their own, so the lever policy has here is
+		// the entity type. Without this a rule hiding a type would still leak the names.
+		if !req.Policy.Allows("", "", "", "", entity.EntityType) {
+			continue
+		}
+		rank++
 		out = append(out, candidate{
 			mode:  domain.ModeEntity,
-			rank:  i + 1,
+			rank:  rank,
 			score: 1,
 			hit: domain.Hit{
 				Surface:  domain.SurfaceEntity,
@@ -237,6 +266,7 @@ func (r *Retriever) graph(ctx context.Context, req domain.QueryRequest, seeds []
 		Depth:      req.GraphDepth,
 		Predicates: req.Filters.Predicates,
 		ValidAt:    req.Temporal.ValidAt,
+		Policy:     req.Policy,
 		Limit:      req.Limit * 2,
 	})
 	if err != nil {
@@ -326,4 +356,56 @@ func Explain(plan domain.RetrievalPlan) []string {
 		out = append(out, mode+": skipped, "+plan.Skipped[domain.RetrievalMode(mode)])
 	}
 	return out
+}
+
+// record persists a trace of this query, when a sink is configured.
+//
+// Best effort: a query that answered correctly must not fail because its trace could not be
+// written. The failure is logged rather than returned, because losing explainability is a
+// problem for later and losing the answer is a problem now.
+func (r *Retriever) record(ctx context.Context, req domain.QueryRequest, candidates []candidate, items []domain.RetrievedItem, latency time.Duration) domain.TraceID {
+	if r.traces == nil {
+		return ""
+	}
+
+	trace := domain.RetrievalTrace{
+		WorkspaceID:   req.Scope.WorkspaceID,
+		GraphSpaceID:  req.Scope.GraphSpaceID,
+		QueryText:     req.Query,
+		Redacted:      r.redact,
+		Principal:     req.Principal,
+		Purpose:       req.Purpose,
+		Action:        domain.ActionRead,
+		PolicyFilters: req.Policy,
+		Filters:       req.Filters,
+		Latency:       latency,
+		QueryTime:     r.now(),
+	}
+
+	seen := make(map[string]struct{}, len(candidates))
+	for _, c := range candidates {
+		key := string(c.hit.Surface) + "/" + c.hit.RecordID
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		trace.CandidateRefs = append(trace.CandidateRefs, domain.ScoredRef{
+			Surface: c.hit.Surface, RecordID: c.hit.RecordID, Score: c.score,
+		})
+	}
+	for _, item := range items {
+		trace.SelectedRefs = append(trace.SelectedRefs, domain.ScoredRef{
+			Surface: item.Surface, RecordID: item.RecordID, Score: item.Score,
+		})
+	}
+
+	recorded, err := r.traces.RecordTrace(ctx, trace)
+	if err != nil {
+		if r.logger != nil {
+			r.logger.WarnContext(ctx, "cannot record retrieval trace",
+				slog.String("error", err.Error()))
+		}
+		return ""
+	}
+	return recorded.ID
 }

@@ -62,6 +62,11 @@ type QueryRequest struct {
 
 	Temporal TemporalQuery
 	Filters  QueryFilters
+	// Policy is the narrowing the caller's access decision requires. It is applied inside
+	// every retriever's query rather than to their results (AGENTS.md section 22.4).
+	Policy PolicyFilters
+	// Purpose is the caller's stated reason for asking, when policy requires one.
+	Purpose string
 	// Modes restricts which candidate generators run. Empty lets the planner decide.
 	Modes []RetrievalMode
 
@@ -171,4 +176,46 @@ type QueryResult struct {
 	Plan  *RetrievalPlan
 	// Total is how many distinct candidates were considered before truncation.
 	Total int
+	// TraceID names the persisted trace, when tracing is configured. It is what turns
+	// "why did the agent say that" into a lookup rather than an investigation.
+	TraceID TraceID
+}
+
+// ScoredRef is one record a trace names, with the score it had.
+type ScoredRef struct {
+	Surface  Surface `json:"surface"`
+	RecordID string  `json:"record_id"`
+	Score    float64 `json:"score,omitempty"`
+}
+
+// RetrievalTrace is query-time explainability made durable (AGENTS.md section 6.12).
+//
+// It answers "why did this agent see that" after the fact: what was asked, under which
+// policy, what was considered, and what came back. Deferred from phase 8 on purpose — section
+// 6.12 marks query text subject to redaction, and there was no policy to redact against.
+type RetrievalTrace struct {
+	ID           TraceID
+	WorkspaceID  WorkspaceID
+	GraphSpaceID GraphSpaceID
+
+	QueryHash string
+	QueryText string
+	// Redacted records that the text was deliberately not kept, which is different from a
+	// trace that happened to have no text.
+	Redacted bool
+
+	Principal PrincipalRef
+	Purpose   string
+	Action    PolicyAction
+
+	PolicyVersion int
+	PolicyRule    string
+	PolicyFilters PolicyFilters
+
+	Filters       QueryFilters
+	CandidateRefs []ScoredRef
+	SelectedRefs  []ScoredRef
+
+	Latency   time.Duration
+	QueryTime time.Time
 }

@@ -44,6 +44,9 @@ Commands:
   process                  Run the pipeline for an event now
   outbox ls|retry          Inspect and revive durable work
   predicate define|ls      Manage the predicate registry
+  policy define|ls         Manage attribute-based access policy
+  policy explain|clearance What a principal may see, and their ceiling
+  traces                   Recent retrieval traces
   stream register|ls       Map database streams onto knowledge
   stream replay            Consume a JSONL change log through the connector
   ontology define|ls       Manage ontology versions
@@ -128,6 +131,15 @@ func run(args []string) error {
 		return withApp(rest, cmdSearch)
 	case "context":
 		return withApp(rest, cmdContext)
+	case "policy":
+		return withSubcommand(rest, map[string]appCommand{
+			"define":    cmdPolicyDefine,
+			"ls":        cmdPolicyList,
+			"explain":   cmdPolicyExplain,
+			"clearance": cmdPolicyClearance,
+		})
+	case "traces":
+		return withApp(rest, cmdTraces)
 	case "stream":
 		return withSubcommand(rest, map[string]appCommand{
 			"register": cmdStreamRegister,

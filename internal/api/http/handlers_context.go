@@ -33,7 +33,7 @@ type contextRequest struct {
 // differently: a disappointing query is a ranking problem, a disappointing block is usually
 // a budget or redundancy problem, and debugging either through the other is miserable.
 func (s *Server) handleContext(w http.ResponseWriter, r *http.Request) {
-	scope, ok := s.authorizedGraphSpace(w, r, domain.RoleReader)
+	scope, filters, ok := s.policyFor(w, r, domain.RoleReader, domain.ActionRead)
 	if !ok {
 		return
 	}
@@ -57,6 +57,8 @@ func (s *Server) handleContext(w http.ResponseWriter, r *http.Request) {
 			ValidAt: req.ValidAt, KnownAt: req.KnownAt, ActiveAt: req.ActiveAt,
 		},
 		Filters:     domain.QueryFilters{MinConfidence: req.MinConfidence, Predicates: req.Predicates},
+		Policy:      filters,
+		Purpose:     purposeOf(r),
 		TokenBudget: req.TokenBudget,
 		MaxItems:    req.MaxItems,
 		Explain:     req.Explain,

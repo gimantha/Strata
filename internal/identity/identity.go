@@ -34,6 +34,7 @@ type GrantStore interface {
 	UpsertPrincipal(ctx context.Context, p domain.Principal) error
 	GrantFor(ctx context.Context, principal domain.PrincipalID, ws domain.WorkspaceID) (domain.Role, bool, error)
 	GrantsFor(ctx context.Context, principal domain.PrincipalID) ([]domain.Grant, error)
+	GetPrincipal(ctx context.Context, id domain.PrincipalID) (domain.Principal, error)
 	GetGraphSpace(ctx context.Context, id domain.GraphSpaceID) (domain.GraphSpace, error)
 }
 
@@ -191,6 +192,31 @@ func (s *Service) PrincipalForKeyID(ctx context.Context, keyID string) (domain.P
 		return domain.Principal{}, domain.Errorf(domain.CodeUnauthenticated, op, "unknown key id")
 	}
 	return s.withGrants(ctx, key.principal)
+}
+
+// PrincipalForID loads a registered principal with its current grants.
+//
+// For answering questions about somebody other than the caller — "what would this agent be
+// allowed to see" — which is a different question from authenticating them, and must not be
+// a way to obtain their credentials.
+func (s *Service) PrincipalForID(ctx context.Context, id domain.PrincipalID) (domain.Principal, error) {
+	const op = "identity.PrincipalForID"
+
+	for _, key := range s.keys {
+		if key.principal.ID == id {
+			return s.withGrants(ctx, key.principal)
+		}
+	}
+
+	if s.store == nil {
+		return domain.Principal{}, domain.Errorf(domain.CodeNotFound, op,
+			"principal %s is not registered", id)
+	}
+	stored, err := s.store.GetPrincipal(ctx, id)
+	if err != nil {
+		return domain.Principal{}, err
+	}
+	return s.withGrants(ctx, stored)
 }
 
 // Authenticate resolves an Authorization header into a principal with its grants.

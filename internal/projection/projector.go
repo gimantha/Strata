@@ -135,6 +135,14 @@ func (p *Projector) projectChunks(ctx context.Context, scope domain.Scope, event
 		return Stats{}, nil
 	}
 
+	// Every chunk in one event shares its source, so this is one lookup rather than one
+	// per chunk. Without it a policy restricting a principal to certain sources could not
+	// filter passages, only claims.
+	var source domain.SourceID
+	if event, err := p.store.GetSourceEvent(ctx, scope.WorkspaceID, eventID); err == nil {
+		source = event.SourceID
+	}
+
 	records := make([]domain.ProjectedRecord, 0, len(chunks))
 	for _, chunk := range chunks {
 		if strings.TrimSpace(chunk.Content) == "" {
@@ -147,6 +155,7 @@ func (p *Projector) projectChunks(ctx context.Context, scope domain.Scope, event
 			Content:        chunk.Content,
 			Classification: chunk.Classification,
 			SourceEventID:  chunk.SourceEventID,
+			SourceID:       source,
 		})
 	}
 	return p.write(ctx, scope, records)
@@ -186,6 +195,22 @@ func (p *Projector) projectAssertions(ctx context.Context, scope domain.Scope, e
 		return Stats{}, nil
 	}
 
+	// Which source each claim came from, so policy can filter projections by source without
+	// a join. One lookup per event rather than per claim: a batch usually shares one.
+	sourceByEvent := map[domain.SourceEventID]domain.SourceID{}
+	sourceOf := func(id domain.SourceEventID) domain.SourceID {
+		if source, ok := sourceByEvent[id]; ok {
+			return source
+		}
+		event, err := p.store.GetSourceEvent(ctx, scope.WorkspaceID, id)
+		if err != nil {
+			sourceByEvent[id] = ""
+			return ""
+		}
+		sourceByEvent[id] = event.SourceID
+		return event.SourceID
+	}
+
 	names := map[domain.EntityID]string{}
 	types := map[domain.EntityID]string{}
 	nameOf := func(id domain.EntityID) string {
@@ -216,6 +241,7 @@ func (p *Projector) projectAssertions(ctx context.Context, scope domain.Scope, e
 		// is not something to depend on.
 		subjectName := nameOf(assertion.SubjectID)
 		subjectType := domain.NormalizeEntityType(types[assertion.SubjectID])
+		source := sourceOf(assertion.SourceEventID)
 
 		records = append(records, domain.ProjectedRecord{
 			Scope: domain.Scope{
@@ -233,6 +259,10 @@ func (p *Projector) projectAssertions(ctx context.Context, scope domain.Scope, e
 			// The subject's type, so a query can ask for claims about organizations
 			// without joining back to the ledger for every candidate.
 			EntityType: subjectType,
+			// Source and predicate travel with the record so policy can narrow a query
+			// rather than filter its results (AGENTS.md section 22.4).
+			SourceID:  source,
+			Predicate: assertion.Predicate.Name,
 		})
 
 		// Only entity-to-entity claims become edges.
@@ -247,6 +277,7 @@ func (p *Projector) projectAssertions(ctx context.Context, scope domain.Scope, e
 				ValidFrom:      assertion.Temporal.ValidFrom,
 				ValidTo:        assertion.Temporal.ValidTo,
 				Status:         assertion.Status,
+				SourceID:       source,
 				Confidence:     assertion.Confidence,
 				Classification: assertion.Classification,
 			})

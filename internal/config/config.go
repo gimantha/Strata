@@ -69,6 +69,10 @@ type Config struct {
 	LLMTimeout    time.Duration
 	LLMMaxRetries int
 
+	// RedactQueryText stores the hash of a query without its words. For deployments where
+	// what people asked is itself sensitive (AGENTS.md section 6.12).
+	RedactQueryText bool
+
 	// EmbeddingProvider selects the embedder for the vector projection: none, mock,
 	// hashing, or openai. Without one, lexical and graph retrieval still work.
 	//
@@ -127,6 +131,7 @@ func LoadFrom(getenv func(string) string) (Config, error) {
 		LLMTimeout:    l.duration("LLM_TIMEOUT", 60*time.Second),
 		LLMMaxRetries: l.intVal("LLM_MAX_RETRIES", 2),
 
+		RedactQueryText:   l.boolVal("REDACT_QUERY_TEXT", false),
 		EmbeddingProvider: strings.ToLower(l.str("EMBEDDING_PROVIDER", "none")),
 		EmbeddingBaseURL:  l.str("EMBEDDING_BASE_URL", ""),
 		EmbeddingModel:    l.str("EMBEDDING_MODEL", ""),

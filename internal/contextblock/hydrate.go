@@ -93,6 +93,15 @@ func (h *hydrator) hydrate(ctx context.Context, items []domain.RetrievedItem) ([
 		switch item.Surface {
 		case domain.SurfaceChunk:
 			provenance, ok := chunks[domain.ChunkID(item.RecordID)]
+			if ok && !h.req.Policy.Allows(provenance.Chunk.Classification,
+				provenance.SourceID, "", "", "") {
+				// Retrieval already narrowed by policy; this is the second gate on the
+				// canonical record. A citation that reproduces a passage is a disclosure
+				// path of its own, and it reads the ledger rather than the projection.
+				h.drop(item, domain.SectionExcerpts, domain.DropSectionExcluded,
+					"policy does not permit this source material")
+				continue
+			}
 			if !ok {
 				// The projection outlived the chunk. Retrieval can race a rebuild; a
 				// citation that cannot be resolved is not rendered.
@@ -184,6 +193,12 @@ func (h *hydrator) fromAssertion(ctx context.Context, item domain.RetrievedItem,
 	}
 
 	assertion := chain.Assertion
+	if !h.req.Policy.Allows(assertion.Classification, sourceOfChain(chain),
+		assertion.Predicate.Name, assertion.MemoryKind, "") {
+		h.drop(item, domain.SectionFacts, domain.DropSectionExcluded,
+			"policy does not permit this claim")
+		return nil, nil
+	}
 	if len(chain.Links) == 0 && !reasoned(assertion.ProvenanceMode) {
 		// Phase 8's acceptance criterion in one branch: an observed claim with no
 		// evidence cannot be cited, so it is not rendered at all rather than rendered
@@ -398,6 +413,14 @@ func citationFor(a domain.Assertion, chain domain.ProvenanceChain) domain.Citati
 		citation.SourceName = chain.Links[0].Source.Name
 	}
 	return citation
+}
+
+// sourceOfChain reports which source a claim came from, when its provenance says.
+func sourceOfChain(chain domain.ProvenanceChain) domain.SourceID {
+	if len(chain.Links) == 0 {
+		return ""
+	}
+	return chain.Links[0].Source.ID
 }
 
 // reasoned reports whether a claim was concluded rather than read.

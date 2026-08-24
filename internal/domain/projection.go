@@ -53,6 +53,11 @@ type ProjectedRecord struct {
 	// without joining back to the ledger for every candidate (AGENTS.md section 19.2).
 	// Empty for chunks, which are passages rather than things.
 	EntityType string
+	// SourceID and Predicate are copied for policy filtering (AGENTS.md section 22.4): a
+	// rule restricting a principal to certain sources has to narrow the query rather than
+	// the result set.
+	SourceID  SourceID
+	Predicate string
 }
 
 // VectorRecord is a projected record together with its embedding.
@@ -81,6 +86,9 @@ type VectorQuery struct {
 	MemoryKinds    []MemoryKind
 	EntityTypes    []string
 
+	// Policy narrowing, applied in the same WHERE clause as everything else.
+	Policy PolicyFilters
+
 	Limit int
 	// MinScore drops weak matches. Vector search always returns its k nearest neighbours,
 	// however far away they are, so without a floor an unrelated query still gets answers.
@@ -98,6 +106,9 @@ type LexicalQuery struct {
 	Classification []Classification
 	MemoryKinds    []MemoryKind
 	EntityTypes    []string
+
+	// Policy narrowing, applied in the same WHERE clause as everything else.
+	Policy PolicyFilters
 
 	// Exact switches from stemmed full-text matching to substring matching, for
 	// identifiers, error codes, and part numbers that stemming mangles.
@@ -133,6 +144,8 @@ type GraphEdge struct {
 	ValidTo        *time.Time
 	Status         AssertionStatus
 	Confidence     float64
+	// SourceID is copied for policy filtering during traversal.
+	SourceID       SourceID
 	Classification Classification
 }
 
@@ -148,7 +161,10 @@ type GraphExpandQuery struct {
 	ValidAt    *time.Time
 	// IncludeSuperseded walks historical edges as well as current ones.
 	IncludeSuperseded bool
-	Limit             int
+	// Policy narrowing. Traversal is the easiest place to leak: an edge to a restricted
+	// claim reveals the claim's existence even when the claim itself is filtered out.
+	Policy PolicyFilters
+	Limit  int
 }
 
 // MaxGraphDepth is the hard ceiling on traversal, whatever a caller asks for.

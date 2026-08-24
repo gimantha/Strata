@@ -539,6 +539,10 @@ type AssertionQuery struct {
 	Statuses        []AssertionStatus
 	SourceEventID   SourceEventID
 	MinConfidence   float64
+	// Classifications restricts to these sensitivity levels. Policy passes the set a
+	// principal is cleared for, so the narrowing happens in the query rather than after
+	// it (AGENTS.md section 22.4).
+	Classifications []Classification
 
 	// ValidAt filters world validity: what held at this world time.
 	ValidAt *time.Time
