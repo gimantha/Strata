@@ -58,6 +58,10 @@ type ProjectedRecord struct {
 	// the result set.
 	SourceID  SourceID
 	Predicate string
+	// Lifecycle is the context clock (AGENTS.md section 21.3). Without it on the
+	// projection, retrieval cannot tell an expired working note from current knowledge,
+	// and "stops being active" means nothing a user would recognize.
+	Lifecycle Lifecycle
 }
 
 // VectorRecord is a projected record together with its embedding.
@@ -88,6 +92,9 @@ type VectorQuery struct {
 
 	// Policy narrowing, applied in the same WHERE clause as everything else.
 	Policy PolicyFilters
+	// ActiveAt restricts to knowledge in scope for an agent at this instant. Distinct
+	// from ValidAt: one asks what is true, the other what is worth surfacing.
+	ActiveAt *time.Time
 
 	Limit int
 	// MinScore drops weak matches. Vector search always returns its k nearest neighbours,
@@ -109,11 +116,22 @@ type LexicalQuery struct {
 
 	// Policy narrowing, applied in the same WHERE clause as everything else.
 	Policy PolicyFilters
+	// ActiveAt restricts to knowledge in scope for an agent at this instant.
+	ActiveAt *time.Time
 
 	// Exact switches from stemmed full-text matching to substring matching, for
 	// identifiers, error codes, and part numbers that stemming mangles.
 	Exact bool
 	Limit int
+}
+
+// DecayWeight is what a hit's lifecycle says about its ranking weight, defaulting to full
+// weight for records with no decay configured.
+func (h Hit) DecayWeight() float64 {
+	if h.Decay <= 0 {
+		return 1
+	}
+	return h.Decay
 }
 
 // Hit is one retrieval result. It carries the canonical reference rather than the content,
@@ -123,6 +141,10 @@ type Hit struct {
 	RecordID string
 	Score    float64
 	Content  string
+	// Decay is the ranking weight this record's lifecycle still carries, in (0,1].
+	// Applied by fusion as a multiplier: decay reorders results, it never removes them
+	// (AGENTS.md section 21.2).
+	Decay float64
 	// Detail explains the score, which retrieval traces need in later phases.
 	Detail map[string]any
 }
@@ -147,6 +169,9 @@ type GraphEdge struct {
 	// SourceID is copied for policy filtering during traversal.
 	SourceID       SourceID
 	Classification Classification
+	// ActiveUntil and ExpiresAt keep expired relationships out of traversal.
+	ActiveUntil *time.Time
+	ExpiresAt   *time.Time
 }
 
 // GraphExpandQuery walks the graph projection outwards from a set of entities.
@@ -164,7 +189,9 @@ type GraphExpandQuery struct {
 	// Policy narrowing. Traversal is the easiest place to leak: an edge to a restricted
 	// claim reveals the claim's existence even when the claim itself is filtered out.
 	Policy PolicyFilters
-	Limit  int
+	// ActiveAt restricts traversal to edges in scope at this instant.
+	ActiveAt *time.Time
+	Limit    int
 }
 
 // MaxGraphDepth is the hard ceiling on traversal, whatever a caller asks for.

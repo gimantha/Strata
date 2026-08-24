@@ -16,6 +16,7 @@ import (
 	"github.com/gimantha/strata/internal/identity"
 	"github.com/gimantha/strata/internal/ingest"
 	"github.com/gimantha/strata/internal/knowledge"
+	"github.com/gimantha/strata/internal/memory"
 	"github.com/gimantha/strata/internal/observability"
 	"github.com/gimantha/strata/internal/ontology"
 	"github.com/gimantha/strata/internal/policy"
@@ -38,6 +39,7 @@ type Server struct {
 	ontology  *ontology.Service
 	connector *cdc.Runner
 	policy    *policy.Service
+	memory    *memory.Service
 	blobs     healthChecker
 	clock     func() time.Time
 	http      *http.Server
@@ -71,6 +73,7 @@ type Deps struct {
 	Ontology  *ontology.Service
 	Connector *cdc.Runner
 	Policy    *policy.Service
+	Memory    *memory.Service
 	Blobs     healthChecker
 	// Clock overrides the wall clock, for deterministic tests.
 	Clock func() time.Time
@@ -96,6 +99,7 @@ func NewServer(deps Deps) *Server {
 		ontology:  deps.Ontology,
 		connector: deps.Connector,
 		policy:    deps.Policy,
+		memory:    deps.Memory,
 		blobs:     deps.Blobs,
 		clock:     deps.Clock,
 	}
@@ -163,6 +167,11 @@ func (s *Server) Handler() http.Handler {
 
 	// Context assembly.
 	mux.HandleFunc("POST /v1/graph-spaces/{graph_space_id}/context", s.authenticated(s.handleContext))
+
+	// Memory lifecycle: consolidation, and the two non-destructive ways of forgetting.
+	mux.HandleFunc("POST /v1/graph-spaces/{graph_space_id}/consolidate", s.authenticated(s.handleConsolidate))
+	mux.HandleFunc("POST /v1/assertions/{assertion_id}/forget", s.authenticated(s.handleForget))
+	mux.HandleFunc("POST /v1/assertions/{assertion_id}/reactivate", s.authenticated(s.handleReactivate))
 
 	// Export and query-time explainability. Both are read paths that could leak across
 	// tenants, and both are audited.

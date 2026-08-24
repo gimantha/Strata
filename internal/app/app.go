@@ -25,6 +25,7 @@ import (
 	"github.com/gimantha/strata/internal/llm"
 	"github.com/gimantha/strata/internal/llm/mock"
 	"github.com/gimantha/strata/internal/llm/openai"
+	"github.com/gimantha/strata/internal/memory"
 	"github.com/gimantha/strata/internal/normalize"
 	"github.com/gimantha/strata/internal/observability"
 	"github.com/gimantha/strata/internal/ontology"
@@ -53,6 +54,7 @@ type App struct {
 	Ontology  *ontology.Service
 	Connector *cdc.Runner
 	Policy    *policy.Service
+	Memory    *memory.Service
 	Embedder  embedding.Embedder
 	Bus       *eventbus.Outbox
 	Runner    *pipeline.Runner
@@ -177,6 +179,7 @@ func New(ctx context.Context, cfg config.Config) (*App, error) {
 
 	app.Policy = policy.New(store, policy.NewLedgerAuditor(store), policy.Options{}, logger)
 	app.Ontology = ontology.New(store, logger)
+	app.Memory = memory.New(store, app.Knowledge, app.Projector, memory.Options{}, logger, telemetry.Tracer)
 	app.Connector = cdc.New(app.Gateway, store, cdc.Options{}, logger, telemetry.Tracer)
 	app.Retriever = retrieval.New(store, embedder, retrieval.Options{
 		Traces:          store,

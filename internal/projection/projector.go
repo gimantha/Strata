@@ -263,6 +263,9 @@ func (p *Projector) projectAssertions(ctx context.Context, scope domain.Scope, e
 			// rather than filter its results (AGENTS.md section 22.4).
 			SourceID:  source,
 			Predicate: assertion.Predicate.Name,
+			// The context clock, so retrieval can tell an expired working note from
+			// current knowledge without joining back to the ledger.
+			Lifecycle: domain.LifecycleOf(assertion.Temporal),
 		})
 
 		// Only entity-to-entity claims become edges.
@@ -278,6 +281,8 @@ func (p *Projector) projectAssertions(ctx context.Context, scope domain.Scope, e
 				ValidTo:        assertion.Temporal.ValidTo,
 				Status:         assertion.Status,
 				SourceID:       source,
+				ActiveUntil:    assertion.Temporal.ActiveUntil,
+				ExpiresAt:      assertion.Temporal.ExpiresAt,
 				Confidence:     assertion.Confidence,
 				Classification: assertion.Classification,
 			})

@@ -67,6 +67,7 @@ func run() error {
 		Ontology:  application.Ontology,
 		Connector: application.Connector,
 		Policy:    application.Policy,
+		Memory:    application.Memory,
 		Blobs:     application.Blobs,
 	})
 

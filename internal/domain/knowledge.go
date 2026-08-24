@@ -244,6 +244,12 @@ type Assertion struct {
 	RetractedAt      *time.Time
 	RetractionReason string
 
+	// DeactivatedAt records when this claim was taken out of active context, and
+	// DeactivationReason why. Distinct from retraction: the claim is still true, still
+	// cited, and still answerable as of any instant (AGENTS.md section 21.4).
+	DeactivatedAt      *time.Time
+	DeactivationReason string
+
 	// OntologyVersionID names the schema this claim was validated against, when one was
 	// bound (AGENTS.md section 8). Nil in open mode: recording a version the claim never
 	// saw would be a lie that outlives the mistake.

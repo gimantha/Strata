@@ -31,8 +31,9 @@ func (s *Store) UpsertVectors(ctx context.Context, records []domain.VectorRecord
 			                            embedding_model, embedding_version, embedding,
 			                            valid_from, valid_to, status, classification, memory_kind,
 			                            source_event_id, content_hash, entity_type,
-			                            source_id, predicate)
-			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
+			                            source_id, predicate,
+			                            active_from, active_until, decay_starts_at, expires_at)
+			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)
 			ON CONFLICT (workspace_id, surface, record_id, embedding_model, embedding_version)
 			DO UPDATE SET embedding = EXCLUDED.embedding,
 			              valid_from = EXCLUDED.valid_from,
@@ -43,13 +44,19 @@ func (s *Store) UpsertVectors(ctx context.Context, records []domain.VectorRecord
 			              content_hash = EXCLUDED.content_hash,
 			              entity_type = EXCLUDED.entity_type,
 			              source_id = EXCLUDED.source_id,
-			              predicate = EXCLUDED.predicate`,
+			              predicate = EXCLUDED.predicate,
+			              active_from = EXCLUDED.active_from,
+			              active_until = EXCLUDED.active_until,
+			              decay_starts_at = EXCLUDED.decay_starts_at,
+			              expires_at = EXCLUDED.expires_at`,
 			domain.NewUUIDString(), record.Scope.WorkspaceID, record.Scope.GraphSpaceID,
 			record.Surface, record.RecordID, record.Model, record.Version,
 			formatVector(record.Embedding),
 			record.ValidFrom, record.ValidTo, record.Status, record.Classification,
 			record.MemoryKind, nullableString(record.SourceEventID), record.ContentHash,
-			record.EntityType, nullableString(record.SourceID), record.Predicate)
+			record.EntityType, nullableString(record.SourceID), record.Predicate,
+			record.Lifecycle.ActiveFrom, record.Lifecycle.ActiveUntil,
+			record.Lifecycle.DecayStartsAt, record.Lifecycle.ExpiresAt)
 	}
 
 	return s.InTx(ctx, func(tx pgx.Tx) error {
@@ -120,13 +127,15 @@ func (s *Store) SearchVectors(ctx context.Context, q domain.VectorQuery) ([]doma
 		add("v.entity_type = ANY($%d::text[])", q.EntityTypes)
 	}
 	applyPolicyFilters(add, "v", q.Policy)
+	applyLifecycle(add, "v", q.ActiveAt)
 
 	args = append(args, formatVector(q.Embedding))
 	probe := len(args)
 	args = append(args, limit)
 
 	sql := `
-		SELECT v.surface, v.record_id, 1 - (v.embedding <=> $` + strconv.Itoa(probe) + `::vector) AS score
+		SELECT v.surface, v.record_id, 1 - (v.embedding <=> $` + strconv.Itoa(probe) + `::vector) AS score,
+		       v.decay_starts_at
 		FROM vector_records v
 		WHERE ` + strings.Join(where, " AND ") + `
 		ORDER BY v.embedding <=> $` + strconv.Itoa(probe) + `::vector
@@ -138,12 +147,22 @@ func (s *Store) SearchVectors(ctx context.Context, q domain.VectorQuery) ([]doma
 	}
 	defer rows.Close()
 
+	now := time.Now().UTC()
+	if q.ActiveAt != nil {
+		now = q.ActiveAt.UTC()
+	}
+
 	var out []domain.Hit
 	for rows.Next() {
-		var hit domain.Hit
-		if err := rows.Scan(&hit.Surface, &hit.RecordID, &hit.Score); err != nil {
+		var (
+			hit           domain.Hit
+			decayStartsAt *time.Time
+		)
+		if err := rows.Scan(&hit.Surface, &hit.RecordID, &hit.Score, &decayStartsAt); err != nil {
 			return nil, mapError(err, op, "cannot scan vector hit")
 		}
+		hit.Decay = domain.Lifecycle{DecayStartsAt: decayStartsAt}.
+			DecayWeight(now, domain.DecayHalfLife)
 		// Nearest-neighbour search always returns its k nearest, however far away. Without
 		// a floor, an unrelated question still gets confident-looking answers.
 		if hit.Score < q.MinScore {
@@ -169,8 +188,9 @@ func (s *Store) UpsertLexical(ctx context.Context, records []domain.ProjectedRec
 			INSERT INTO lexical_records (id, workspace_id, graph_space_id, surface, record_id,
 			                             content, valid_from, valid_to, status, classification,
 			                             memory_kind, source_event_id, entity_type,
-			                             source_id, predicate)
-			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+			                             source_id, predicate,
+			                             active_from, active_until, decay_starts_at, expires_at)
+			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)
 			ON CONFLICT (workspace_id, surface, record_id)
 			DO UPDATE SET content = EXCLUDED.content,
 			              valid_from = EXCLUDED.valid_from,
@@ -180,12 +200,18 @@ func (s *Store) UpsertLexical(ctx context.Context, records []domain.ProjectedRec
 			              memory_kind = EXCLUDED.memory_kind,
 			              entity_type = EXCLUDED.entity_type,
 			              source_id = EXCLUDED.source_id,
-			              predicate = EXCLUDED.predicate`,
+			              predicate = EXCLUDED.predicate,
+			              active_from = EXCLUDED.active_from,
+			              active_until = EXCLUDED.active_until,
+			              decay_starts_at = EXCLUDED.decay_starts_at,
+			              expires_at = EXCLUDED.expires_at`,
 			domain.NewUUIDString(), record.Scope.WorkspaceID, record.Scope.GraphSpaceID,
 			record.Surface, record.RecordID, record.Content,
 			record.ValidFrom, record.ValidTo, record.Status, record.Classification,
 			record.MemoryKind, nullableString(record.SourceEventID), record.EntityType,
-			nullableString(record.SourceID), record.Predicate)
+			nullableString(record.SourceID), record.Predicate,
+			record.Lifecycle.ActiveFrom, record.Lifecycle.ActiveUntil,
+			record.Lifecycle.DecayStartsAt, record.Lifecycle.ExpiresAt)
 	}
 
 	return s.InTx(ctx, func(tx pgx.Tx) error {
@@ -249,6 +275,7 @@ func (s *Store) SearchLexical(ctx context.Context, q domain.LexicalQuery) ([]dom
 		add("l.entity_type = ANY($%d::text[])", q.EntityTypes)
 	}
 	applyPolicyFilters(add, "l", q.Policy)
+	applyLifecycle(add, "l", q.ActiveAt)
 
 	args = append(args, q.Text)
 	term := len(args)
@@ -258,7 +285,8 @@ func (s *Store) SearchLexical(ctx context.Context, q domain.LexicalQuery) ([]dom
 	if q.Exact {
 		where = append(where, fmt.Sprintf("l.content ILIKE '%%' || $%d || '%%'", term))
 		sql = `SELECT l.surface, l.record_id, l.content,
-		              similarity(l.content, $` + strconv.Itoa(term) + `) AS score
+		              similarity(l.content, $` + strconv.Itoa(term) + `) AS score,
+		              l.decay_starts_at
 		       FROM lexical_records l
 		       WHERE ` + strings.Join(where, " AND ") + `
 		       ORDER BY score DESC, length(l.content)
@@ -268,7 +296,8 @@ func (s *Store) SearchLexical(ctx context.Context, q domain.LexicalQuery) ([]dom
 		// ts_rank_cd weighs term proximity, which ranks a passage discussing the terms
 		// together above one that merely mentions them.
 		sql = `SELECT l.surface, l.record_id, l.content,
-		              ts_rank_cd(l.search_vector, websearch_to_tsquery('english', $` + strconv.Itoa(term) + `)) AS score
+		              ts_rank_cd(l.search_vector, websearch_to_tsquery('english', $` + strconv.Itoa(term) + `)) AS score,
+		              l.decay_starts_at
 		       FROM lexical_records l
 		       WHERE ` + strings.Join(where, " AND ") + `
 		       ORDER BY score DESC
@@ -286,13 +315,24 @@ func (s *Store) SearchLexical(ctx context.Context, q domain.LexicalQuery) ([]dom
 		mode = "lexical_exact"
 	}
 
+	now := time.Now().UTC()
+	if q.ActiveAt != nil {
+		now = q.ActiveAt.UTC()
+	}
+
 	var out []domain.Hit
 	for rows.Next() {
-		var hit domain.Hit
-		if err := rows.Scan(&hit.Surface, &hit.RecordID, &hit.Content, &hit.Score); err != nil {
+		var (
+			hit           domain.Hit
+			decayStartsAt *time.Time
+		)
+		if err := rows.Scan(&hit.Surface, &hit.RecordID, &hit.Content, &hit.Score,
+			&decayStartsAt); err != nil {
 			return nil, mapError(err, op, "cannot scan lexical hit")
 		}
-		hit.Detail = map[string]any{"retriever": mode, "rank": hit.Score}
+		hit.Decay = domain.Lifecycle{DecayStartsAt: decayStartsAt}.
+			DecayWeight(now, domain.DecayHalfLife)
+		hit.Detail = map[string]any{"retriever": mode, "rank": hit.Score, "decay": hit.Decay}
 		out = append(out, hit)
 	}
 	return out, mapError(rows.Err(), op, "cannot search lexically")
@@ -311,18 +351,22 @@ func (s *Store) UpsertGraphEdges(ctx context.Context, edges []domain.GraphEdge) 
 		batch.Queue(`
 			INSERT INTO graph_edges (id, workspace_id, graph_space_id, subject_id, predicate,
 			                         object_entity_id, assertion_id, valid_from, valid_to,
-			                         status, confidence, classification, source_id)
-			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+			                         status, confidence, classification, source_id,
+			                         active_until, expires_at)
+			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
 			ON CONFLICT (assertion_id)
 			DO UPDATE SET status = EXCLUDED.status,
 			              valid_from = EXCLUDED.valid_from,
 			              valid_to = EXCLUDED.valid_to,
 			              confidence = EXCLUDED.confidence,
 			              classification = EXCLUDED.classification,
-			              source_id = EXCLUDED.source_id`,
+			              source_id = EXCLUDED.source_id,
+			              active_until = EXCLUDED.active_until,
+			              expires_at = EXCLUDED.expires_at`,
 			domain.NewUUIDString(), edge.WorkspaceID, edge.GraphSpaceID, edge.SubjectID,
 			edge.Predicate, edge.ObjectEntityID, edge.AssertionID, edge.ValidFrom, edge.ValidTo,
-			edge.Status, edge.Confidence, edge.Classification, nullableString(edge.SourceID))
+			edge.Status, edge.Confidence, edge.Classification, nullableString(edge.SourceID),
+			edge.ActiveUntil, edge.ExpiresAt)
 	}
 
 	return s.InTx(ctx, func(tx pgx.Tx) error {
@@ -396,6 +440,7 @@ func (s *Store) ExpandGraph(ctx context.Context, q domain.GraphExpandQuery) ([]d
 				       ((ge.valid_from IS NULL OR ge.valid_from <= $6) AND
 				        (ge.valid_to IS NULL OR ge.valid_to > $6)))
 				  `+edgePolicyClause+`
+				  `+edgeLifecycleClause+`
 				UNION ALL
 				-- Traversal follows edges in both directions: "who supplies Acme" and "what
 				-- does Acme supply" are the same graph seen from opposite ends.
@@ -410,6 +455,7 @@ func (s *Store) ExpandGraph(ctx context.Context, q domain.GraphExpandQuery) ([]d
 				       ((ge.valid_from IS NULL OR ge.valid_from <= $6) AND
 				        (ge.valid_to IS NULL OR ge.valid_to > $6)))
 				  `+edgePolicyClause+`
+				  `+edgeLifecycleClause+`
 			) next ON true
 			WHERE w.depth < $7
 			  AND NOT next.entity_id = ANY(w.path)
@@ -426,7 +472,7 @@ func (s *Store) ExpandGraph(ctx context.Context, q domain.GraphExpandQuery) ([]d
 		statuses, predicates, validAt, q.Depth, q.Limit,
 		policyClassifications(q.Policy), orNilIDs(q.Policy.AllowedSources),
 		orNilIDs(q.Policy.DeniedSources), orNilStrings(q.Policy.AllowedPredicates),
-		orNilStrings(q.Policy.DeniedPredicates))
+		orNilStrings(q.Policy.DeniedPredicates), activeAtOrNil(q.ActiveAt))
 	if err != nil {
 		return nil, mapError(err, op, "cannot expand graph")
 	}
@@ -767,4 +813,40 @@ func orNilStrings(values []string) []string {
 		return nil
 	}
 	return values
+}
+
+// applyLifecycle restricts a projection query to knowledge in scope at an instant
+// (AGENTS.md sections 21.2, 21.3).
+//
+// Expiry and the active window filter; decay does not. Decay affects ranking, not truth, and
+// a decayed memory that vanished from results would be deletion wearing a ranking function's
+// clothes. An expired one is different: the deployment said stop using it.
+//
+// Records with no lifecycle set — which is nearly all of them — pass untouched, so the clause
+// costs nothing for knowledge that never expires.
+func applyLifecycle(add func(clause string, value any), alias string, activeAt *time.Time) {
+	if activeAt == nil {
+		return
+	}
+	at := activeAt.UTC()
+
+	add("("+alias+".active_from IS NULL OR "+alias+".active_from <= $%d)", at)
+	// Half-open, like every other interval here: active until noon is not active at noon.
+	add("("+alias+".active_until IS NULL OR "+alias+".active_until > $%d)", at)
+	add("("+alias+".expires_at IS NULL OR "+alias+".expires_at > $%d)", at)
+}
+
+// edgeLifecycleClause keeps expired relationships out of traversal.
+//
+// Applied inside the walk for the same reason the policy clause is: an edge that should no
+// longer be in scope still discloses the entity it reaches and still counts as a hop, so
+// filtering the results would give the right names at the wrong depths.
+const edgeLifecycleClause = `AND ($14::timestamptz IS NULL OR ge.active_until IS NULL OR ge.active_until > $14)
+				  AND ($14::timestamptz IS NULL OR ge.expires_at IS NULL OR ge.expires_at > $14)`
+
+func activeAtOrNil(at *time.Time) any {
+	if at == nil {
+		return nil
+	}
+	return at.UTC()
 }

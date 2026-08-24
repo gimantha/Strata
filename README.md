@@ -95,6 +95,12 @@ retrieval projections.
   Cross-workspace isolation is tested through lexical, vector, graph, entity, context,
   provenance, export, and trace paths rather than asserted
 
+- Memory lifecycle: expiry that takes a claim out of active context while leaving it true,
+  cited, and answerable as of an earlier instant; decay that reorders results and never
+  removes them; consolidation that turns repeated observation into a derived fact naming
+  every observation behind it; and forgetting as four named operations rather than one
+  ambiguous delete flag
+
 **Not built yet** (later phases, in order): ABAC policy, memory lifecycle,
 MCP, and distributed operation.
 
@@ -264,4 +270,6 @@ are declared by the services that consume them; implementations live under `stor
   tombstones, and out-of-order handling
 - [docs/api/security.md](docs/api/security.md) — grants, ABAC policy, clearances, audit,
   traces, and export
+- [docs/api/memory.md](docs/api/memory.md) — expiry, decay, consolidation, and the four
+  ways of forgetting
 - [docs/adr/](docs/adr/) — decisions, alternatives, and trade-offs

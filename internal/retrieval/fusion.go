@@ -264,6 +264,14 @@ func fuse(candidates []candidate, weights Weights, limit int) []domain.Retrieved
 			contribution /= 1 + weights.GraphDepthPenalty*float64(c.path.Depth)
 		}
 
+		// Decay is a multiplier, never a filter (AGENTS.md section 21.2). An old memory
+		// loses to a fresh one and still beats nothing, which is the difference between
+		// ranking and deletion.
+		if decay := c.hit.DecayWeight(); decay < 1 {
+			contribution *= decay
+			entry.item.Signals["decay"] = decay
+		}
+
 		entry.item.Score += contribution
 		entry.item.Signals[string(c.mode)+"_rrf"] = contribution
 		entry.item.Signals[string(c.mode)+"_score"] = c.score

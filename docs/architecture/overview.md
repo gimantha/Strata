@@ -1,6 +1,6 @@
 # Architecture overview
 
-This describes what exists after phases 0 through 11, and how each part enforces the
+This describes what exists after phases 0 through 12, and how each part enforces the
 invariants in [AGENTS.md](../../AGENTS.md) section 2. Later phases extend this picture
 without changing its shape.
 
@@ -56,6 +56,7 @@ absent rather than stubbed: an empty stage that recorded success would make repl
 | No hidden global graph | There is no unscoped list or read path anywhere, including administrative listings |
 | Provider independence | `internal/domain` imports nothing but the standard library and a UUID package, enforced by `scripts/check-domain-deps.sh` in CI |
 | Row updates never rebuild a subgraph | A change states what the row now says; unchanged claims collide on their fingerprint and keep their assertion id, and only moved values are superseded. A test asserts identity, not counts |
+| Decay never deletes | Decay is a floored multiplier on ranking; expiry filters, and both leave the claim asserted, cited, and answerable as of an earlier instant |
 | Unauthorized data is never retrieved and then hidden | A policy decision carries query filters; every retriever applies them in SQL, graph traversal applies them inside the walk, and canonical reads re-check each record in hand |
 | Invalid schema candidates are never silently committed | A guided graph space validates every claim; a caller gets `ontology_violation`, a model's candidate is committed as `quarantined` with its reasons, and quarantined claims are neither projected nor reconciled |
 
@@ -233,8 +234,23 @@ Every decision is audited, refusals included, and audit rows never quote the mat
 guard. Retrieval traces record what was asked under which policy; the query text is stored
 only where the deployment permits it.
 
+## Memory lifecycle
+
+The context clock decides what is worth surfacing, which is a different question from what is
+true ([ADR 0017](../adr/0017-decay-ranks-forgetting-is-four-operations.md)). An expired
+working memory leaves active context while staying asserted, cited, and answerable as of an
+earlier instant; its source passage is untouched, because expiring a claim must not rewrite
+the record of what a document said.
+
+Decay is a multiplier with a floor rather than a filter: an old memory loses to a fresh one
+and still beats nothing. Consolidation turns repeated observation into a derived semantic
+fact whose derivation names every observation behind it, leaving those observations exactly
+as they are.
+
+Forgetting is four named operations — deactivate, retract, retention, erasure — and the two
+destructive ones are refused here rather than hidden behind a flag on the reversible one.
+
 ## What comes next
 
-Phase 12 adds memory lifecycle and consolidation: deriving stable semantic facts from
-repeated episodes, decay that affects ranking rather than truth, and the four distinct
-forgetting operations that must not share one ambiguous delete flag.
+Phase 13 adds MCP and portable packages: exposing the graph as tools an agent can call, and
+packaging a graph space so it can be moved between deployments.

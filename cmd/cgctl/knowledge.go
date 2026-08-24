@@ -158,6 +158,11 @@ func cmdAssert(ctx context.Context, a *app.App, args []string) error {
 	validTo := fs.String("valid-to", "", "end of world validity, RFC3339")
 	supersedes := fs.String("supersedes", "", "comma-separated assertion ids this claim corrects")
 	scopeKey := fs.String("scope-key", "", "context in which the claim holds")
+	memoryKind := fs.String("memory-kind", "",
+		"episodic, semantic, procedural, preference, working, or derived")
+	activeUntil := fs.String("active-until", "", "when this stops being current context, RFC3339")
+	expiresAt := fs.String("expires-at", "", "when this stops being usable at all, RFC3339")
+	decayFrom := fs.String("decay-from", "", "when ranking weight starts to fall, RFC3339")
 	keyID := fs.String("key-id", "", "act as the principal behind this API key id")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -182,6 +187,25 @@ func cmdAssert(ctx context.Context, a *app.App, args []string) error {
 			EpisodeID:     domain.EpisodeID(*episodeID),
 			ExtractedText: *quote,
 		}},
+	}
+
+	if *memoryKind != "" {
+		parsed, err := domain.ParseMemoryKind(*memoryKind)
+		if err != nil {
+			return err
+		}
+		claim.MemoryKind = parsed
+	}
+	// The context clock, distinct from world validity above: these say when the claim is
+	// worth surfacing, not when it was true (AGENTS.md section 21.3).
+	if claim.ActiveUntil, err = parseOptionalTime(*activeUntil, "--active-until"); err != nil {
+		return err
+	}
+	if claim.ExpiresAt, err = parseOptionalTime(*expiresAt, "--expires-at"); err != nil {
+		return err
+	}
+	if claim.DecayStartsAt, err = parseOptionalTime(*decayFrom, "--decay-from"); err != nil {
+		return err
 	}
 
 	switch {

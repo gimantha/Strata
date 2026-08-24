@@ -21,7 +21,7 @@ const assertionColumns = `id, workspace_id, graph_space_id, subject_id, predicat
 	confidence, confidence_breakdown, status, supersedes_id, conflict_set_id, provenance_mode,
 	derivation_id, source_event_id, fingerprint, retracted_at, retraction_reason, classification,
 	created_by_id, created_by_kind, created_by_name, created_at, ontology_version_id,
-	quarantine_reason`
+	quarantine_reason, deactivated_at, deactivation_reason`
 
 // CommitKnowledge durably records entities, assertions, evidence, and derivations in one
 // transaction (AGENTS.md section 27.1).
@@ -573,7 +573,7 @@ func scanAssertionInto(row pgx.Row, op string, extra ...any) (domain.Assertion, 
 		&a.Confidence, &breakdown, &a.Status, &supersedesID, &conflictSetID, &a.ProvenanceMode,
 		&derivationID, &a.SourceEventID, &a.Fingerprint, &a.RetractedAt, &a.RetractionReason,
 		&a.Classification, &a.CreatedBy.ID, &a.CreatedBy.Kind, &a.CreatedBy.DisplayName, &a.CreatedAt,
-		&ontologyID, &a.QuarantineReason}
+		&ontologyID, &a.QuarantineReason, &a.DeactivatedAt, &a.DeactivationReason}
 	dest = append(dest, extra...)
 
 	err := row.Scan(dest...)
@@ -841,4 +841,101 @@ func (s *Store) SourceAuthority(ctx context.Context, ws domain.WorkspaceID, even
 		return "", mapError(err, op, "cannot read source authority")
 	}
 	return trust, nil
+}
+
+// DeactivateAssertion takes a claim out of active context without changing what it says
+// (AGENTS.md sections 21.3, 21.4).
+//
+// This is soft forgetting, and it is deliberately not retraction. The claim's status,
+// validity, evidence, and knowledge time are untouched: it remains true, remains cited, and
+// remains answerable as of any instant. What changes is the context clock — active_until is
+// closed at this moment — so retrieval stops surfacing it as current.
+//
+// Reversible on purpose. An operation people are afraid to use because it might be permanent
+// is an operation they will avoid in favour of something worse.
+func (s *Store) DeactivateAssertion(ctx context.Context, ws domain.WorkspaceID, id domain.AssertionID, at time.Time, reason string, actor domain.PrincipalID) (domain.Assertion, error) {
+	const op = "ledger.DeactivateAssertion"
+
+	if reason == "" {
+		return domain.Assertion{}, domain.Errorf(domain.CodeInvalidArgument, op,
+			"a reason is required")
+	}
+
+	row := s.pool.QueryRow(ctx, `
+		UPDATE assertions
+		SET active_until = $3,
+		    expires_at = coalesce(expires_at, $3),
+		    deactivated_at = $3,
+		    deactivation_reason = $4
+		WHERE workspace_id = $1 AND id = $2 AND deactivated_at IS NULL
+		RETURNING `+assertionColumns,
+		ws, id, at.UTC(), reason)
+
+	assertion, err := scanAssertion(row, op)
+	if err != nil {
+		if domain.IsCode(err, domain.CodeNotFound) {
+			// Either it does not exist here or it is already deactivated. Distinguish the
+			// two, because "already done" is a success from the caller's point of view.
+			existing, lookupErr := s.GetAssertion(ctx, ws, id)
+			if lookupErr != nil {
+				return domain.Assertion{}, lookupErr
+			}
+			return existing, nil
+		}
+		return domain.Assertion{}, err
+	}
+
+	_ = s.AppendAudit(ctx, AuditEntry{
+		WorkspaceID:  ws,
+		GraphSpaceID: assertion.GraphSpaceID,
+		PrincipalID:  actor,
+		Action:       "memory.deactivate",
+		TargetKind:   "assertion",
+		TargetID:     string(id),
+		Outcome:      "deactivated",
+		Detail:       map[string]any{"reason": reason},
+	})
+	return assertion, nil
+}
+
+// ReactivateAssertion puts deactivated knowledge back in scope.
+//
+// Clears the context clock this system set, and only that. A claim whose expiry came from the
+// source rather than from a deactivation keeps it: reactivating must not extend a lifetime
+// somebody else decided.
+func (s *Store) ReactivateAssertion(ctx context.Context, ws domain.WorkspaceID, id domain.AssertionID, actor domain.PrincipalID) (domain.Assertion, error) {
+	const op = "ledger.ReactivateAssertion"
+
+	row := s.pool.QueryRow(ctx, `
+		UPDATE assertions
+		SET active_until = NULL,
+		    expires_at = CASE WHEN expires_at = deactivated_at THEN NULL ELSE expires_at END,
+		    deactivated_at = NULL,
+		    deactivation_reason = ''
+		WHERE workspace_id = $1 AND id = $2 AND deactivated_at IS NOT NULL
+		RETURNING `+assertionColumns,
+		ws, id)
+
+	assertion, err := scanAssertion(row, op)
+	if err != nil {
+		if domain.IsCode(err, domain.CodeNotFound) {
+			existing, lookupErr := s.GetAssertion(ctx, ws, id)
+			if lookupErr != nil {
+				return domain.Assertion{}, lookupErr
+			}
+			return existing, nil
+		}
+		return domain.Assertion{}, err
+	}
+
+	_ = s.AppendAudit(ctx, AuditEntry{
+		WorkspaceID:  ws,
+		GraphSpaceID: assertion.GraphSpaceID,
+		PrincipalID:  actor,
+		Action:       "memory.reactivate",
+		TargetKind:   "assertion",
+		TargetID:     string(id),
+		Outcome:      "reactivated",
+	})
+	return assertion, nil
 }

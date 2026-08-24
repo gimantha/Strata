@@ -173,6 +173,7 @@ func (r *Retriever) lexical(ctx context.Context, req domain.QueryRequest, exact 
 		MemoryKinds:    req.Filters.MemoryKinds,
 		EntityTypes:    req.Filters.EntityTypes,
 		Policy:         req.Policy,
+		ActiveAt:       req.Temporal.ActiveAt,
 		Exact:          exact,
 		// Each retriever fetches more than the final limit: fusion needs depth to work
 		// with, and a record ranked fourth by two retrievers should be able to beat one
@@ -213,6 +214,7 @@ func (r *Retriever) vector(ctx context.Context, req domain.QueryRequest) ([]cand
 		MemoryKinds:    req.Filters.MemoryKinds,
 		EntityTypes:    req.Filters.EntityTypes,
 		Policy:         req.Policy,
+		ActiveAt:       req.Temporal.ActiveAt,
 		Limit:          req.Limit * 3,
 	})
 	if err != nil {
@@ -267,6 +269,7 @@ func (r *Retriever) graph(ctx context.Context, req domain.QueryRequest, seeds []
 		Predicates: req.Filters.Predicates,
 		ValidAt:    req.Temporal.ValidAt,
 		Policy:     req.Policy,
+		ActiveAt:   req.Temporal.ActiveAt,
 		Limit:      req.Limit * 2,
 	})
 	if err != nil {
