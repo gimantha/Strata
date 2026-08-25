@@ -79,11 +79,56 @@ func (s *Store) UpsertVectors(ctx context.Context, records []domain.VectorRecord
 func (s *Store) SearchVectors(ctx context.Context, q domain.VectorQuery) ([]domain.Hit, error) {
 	const op = "ledger.SearchVectors"
 
+	sql, args, err := buildVectorSearch(op, q)
+	if err != nil {
+		return nil, err
+	}
+
+	rows, err := s.pool.Query(ctx, sql, args...)
+	if err != nil {
+		return nil, mapError(err, op, "cannot search vectors")
+	}
+	defer rows.Close()
+
+	now := time.Now().UTC()
+	if q.ActiveAt != nil {
+		now = q.ActiveAt.UTC()
+	}
+
+	var out []domain.Hit
+	for rows.Next() {
+		var (
+			hit           domain.Hit
+			decayStartsAt *time.Time
+		)
+		if err := rows.Scan(&hit.Surface, &hit.RecordID, &hit.Score, &decayStartsAt); err != nil {
+			return nil, mapError(err, op, "cannot scan vector hit")
+		}
+		hit.Decay = domain.Lifecycle{DecayStartsAt: decayStartsAt}.
+			DecayWeight(now, domain.DecayHalfLife)
+		// Nearest-neighbour search always returns its k nearest, however far away. Without
+		// a floor, an unrelated question still gets confident-looking answers.
+		if hit.Score < q.MinScore {
+			continue
+		}
+		hit.Detail = map[string]any{"retriever": "vector", "cosine_similarity": hit.Score}
+		out = append(out, hit)
+	}
+	return out, mapError(rows.Err(), op, "cannot search vectors")
+}
+
+// buildVectorSearch renders the nearest-neighbour query.
+//
+// Separated from execution so the plan can be inspected without running the search
+// (see ExplainVectorSearch). AGENTS.md section 39 requires that ordinary semantic search
+// never degrades into a full scan, and the only way to hold a system to that is to look at
+// the plan the database actually chose rather than at the indexes someone meant to create.
+func buildVectorSearch(op string, q domain.VectorQuery) (string, []any, error) {
 	if len(q.Embedding) == 0 {
-		return nil, domain.Errorf(domain.CodeInvalidArgument, op, "a query embedding is required")
+		return "", nil, domain.Errorf(domain.CodeInvalidArgument, op, "a query embedding is required")
 	}
 	if domain.IsZero(q.Scope.WorkspaceID) {
-		return nil, domain.Errorf(domain.CodeInvalidArgument, op, "workspace scope is required")
+		return "", nil, domain.Errorf(domain.CodeInvalidArgument, op, "workspace scope is required")
 	}
 	limit := q.Limit
 	if limit <= 0 || limit > domain.MaxAssertionLimit {
@@ -141,37 +186,7 @@ func (s *Store) SearchVectors(ctx context.Context, q domain.VectorQuery) ([]doma
 		ORDER BY v.embedding <=> $` + strconv.Itoa(probe) + `::vector
 		LIMIT $` + strconv.Itoa(len(args))
 
-	rows, err := s.pool.Query(ctx, sql, args...)
-	if err != nil {
-		return nil, mapError(err, op, "cannot search vectors")
-	}
-	defer rows.Close()
-
-	now := time.Now().UTC()
-	if q.ActiveAt != nil {
-		now = q.ActiveAt.UTC()
-	}
-
-	var out []domain.Hit
-	for rows.Next() {
-		var (
-			hit           domain.Hit
-			decayStartsAt *time.Time
-		)
-		if err := rows.Scan(&hit.Surface, &hit.RecordID, &hit.Score, &decayStartsAt); err != nil {
-			return nil, mapError(err, op, "cannot scan vector hit")
-		}
-		hit.Decay = domain.Lifecycle{DecayStartsAt: decayStartsAt}.
-			DecayWeight(now, domain.DecayHalfLife)
-		// Nearest-neighbour search always returns its k nearest, however far away. Without
-		// a floor, an unrelated question still gets confident-looking answers.
-		if hit.Score < q.MinScore {
-			continue
-		}
-		hit.Detail = map[string]any{"retriever": "vector", "cosine_similarity": hit.Score}
-		out = append(out, hit)
-	}
-	return out, mapError(rows.Err(), op, "cannot search vectors")
+	return sql, args, nil
 }
 
 // UpsertLexical writes text to the lexical projection.
@@ -233,11 +248,31 @@ func (s *Store) UpsertLexical(ctx context.Context, records []domain.ProjectedRec
 func (s *Store) SearchLexical(ctx context.Context, q domain.LexicalQuery) ([]domain.Hit, error) {
 	const op = "ledger.SearchLexical"
 
+	sql, args, err := buildLexicalSearch(op, q)
+	if err != nil {
+		return nil, err
+	}
+
+	rows, err := s.pool.Query(ctx, sql, args...)
+	if err != nil {
+		return nil, mapError(err, op, "cannot search lexically")
+	}
+	defer rows.Close()
+
+	return s.scanLexicalHits(rows, q, op)
+}
+
+// buildLexicalSearch renders the full-text or substring query.
+//
+// Split from execution for the same reason as the vector search: section 39's "no full
+// graph scan for ordinary semantic search" is a claim about query plans, and a claim about
+// plans can only be tested by reading one.
+func buildLexicalSearch(op string, q domain.LexicalQuery) (string, []any, error) {
 	if strings.TrimSpace(q.Text) == "" {
-		return nil, domain.Errorf(domain.CodeInvalidArgument, op, "query text is required")
+		return "", nil, domain.Errorf(domain.CodeInvalidArgument, op, "query text is required")
 	}
 	if domain.IsZero(q.Scope.WorkspaceID) {
-		return nil, domain.Errorf(domain.CodeInvalidArgument, op, "workspace scope is required")
+		return "", nil, domain.Errorf(domain.CodeInvalidArgument, op, "workspace scope is required")
 	}
 	limit := q.Limit
 	if limit <= 0 || limit > domain.MaxAssertionLimit {
@@ -304,12 +339,11 @@ func (s *Store) SearchLexical(ctx context.Context, q domain.LexicalQuery) ([]dom
 		       LIMIT $` + strconv.Itoa(len(args))
 	}
 
-	rows, err := s.pool.Query(ctx, sql, args...)
-	if err != nil {
-		return nil, mapError(err, op, "cannot search lexically")
-	}
-	defer rows.Close()
+	return sql, args, nil
+}
 
+// scanLexicalHits reads the result set.
+func (s *Store) scanLexicalHits(rows pgx.Rows, q domain.LexicalQuery, op string) ([]domain.Hit, error) {
 	mode := "lexical"
 	if q.Exact {
 		mode = "lexical_exact"
@@ -877,4 +911,92 @@ func activeAtOrNil(at *time.Time) any {
 		return nil
 	}
 	return at.UTC()
+}
+
+// ExplainVectorSearch returns the query plan PostgreSQL chose for a nearest-neighbour
+// search, without running it.
+//
+// This exists because AGENTS.md section 39 requires that ordinary semantic search never
+// degrades into a full scan, and that is a property of the plan rather than of the schema.
+// Indexes can exist and go unused — a filter the planner cannot push down, a cast that
+// defeats an operator class, a table small enough today that a scan wins and large enough
+// tomorrow that it does not. Reading the plan is the only way to know.
+func (s *Store) ExplainVectorSearch(ctx context.Context, q domain.VectorQuery,
+	preference PlanPreference) (string, error) {
+	const op = "ledger.ExplainVectorSearch"
+
+	sql, args, err := buildVectorSearch(op, q)
+	if err != nil {
+		return "", err
+	}
+	return s.explain(ctx, op, sql, args, preference)
+}
+
+// PlanPreference selects which question an EXPLAIN is answering.
+type PlanPreference int
+
+const (
+	// PlanAsChosen reports the plan for the data as it stands. On a small table a
+	// sequential scan is often genuinely cheapest, so this answers "what happens today".
+	PlanAsChosen PlanPreference = iota
+	// PlanPreferIndexes reports the plan with sequential scans disabled, answering the
+	// question that does not depend on how much data there happens to be: can this query
+	// use the index built for it at all?
+	//
+	// The distinction matters. An index that is merely unused today because the table is
+	// small is fine; an index the planner cannot apply to this query is a defect that
+	// stays hidden until the table is large enough for it to matter, which is the worst
+	// possible time to find it.
+	PlanPreferIndexes
+)
+
+// ExplainLexicalSearch returns the query plan for a full-text or substring search.
+func (s *Store) ExplainLexicalSearch(ctx context.Context, q domain.LexicalQuery,
+	preference PlanPreference) (string, error) {
+	const op = "ledger.ExplainLexicalSearch"
+
+	sql, args, err := buildLexicalSearch(op, q)
+	if err != nil {
+		return "", err
+	}
+	return s.explain(ctx, op, sql, args, preference)
+}
+
+// explain runs EXPLAIN and joins the plan into one string.
+//
+// Plan only, never ANALYZE: this is asked about a live database, and executing the query a
+// second time to describe it would double the cost of the diagnostic.
+func (s *Store) explain(ctx context.Context, op, sql string, args []any,
+	preference PlanPreference) (string, error) {
+	// A transaction, because PlanPreferIndexes sets a planner flag and SET LOCAL confines
+	// it to this statement. Leaking enable_seqscan onto a pooled connection would change
+	// how every later query on it is planned.
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return "", mapError(err, op, "cannot begin a transaction to explain the query")
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	if preference == PlanPreferIndexes {
+		if _, err := tx.Exec(ctx, "SET LOCAL enable_seqscan = off"); err != nil {
+			return "", mapError(err, op, "cannot ask the planner to prefer indexes")
+		}
+	}
+
+	rows, err := tx.Query(ctx, "EXPLAIN "+sql, args...)
+	if err != nil {
+		return "", mapError(err, op, "cannot explain the query")
+	}
+	defer rows.Close()
+
+	var plan strings.Builder
+	for rows.Next() {
+		var line string
+		if err := rows.Scan(&line); err != nil {
+			return "", mapError(err, op, "cannot read the query plan")
+		}
+		plan.WriteString(line)
+		plan.WriteByte('\n')
+	}
+	return plan.String(), mapError(rows.Err(), op, "cannot read the query plan")
 }

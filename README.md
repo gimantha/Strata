@@ -239,6 +239,17 @@ intended:
 go test ./internal/normalize -update    # then review the diff
 ```
 
+Performance targets are benchmarked separately, because they load a corpus and take minutes:
+
+```bash
+./scripts/benchmark.sh
+```
+
+The invariants that go with them — bounded traversal, bounded context, no full scan for
+semantic search — are ordinary tests and run with everything else. See
+[docs/api/performance.md](docs/api/performance.md) for the current baseline and the
+conditions it was measured under.
+
 ## Layout
 
 ```
@@ -297,4 +308,6 @@ are declared by the services that consume them; implementations live under `stor
   their integrity manifests
 - [docs/api/distributed.md](docs/api/distributed.md) — running a worker fleet, push
   delivery, partition keys, backpressure, and distributed checkpoints
+- [docs/api/performance.md](docs/api/performance.md) — measured targets, the benchmark
+  harness, and the invariants checked on every commit
 - [docs/adr/](docs/adr/) — decisions, alternatives, and trade-offs

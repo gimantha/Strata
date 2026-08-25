@@ -78,7 +78,11 @@ func Available() bool {
 }
 
 // DSN returns a migrated, isolated database for this test and drops it afterwards.
-func DSN(t *testing.T) string {
+//
+// testing.TB rather than *testing.T so benchmarks can use it too: the performance targets
+// in AGENTS.md section 39 have to be measured against a real database for the same reason
+// the integration tests are.
+func DSN(t testing.TB) string {
 	t.Helper()
 
 	resolveBase()
@@ -110,7 +114,7 @@ func DSN(t *testing.T) string {
 }
 
 // Pool returns a connection pool to a migrated, isolated database.
-func Pool(t *testing.T) *pgxpool.Pool {
+func Pool(t testing.TB) *pgxpool.Pool {
 	t.Helper()
 
 	dsn := DSN(t)
@@ -126,14 +130,14 @@ func Pool(t *testing.T) *pgxpool.Pool {
 }
 
 // Store returns a ledger store backed by a migrated, isolated database.
-func Store(t *testing.T) *ledger.Store {
+func Store(t testing.TB) *ledger.Store {
 	t.Helper()
 	return ledger.NewStore(Pool(t))
 }
 
 // Config returns a configuration pointed at a migrated, isolated database, with
 // blob storage in a temporary directory.
-func Config(t *testing.T) config.Config {
+func Config(t testing.TB) config.Config {
 	t.Helper()
 
 	cfg, err := config.LoadFrom(func(key string) string {
@@ -159,7 +163,7 @@ func Config(t *testing.T) config.Config {
 }
 
 // ensureTemplate migrates one template database that every test clones.
-func ensureTemplate(t *testing.T) {
+func ensureTemplate(t testing.TB) {
 	t.Helper()
 
 	templateOnce.Do(func() {
