@@ -178,18 +178,34 @@ func buildVectorSearch(op string, q domain.VectorQuery) (string, []any, error) {
 	probe := len(args)
 	args = append(args, limit)
 
+	// Two sorts, and the nesting is load-bearing.
+	//
+	// The inner ORDER BY is the distance expression alone, because an HNSW index scan can
+	// only satisfy an ordering that matches the indexed expression exactly. Adding a
+	// second sort key there forces PostgreSQL to sort the whole candidate set instead,
+	// which means a sequential scan of every vector in the workspace — measured at 200,000
+	// rows, still a sequential scan, so this is not a small-table effect.
+	//
+	// The outer ORDER BY makes the returned order deterministic. Without it two records at
+	// the same distance come back in whatever order the scan produced, the same query
+	// against unchanged data answers differently on different machines, and a caller
+	// paging through results can see an item twice or never.
+	//
+	// What remains undetermined is which rows sit exactly on the limit boundary when
+	// distances tie there. That is inherent to approximate nearest-neighbour search and is
+	// not worth a full scan to remove.
 	sql := `
-		SELECT v.surface, v.record_id, 1 - (v.embedding <=> $` + strconv.Itoa(probe) + `::vector) AS score,
-		       v.decay_starts_at
-		FROM vector_records v
-		WHERE ` + strings.Join(where, " AND ") + `
-		-- record_id breaks ties. Without it two records at the same distance come back
-		-- in whatever physical order the scan produced, so the same query against
-		-- unchanged data can return a different order on a different machine or after a
-		-- vacuum. Fusion turns that into different scores, and a caller paging through
-		-- results can see an item twice or never.
-		ORDER BY v.embedding <=> $` + strconv.Itoa(probe) + `::vector, v.record_id
-		LIMIT $` + strconv.Itoa(len(args))
+		SELECT ranked.surface, ranked.record_id, ranked.score, ranked.decay_starts_at
+		FROM (
+			SELECT v.surface, v.record_id,
+			       1 - (v.embedding <=> $` + strconv.Itoa(probe) + `::vector) AS score,
+			       v.decay_starts_at
+			FROM vector_records v
+			WHERE ` + strings.Join(where, " AND ") + `
+			ORDER BY v.embedding <=> $` + strconv.Itoa(probe) + `::vector
+			LIMIT $` + strconv.Itoa(len(args)) + `
+		) ranked
+		ORDER BY ranked.score DESC, ranked.record_id`
 
 	return sql, args, nil
 }

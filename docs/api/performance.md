@@ -125,48 +125,59 @@ diagnosing a slow query on a live deployment, not only to tests.
 Checking `pg_indexes` instead would be easier and would prove nothing. Indexes can exist and
 go unused, and that turns out to be exactly what happens here.
 
-## The scoped-search finding
+## The scoped-search finding, resolved
 
-**Every retrieval query filters by workspace, and with that filter present PostgreSQL does
-not use the HNSW or GIN index. It reads every projected record in the workspace and sorts.**
+An earlier version of this document reported that scoped semantic search never used the HNSW
+or GIN index, and listed three candidate fixes. That finding was measured at 500 records and
+was wrong, in an instructive way. The correction is kept here rather than deleted, because
+the mistake is the useful part.
 
-This was found by writing the guard, not by reasoning about the schema, and it is the single
-most useful thing this exercise produced.
+**What is actually true.** A scoped vector search uses the HNSW index from roughly a thousand
+records onward. At 200 records a sequential scan genuinely is cheapest and PostgreSQL is right
+to choose it. The original measurement sat at 500 — close enough to the crossover to look like
+a rule.
 
-What was measured, at 500 projected records with fresh statistics:
+**What made it briefly true anyway.** A deterministic tiebreak was later added to the
+retrievers so that two records at the same distance could not come back in different orders on
+different machines. Written as `ORDER BY embedding <=> $q, record_id`, it made the index
+unusable at *every* size: an HNSW index scan can only satisfy an ordering that matches the
+indexed expression exactly, so a second sort key forces PostgreSQL to sort the whole candidate
+set. Measured at 200,000 records in one workspace — still a sequential scan.
 
-| Query | Plan |
-|---|---|
-| Scoped vector search (what the retriever runs) | `Seq Scan on vector_records` → `Sort` by distance → `Limit` |
-| Scoped lexical search (what the retriever runs) | `Seq Scan on lexical_records` with the tsquery as a `Filter` |
-| Unscoped nearest neighbour, sequential scans off | `Index Scan using vector_records_embedding_idx` |
-| Unscoped full text, sequential scans off | `Bitmap Index Scan on lexical_records_search_idx` |
+**The fix is the shape of the query, not the database.** The distance ordering and the limit
+go in an inner query, where the index can serve them; the deterministic tiebreak goes outside,
+over the twenty rows that survive:
 
-So the indexes are correctly built and their operator classes match — the last two rows
-prove it, and `TestIntegrationProjectionIndexesAreUsable` keeps proving it. The problem is
-the interaction between tenancy and approximate search: neither index contains
-`workspace_id`, so a scoped search has to either post-filter an ANN result or scan the
-scope. At 500 rows the planner correctly judges the scan cheaper.
+```sql
+SELECT * FROM (
+    SELECT ... FROM vector_records v WHERE ...
+    ORDER BY v.embedding <=> $q          -- HNSW can satisfy this
+    LIMIT $k
+) ranked
+ORDER BY ranked.score DESC, ranked.record_id   -- and this makes the order stable
+```
 
-**What is not yet known is whether it switches at production scale.** It may; PostgreSQL's
-cost model is not naive. But "no full graph scan for ordinary semantic search" is a section
-39 requirement, and today, at the scale tested, a full scan of the workspace is exactly what
-happens.
+Neither `hnsw.iterative_scan = relaxed_order` nor `strict_order` helped; both still produced a
+sequential scan. Partitioning and scope-carrying indexes were not needed. This is what the
+argument for measuring before phase 15 was about: a team seeing slow scoped search and no
+index usage could reasonably conclude they needed a dedicated vector database, and the answer
+was eleven lines of SQL.
 
-Three candidate answers, none of them adopted yet because the measurement to choose between
-them has not been taken:
+What remains undetermined is which records sit exactly on the limit boundary when distances
+tie there. That is inherent to approximate nearest-neighbour search and not worth a full scan
+to remove.
 
-- **`hnsw.iterative_scan`** (pgvector 0.8) lets a filtered ANN query keep pulling from the
-  index until the filter is satisfied, which is the feature built for precisely this case.
-- **Partitioning the projections by workspace**, so the scan the planner likes is a scan of
-  one tenant's partition rather than of the table.
-- **Composite or partial indexes** that carry the scope, which trades write cost and index
-  count for read plans.
+### A planner caveat worth knowing
 
-This is also the clearest argument for measuring before starting phase 15. A team that saw
-slow scoped search and no index usage could reasonably conclude it needs a dedicated vector
-database. The evidence says the index is fine and the query shape is the problem, and that
-is a much cheaper thing to fix.
+Whether PostgreSQL *chooses* the index is less stable than whether it *can*. The same 2,000
+records produced an HNSW scan on one run and a sequential scan on another, and 20,000 records
+chose the scan. The cause is that pgvector stores vectors out of line, so the main table looks
+tiny to the planner — a 2,000-row scan is costed at about a hundred pages — and detoasting is
+not costed at all.
+
+That is why the guard below asserts what the query *can* do rather than what the planner picked
+on the day. The way this property breaks is not the planner changing its mind; it is a query
+the index cannot serve, and that is stable at every size.
 
 ### What the guards actually assert
 
@@ -178,17 +189,17 @@ a fixture whose size is the real variable. Instead:
   shape it exists to serve, with sequential scans disabled so the planner has to reveal
   whether an index path exists at all. A changed distance operator, a dropped index, or a
   generated column that stops matching its operator class all fail here.
-- `TestIntegrationScopedSearchPlanIsRecorded` prints the plan the retriever's real query
-  gets, so the known risk stays visible in test output rather than living only in this
-  document.
+- `TestIntegrationScopedSemanticSearchUsesItsIndex` seeds two thousand vectors and asserts
+  that the retriever's own scoped query reaches HNSW. This is the one that would have caught
+  the tiebreak regression: reintroducing it fails this test with the reason and the plan.
 
 ## What is not measured yet
 
 Honest gaps, so nobody reads absence as a passing grade:
 
-- **Scale.** 500 documents is a laptop-sized corpus, and it is the reason the scoped-search
-  finding above is a risk rather than a verdict. Whether the planner reaches for HNSW at a
-  million records is the most valuable measurement nobody has taken.
+- **Scale.** 500 documents is a laptop-sized corpus. Index *usability* is now measured up to
+  200,000 vectors, but end-to-end latency is not: the throughput and p95 figures above are
+  still small-corpus numbers.
 - **Concurrent retrieval.** Ingest is measured under concurrency; queries are not.
 - **A hosted embedding model.** Every figure here uses the local hashing embedder.
 - **Sustained load.** These are short runs, so they say nothing about connection-pool

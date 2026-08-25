@@ -1,12 +1,14 @@
 package benchmarks_test
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
 	"github.com/gimantha/strata/internal/benchmarks"
 	"github.com/gimantha/strata/internal/domain"
 	"github.com/gimantha/strata/internal/store/ledger"
+	"github.com/gimantha/strata/internal/testsupport/pgtest"
 )
 
 // Three of AGENTS.md section 39's items are not speeds. "Bounded graph traversal with hard
@@ -212,50 +214,90 @@ func TestIntegrationProjectionIndexesAreUsable(t *testing.T) {
 	}
 }
 
-// TestIntegrationScopedSearchPlanIsRecorded documents what the retriever's real query
-// actually does today, so the known risk cannot quietly change without anyone noticing.
+// TestIntegrationScopedSemanticSearchUsesItsIndex is AGENTS.md section 39's "no full graph
+// scan for ordinary semantic search", asserted on the query the retriever actually runs.
 //
-// Not an assertion about which plan is correct — at this corpus size scan-and-sort is
-// genuinely cheapest and PostgreSQL is right to choose it. It fails only if the plan stops
-// mentioning the table at all, which would mean this check had silently stopped checking.
-func TestIntegrationScopedSearchPlanIsRecorded(t *testing.T) {
-	d := newDeployment(t, guardCorpus())
-	d.load(t)
+// The earlier version only recorded the plan, because at fixture size a sequential scan
+// genuinely is cheapest and asserting otherwise would have measured the fixture. Measuring
+// settled what to assert instead, and the measurement is worth recording here because it is
+// not what one would guess.
+//
+// Whether the planner *chooses* the index is not stable enough to assert. Over 2,000 rows it
+// picked HNSW on one run and a sequential scan on another; at 20,000 it picked the scan. The
+// cause is that pgvector stores vectors out of line, so the main table looks tiny — a
+// 2,000-row scan is costed at about a hundred pages — and detoasting is not costed at all.
+//
+// What is stable at every size measured is whether the index *can* be used: with sequential
+// scans disabled the planner reaches for HNSW every time. That is also exactly the property
+// worth guarding, because the way this breaks is not the planner changing its mind. A
+// deterministic tiebreak added to the ORDER BY once made the index unusable at every size —
+// verified at two hundred thousand rows, still a sequential scan — and no test noticed,
+// because every fixture in the suite is small enough for a scan to be the right answer.
+func TestIntegrationScopedSemanticSearchUsesItsIndex(t *testing.T) {
+	f := pgtest.NewFixture(t)
 	ctx := t.Context()
 
-	// Fresh statistics, so the plan reflects the data rather than an empty-table estimate.
-	if _, err := d.app.Ledger.Pool().Exec(ctx, "ANALYZE vector_records, lexical_records"); err != nil {
+	// Past the crossover, with room to spare.
+	const vectors = 2000
+	if _, err := f.Store.Pool().Exec(ctx, `
+		INSERT INTO vector_records (id, workspace_id, graph_space_id, surface, record_id,
+		    embedding_model, embedding_version, embedding, status, classification,
+		    memory_kind, content_hash)
+		SELECT gen_random_uuid(), $1, $2, 'chunk', gen_random_uuid(),
+		       'hashing-bow-v1', 1, v.emb, 'active', 'internal', 'semantic', ''
+		FROM generate_series(1, $3) s
+		CROSS JOIN LATERAL (
+		    SELECT array_agg(random())::vector AS emb FROM generate_series(1, 1536)
+		) v`, f.Primary.Workspace.ID, f.Primary.GraphSpace.ID, vectors); err != nil {
+		t.Fatalf("seed vectors: %v", err)
+	}
+	// Without fresh statistics the planner estimates one row and any plan looks cheap.
+	if _, err := f.Store.Pool().Exec(ctx, "ANALYZE vector_records"); err != nil {
 		t.Fatalf("analyze: %v", err)
 	}
 
-	embedding, err := d.app.Embedder.Embed(ctx, []string{"delivery schedules across every region"})
-	if err != nil {
-		t.Fatalf("embed: %v", err)
+	var literal string
+	if err := f.Store.Pool().QueryRow(ctx,
+		`SELECT (SELECT array_agg(random())::vector FROM generate_series(1,1536))::text`).
+		Scan(&literal); err != nil {
+		t.Fatalf("build a query vector: %v", err)
 	}
 
-	vectorPlan, err := d.app.Ledger.ExplainVectorSearch(ctx, domain.VectorQuery{
-		Scope: d.scope, Embedding: embedding[0], Limit: 20,
-	}, ledger.PlanAsChosen)
+	plan, err := f.Store.ExplainVectorSearch(ctx, domain.VectorQuery{
+		Scope:     f.Primary.Scope(),
+		Embedding: parseVectorLiteral(t, literal),
+		Model:     "hashing-bow-v1",
+		Version:   1,
+		Limit:     20,
+	}, ledger.PlanPreferIndexes)
 	if err != nil {
-		t.Fatalf("explain vector search: %v", err)
-	}
-	t.Logf("scoped vector search plan:\n%s", summarize(vectorPlan))
-	if !strings.Contains(vectorPlan, "vector_records") {
-		t.Fatalf("the plan does not mention vector_records; this check has stopped checking:\n%s",
-			vectorPlan)
+		t.Fatalf("explain: %v", err)
 	}
 
-	lexicalPlan, err := d.app.Ledger.ExplainLexicalSearch(ctx, domain.LexicalQuery{
-		Scope: d.scope, Text: "delivery schedules capacity planning", Limit: 20,
-	}, ledger.PlanAsChosen)
-	if err != nil {
-		t.Fatalf("explain lexical search: %v", err)
+	if !strings.Contains(plan, "vector_records_embedding_idx") {
+		t.Fatalf("a scoped semantic search over %d vectors cannot use the HNSW index even "+
+			"with sequential scans disabled, so it cannot use it at any size "+
+			"(AGENTS.md section 39). The usual cause is an ORDER BY the index cannot "+
+			"satisfy: an HNSW scan matches the distance expression alone, so a second sort "+
+			"key there forces a full scan and a sort. Sort deterministically outside the "+
+			"limit instead.\n%s", vectors, summarize(plan))
 	}
-	t.Logf("scoped lexical search plan:\n%s", summarize(lexicalPlan))
-	if !strings.Contains(lexicalPlan, "lexical_records") {
-		t.Fatalf("the plan does not mention lexical_records; this check has stopped checking:\n%s",
-			lexicalPlan)
+}
+
+// parseVectorLiteral turns PostgreSQL's vector text form back into floats.
+func parseVectorLiteral(t *testing.T, literal string) []float32 {
+	t.Helper()
+
+	parts := strings.Split(strings.Trim(literal, "[]"), ",")
+	out := make([]float32, 0, len(parts))
+	for _, part := range parts {
+		var value float32
+		if _, err := fmt.Sscan(part, &value); err != nil {
+			t.Fatalf("parse %q: %v", part, err)
+		}
+		out = append(out, value)
 	}
+	return out
 }
 
 // summarize trims the embedding literal out of a plan, which is otherwise 1536 numbers of

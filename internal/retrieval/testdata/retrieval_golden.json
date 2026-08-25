@@ -29,10 +29,12 @@
     "query": "hybrid / exact part number",
     "labels": [
       "chunk:other-part",
-      "chunk:part"
+      "chunk:part",
+      "entity:Acme Corporation"
     ],
     "scores": [
       0.0557,
+      0.0115,
       0.011
     ],
     "found_by": {
@@ -43,6 +45,9 @@
         "exact",
         "lexical",
         "vector"
+      ],
+      "entity:Acme Corporation": [
+        "graph"
       ]
     }
   },
@@ -97,15 +102,13 @@
       "assertion:Acme Corporation supplies Globex Industries",
       "chunk:supply",
       "chunk:turbine",
-      "entity:Acme Corporation",
       "entity:Globex Industries (organization)"
     ],
     "scores": [
       0.0496,
       0.0275,
       0.0272,
-      0.0246,
-      0.0115
+      0.0246
     ],
     "found_by": {
       "assertion:Acme Corporation supplies Globex Industries": [
@@ -119,9 +122,6 @@
       "chunk:turbine": [
         "lexical",
         "vector"
-      ],
-      "entity:Acme Corporation": [
-        "graph"
       ],
       "entity:Globex Industries (organization)": [
         "entity",
