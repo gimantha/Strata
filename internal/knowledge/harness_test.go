@@ -102,6 +102,62 @@ func (h *harness) ingestEpisode(t *testing.T, content, idempotencyKey string) (d
 	return receipt.SourceEventID, episodes[0].ID, chunks[0].ID
 }
 
+// ingestFrom puts source material in the ledger attributed to a specific source and
+// carrying a position in that source's own ordering.
+//
+// Both matter to section 38's query list: trust is a property of the registered source,
+// and "what changed since version N" is a question about source order.
+func (h *harness) ingestFrom(t *testing.T, source domain.SourceID,
+	content, idempotencyKey, externalID, version string) domain.SourceEventID {
+	t.Helper()
+	ctx := context.Background()
+
+	receipt, err := h.gateway.Accept(ctx, ingest.Request{
+		Scope:          h.scope(),
+		Principal:      h.principal(),
+		SourceID:       source,
+		ExternalID:     externalID,
+		MediaType:      normalize.MediaTypePlain,
+		Payload:        []byte(content),
+		IdempotencyKey: idempotencyKey,
+		SourceVersion:  version,
+	})
+	if err != nil {
+		t.Fatalf("ingest: %v", err)
+	}
+	if _, err := h.runner.Process(ctx, h.scope().WorkspaceID, receipt.SourceEventID, false); err != nil {
+		t.Fatalf("process: %v", err)
+	}
+	return receipt.SourceEventID
+}
+
+// episodeOf returns the first episode of a processed event, for citing as evidence.
+func (h *harness) episodeOf(t *testing.T, eventID domain.SourceEventID) domain.EpisodeID {
+	t.Helper()
+
+	episodes, err := h.fixture.Store.ListEpisodes(context.Background(), h.scope().WorkspaceID, eventID)
+	if err != nil || len(episodes) == 0 {
+		t.Fatalf("expected episodes for the ingested content: %v", err)
+	}
+	return episodes[0].ID
+}
+
+// registerSource adds a source with a given trust level to the primary workspace.
+func (h *harness) registerSource(t *testing.T, name string, trust domain.TrustLevel) domain.SourceID {
+	t.Helper()
+
+	source, err := h.fixture.Store.CreateSource(context.Background(), domain.Source{
+		WorkspaceID: h.scope().WorkspaceID,
+		Kind:        domain.SourceKindDatabase,
+		Name:        name,
+		TrustLevel:  trust,
+	}, h.fixture.Primary.Principal.ID)
+	if err != nil {
+		t.Fatalf("register source %s: %v", name, err)
+	}
+	return source.ID
+}
+
 // assertOne commits a single claim and returns it.
 func (h *harness) assertOne(t *testing.T, eventID domain.SourceEventID, claim knowledge.Claim) domain.Assertion {
 	t.Helper()

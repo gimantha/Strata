@@ -642,3 +642,154 @@ func TestIntegrationResolutionDecisionsAreWorkspaceScoped(t *testing.T) {
 		t.Fatalf("another tenant must not be able to split, got %d: %s", status, body)
 	}
 }
+
+// TestIntegrationQueryFiltersFromSection38 covers the three queries the contract requires
+// and the query surface could not express: which claims were inferred, which came from
+// sufficiently trusted sources, and what has changed since a position in a source's own
+// ordering (AGENTS.md section 38).
+//
+// Over HTTP rather than only through the service, because the section calls these queries
+// the architecture must support, and a filter that exists in Go but not on the wire is not
+// something a consumer can ask.
+func TestIntegrationQueryFiltersFromSection38(t *testing.T) {
+	h := newAPIHarness(t)
+	owner := string(h.fixture.Primary.Principal.ID)
+	ws := string(h.fixture.Primary.Workspace.ID)
+	gs := string(h.fixture.Primary.GraphSpace.ID)
+
+	// A second source, authoritative, so trust can be told apart from the standard-trust
+	// source the fixture provides.
+	status, body := h.do(t, http.MethodPost, "/v1/workspaces/"+ws+"/sources", owner, map[string]any{
+		"name": "system-of-record", "kind": "database", "trust_level": "authoritative",
+	}, nil)
+	if status != http.StatusCreated {
+		t.Fatalf("register source returned %d: %s", status, body)
+	}
+	auditedSource := decode(t, body)["id"].(string)
+
+	// One claim from the standard-trust fixture source, observed.
+	eventID, episodeID := h.ingestForKnowledge(t, "Acme is on the standard plan.", "s38-standard")
+	_, body = h.do(t, http.MethodPost, "/v1/graph-spaces/"+gs+"/assertions", owner, map[string]any{
+		"source_event_id": eventID,
+		"claims": []map[string]any{{
+			"subject":   map[string]any{"name": "Acme", "type": "organization"},
+			"predicate": "plan_tier",
+			"object":    map[string]any{"kind": "symbol", "text": "STANDARD"},
+			"scope_key": "observed",
+			"evidence":  []map[string]any{{"episode_id": episodeID}},
+		}},
+	}, nil)
+	observedID := decode(t, body)["assertions"].([]any)[0].(map[string]any)["id"].(string)
+
+	// One inferred from it, which must carry a derivation naming its input.
+	_, body = h.do(t, http.MethodPost, "/v1/graph-spaces/"+gs+"/assertions", owner, map[string]any{
+		"source_event_id": eventID,
+		"derivation": map[string]any{
+			"method": "rule_inference", "rule_name": "billing_tier", "rule_version": "1",
+			"input_assertion_ids": []string{observedID},
+		},
+		"claims": []map[string]any{{
+			"subject":         map[string]any{"name": "Acme", "type": "organization"},
+			"predicate":       "billing_tier",
+			"object":          map[string]any{"kind": "symbol", "text": "STANDARD"},
+			"provenance_mode": "inferred",
+		}},
+	}, nil)
+	inferredID := decode(t, body)["assertions"].([]any)[0].(map[string]any)["id"].(string)
+
+	// Two claims from the audited source at successive positions in its own ordering.
+	auditedIDs := map[string]string{}
+	for _, version := range []string{"999", "1838"} {
+		status, body = h.do(t, http.MethodPost, "/v1/graph-spaces/"+gs+"/events", owner, map[string]any{
+			"source_id":      auditedSource,
+			"external_id":    "acme-record",
+			"source_version": version,
+			"media_type":     normalize.MediaTypePlain,
+			"content":        "Acme record at version " + version + ".",
+		}, map[string]string{"Idempotency-Key": "s38-audited-" + version})
+		if status != http.StatusAccepted {
+			t.Fatalf("ingest version %s returned %d: %s", version, status, body)
+		}
+		auditedEvent := decode(t, body)["source_event_id"].(string)
+		if _, err := h.runner.Process(t.Context(), h.fixture.Primary.Workspace.ID,
+			domain.SourceEventID(auditedEvent), false); err != nil {
+			t.Fatalf("process version %s: %v", version, err)
+		}
+		episodes, err := h.fixture.Store.ListEpisodes(t.Context(), h.fixture.Primary.Workspace.ID,
+			domain.SourceEventID(auditedEvent))
+		if err != nil || len(episodes) == 0 {
+			t.Fatalf("expected episodes for version %s: %v", version, err)
+		}
+
+		status, body = h.do(t, http.MethodPost, "/v1/graph-spaces/"+gs+"/assertions", owner, map[string]any{
+			"source_event_id": auditedEvent,
+			"claims": []map[string]any{{
+				"subject":   map[string]any{"name": "Acme", "type": "organization"},
+				"predicate": "registered_city",
+				"object":    map[string]any{"kind": "string", "text": "Glasgow"},
+				"scope_key": version,
+				"evidence":  []map[string]any{{"episode_id": string(episodes[0].ID)}},
+			}},
+		}, nil)
+		if status != http.StatusCreated {
+			t.Fatalf("assert for version %s returned %d: %s", version, status, body)
+		}
+		auditedIDs[version] = decode(t, body)["assertions"].([]any)[0].(map[string]any)["id"].(string)
+	}
+
+	ids := func(body []byte) map[string]bool {
+		t.Helper()
+		out := map[string]bool{}
+		for _, entry := range decode(t, body)["assertions"].([]any) {
+			out[entry.(map[string]any)["id"].(string)] = true
+		}
+		return out
+	}
+
+	// "Which assertions were inferred rather than directly observed?"
+	status, body = h.do(t, http.MethodPost, "/v1/graph-spaces/"+gs+"/assertions/query", owner,
+		map[string]any{"provenance_modes": []string{"inferred"}}, nil)
+	if status != http.StatusOK {
+		t.Fatalf("provenance query returned %d: %s", status, body)
+	}
+	got := ids(body)
+	if len(got) != 1 || !got[inferredID] {
+		t.Fatalf("expected only the inferred claim: %s", body)
+	}
+
+	// "Find facts about this entity only from audited sources."
+	_, body = h.do(t, http.MethodPost, "/v1/graph-spaces/"+gs+"/assertions/query", owner,
+		map[string]any{"min_trust_level": "high"}, nil)
+	got = ids(body)
+	if got[observedID] || got[inferredID] {
+		t.Fatalf("claims from a standard-trust source passed an authority floor: %s", body)
+	}
+	for version, id := range auditedIDs {
+		if !got[id] {
+			t.Fatalf("the audited claim at version %s should have passed: %s", version, body)
+		}
+	}
+
+	// "What changed since source version 1837?" — 999 is lexicographically after 1837 and
+	// numerically before it, which is the case that decides whether the cursor is right.
+	_, body = h.do(t, http.MethodPost, "/v1/graph-spaces/"+gs+"/assertions/query", owner,
+		map[string]any{
+			"source_ids":    []string{auditedSource},
+			"changed_since": map[string]any{"version": "1837"},
+		}, nil)
+	got = ids(body)
+	if !got[auditedIDs["1838"]] {
+		t.Fatalf("version 1838 is after the cursor: %s", body)
+	}
+	if got[auditedIDs["999"]] {
+		t.Fatalf("version 999 is before the cursor; the comparison is not numeric: %s", body)
+	}
+
+	// A cursor with no source is refused rather than answered across incomparable
+	// timelines.
+	status, body = h.do(t, http.MethodPost, "/v1/graph-spaces/"+gs+"/assertions/query", owner,
+		map[string]any{"changed_since": map[string]any{"version": "1837"}}, nil)
+	if status != http.StatusBadRequest {
+		t.Fatalf("a sourceless cursor must be refused, got %d: %s", status, body)
+	}
+}

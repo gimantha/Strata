@@ -545,6 +545,27 @@ type AssertionQuery struct {
 	Statuses        []AssertionStatus
 	SourceEventID   SourceEventID
 	MinConfidence   float64
+
+	// ProvenanceModes restricts to claims that came to exist a particular way, which is
+	// how "which of these were inferred rather than observed?" is asked (AGENTS.md
+	// section 38). Without it a reader cannot separate what a source said from what the
+	// system concluded, and the distinction the ledger works to record goes unused.
+	ProvenanceModes []ProvenanceMode
+
+	// SourceIDs restricts to claims that arrived from these sources.
+	SourceIDs []SourceID
+	// MinTrustLevel restricts to claims from sources at least this authoritative — the
+	// "only from audited sources" question. Trust is a property of the registered source
+	// rather than of the claim, so this narrows through the event that produced it.
+	MinTrustLevel TrustLevel
+	// ChangedSince returns claims whose position in a source's own ordering is after
+	// this one: what a downstream consumer has not seen yet.
+	//
+	// Ordering follows the source, never arrival (ADR 0010), so this uses the same
+	// precedence as reconciliation: sequence, then version, then commit time, then
+	// source time. Positions from different sources are not on one timeline, so this
+	// requires exactly one source to be named.
+	ChangedSince *SourcePosition
 	// Classifications restricts to these sensitivity levels. Policy passes the set a
 	// principal is cleared for, so the narrowing happens in the query rather than after
 	// it (AGENTS.md section 22.4).
@@ -600,6 +621,25 @@ func (q AssertionQuery) Normalize() AssertionQuery {
 	return q
 }
 
+// TrustLevelsAtLeast lists the levels that meet a minimum, so a store can express an
+// authority floor as set membership.
+//
+// The ranking lives here rather than in SQL because it is a domain judgement about which
+// sources outrank which, and a second copy of it in a query would be free to disagree.
+func TrustLevelsAtLeast(min TrustLevel) []TrustLevel {
+	floor := min.Rank()
+	if floor <= 0 {
+		return nil
+	}
+	out := make([]TrustLevel, 0, len(trustLevels))
+	for _, level := range trustLevels {
+		if level.Rank() >= floor {
+			out = append(out, level)
+		}
+	}
+	return out
+}
+
 func (q AssertionQuery) Validate() error {
 	const op = "domain.AssertionQuery.Validate"
 
@@ -613,6 +653,29 @@ func (q AssertionQuery) Validate() error {
 	}
 	if q.MinConfidence < 0 || q.MinConfidence > 1 {
 		return Errorf(CodeInvalidArgument, op, "min_confidence must be between 0 and 1")
+	}
+	for _, mode := range q.ProvenanceModes {
+		if _, err := ParseProvenanceMode(string(mode)); err != nil {
+			return err
+		}
+	}
+	if q.MinTrustLevel != "" {
+		if _, err := ParseTrustLevel(string(q.MinTrustLevel)); err != nil {
+			return err
+		}
+	}
+	if q.ChangedSince != nil {
+		// One source, because a sequence from one system says nothing about a sequence
+		// from another; comparing them would invent an order neither source stated.
+		if len(q.SourceIDs) != 1 {
+			return Errorf(CodeInvalidArgument, op,
+				"changed_since requires exactly one source: positions from different "+
+					"sources are not on one timeline")
+		}
+		if !q.ChangedSince.Comparable() {
+			return Errorf(CodeInvalidArgument, op,
+				"changed_since needs a sequence, version, commit time, or source time")
+		}
 	}
 	return nil
 }

@@ -268,6 +268,15 @@ func cmdAsk(ctx context.Context, a *app.App, args []string) error {
 	knownAt := fs.String("known-at", "", "what the system believed at this instant, RFC3339")
 	activeAt := fs.String("active-at", "", "what was active context at this instant, RFC3339")
 	includeSuperseded := fs.Bool("include-superseded", false, "include replaced beliefs")
+	provenanceMode := fs.String("provenance-mode", "",
+		"only claims that came to exist this way: extracted, imported, inferred, derived, user_asserted")
+	source := fs.String("source", "", "only claims from this source id")
+	minTrust := fs.String("min-trust", "",
+		"only claims from sources at least this authoritative: untrusted, low, standard, high, authoritative")
+	changedSince := fs.String("changed-since", "",
+		"only claims after this position in the source's own ordering; requires --source")
+	changedSinceKind := fs.String("changed-since-kind", "version",
+		"what --changed-since names: sequence or version")
 	limit := fs.Int("limit", 50, "maximum results")
 	keyID := fs.String("key-id", "", "act as the principal behind this API key id")
 	if err := fs.Parse(args); err != nil {
@@ -298,6 +307,33 @@ func cmdAsk(ctx context.Context, a *app.App, args []string) error {
 	}
 	if query.ActiveAt, err = parseOptionalTime(*activeAt, "--active-at"); err != nil {
 		return err
+	}
+	if *provenanceMode != "" {
+		mode, err := domain.ParseProvenanceMode(*provenanceMode)
+		if err != nil {
+			return err
+		}
+		query.ProvenanceModes = []domain.ProvenanceMode{mode}
+	}
+	if *source != "" {
+		query.SourceIDs = []domain.SourceID{domain.SourceID(*source)}
+	}
+	if *minTrust != "" {
+		trust, err := domain.ParseTrustLevel(*minTrust)
+		if err != nil {
+			return err
+		}
+		query.MinTrustLevel = trust
+	}
+	if *changedSince != "" {
+		switch *changedSinceKind {
+		case "sequence":
+			query.ChangedSince = &domain.SourcePosition{Sequence: *changedSince}
+		case "version":
+			query.ChangedSince = &domain.SourcePosition{Version: *changedSince}
+		default:
+			return errors.New("--changed-since-kind must be sequence or version")
+		}
 	}
 
 	found, err := a.Knowledge.Query(ctx, query)

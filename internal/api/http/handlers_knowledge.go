@@ -314,6 +314,13 @@ type assertionQueryRequest struct {
 	MemoryKinds     []string `json:"memory_kinds,omitempty"`
 	Statuses        []string `json:"statuses,omitempty"`
 	MinConfidence   float64  `json:"min_confidence,omitempty"`
+	ProvenanceModes []string `json:"provenance_modes,omitempty"`
+
+	SourceIDs     []string `json:"source_ids,omitempty"`
+	MinTrustLevel string   `json:"min_trust_level,omitempty"`
+	// ChangedSince is a cursor in one source's own ordering. It requires exactly one
+	// entry in SourceIDs, since positions from different sources are not comparable.
+	ChangedSince *sourcePositionRequest `json:"changed_since,omitempty"`
 
 	ValidAt      *time.Time  `json:"valid_at,omitempty"`
 	ValidBetween []time.Time `json:"valid_between,omitempty"`
@@ -324,6 +331,14 @@ type assertionQueryRequest struct {
 	IncludeSuperseded bool `json:"include_superseded,omitempty"`
 	Limit             int  `json:"limit,omitempty"`
 	Offset            int  `json:"offset,omitempty"`
+}
+
+// sourcePositionRequest is a position in a source's own sequence.
+type sourcePositionRequest struct {
+	Sequence   string     `json:"sequence,omitempty"`
+	Version    string     `json:"version,omitempty"`
+	CommitTime *time.Time `json:"commit_time,omitempty"`
+	SourceTime *time.Time `json:"source_time,omitempty"`
 }
 
 // handleQueryAssertions answers structural and temporal questions about knowledge.
@@ -372,6 +387,33 @@ func (s *Server) handleQueryAssertions(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		query.Statuses = append(query.Statuses, parsed)
+	}
+	for _, mode := range req.ProvenanceModes {
+		parsed, err := domain.ParseProvenanceMode(mode)
+		if err != nil {
+			s.writeError(w, r, err)
+			return
+		}
+		query.ProvenanceModes = append(query.ProvenanceModes, parsed)
+	}
+	for _, id := range req.SourceIDs {
+		query.SourceIDs = append(query.SourceIDs, domain.SourceID(id))
+	}
+	if req.MinTrustLevel != "" {
+		parsed, err := domain.ParseTrustLevel(req.MinTrustLevel)
+		if err != nil {
+			s.writeError(w, r, err)
+			return
+		}
+		query.MinTrustLevel = parsed
+	}
+	if req.ChangedSince != nil {
+		query.ChangedSince = &domain.SourcePosition{
+			Sequence:   req.ChangedSince.Sequence,
+			Version:    req.ChangedSince.Version,
+			CommitTime: req.ChangedSince.CommitTime,
+			SourceTime: req.ChangedSince.SourceTime,
+		}
 	}
 
 	var err error

@@ -414,6 +414,28 @@ func (s *Store) QueryAssertions(ctx context.Context, q domain.AssertionQuery) ([
 	if q.MinConfidence > 0 {
 		add("confidence >= $%d", q.MinConfidence)
 	}
+	if len(q.ProvenanceModes) > 0 {
+		add("provenance_mode = ANY($%d::text[])", enumStrings(q.ProvenanceModes))
+	}
+
+	// Source identity and trust live on the event that produced the claim, so both narrow
+	// through it. EXISTS rather than a join, because a claim has exactly one source event
+	// and a join would invite duplicate rows the moment that stops being obvious.
+	if len(q.SourceIDs) > 0 {
+		add(`EXISTS (SELECT 1 FROM source_events se
+			WHERE se.id = assertions.source_event_id AND se.source_id = ANY($%d::uuid[]))`,
+			idStrings(q.SourceIDs))
+	}
+	if levels := domain.TrustLevelsAtLeast(q.MinTrustLevel); len(levels) > 0 {
+		add(`EXISTS (SELECT 1 FROM source_events se
+			JOIN sources src ON src.id = se.source_id
+			WHERE se.id = assertions.source_event_id
+			  AND src.trust_level = ANY($%d::text[]))`, enumStrings(levels))
+	}
+	if q.ChangedSince != nil {
+		clause, value := changedSinceClause(*q.ChangedSince)
+		add(clause, value)
+	}
 
 	switch {
 	case q.KnownAt != nil:
@@ -938,4 +960,40 @@ func (s *Store) ReactivateAssertion(ctx context.Context, ws domain.WorkspaceID, 
 		Outcome:      "reactivated",
 	})
 	return assertion, nil
+}
+
+// changedSinceClause renders a source-order cursor as SQL.
+//
+// The precedence mirrors domain.CompareSourcePosition exactly — sequence, then version,
+// then commit time, then source time — because a cursor that ordered claims differently
+// from the reconciler would hand a consumer a "change" the system does not consider newer.
+//
+// Numeric comparison when both sides are integers, lexicographic otherwise: "9" precedes
+// "10" in every source that emits counters and follows it in string order, while LSNs and
+// ULIDs are designed to sort as text. This is the SQL counterpart of
+// domain.compareSequenceStrings, and the two are tested against the same expectations.
+func changedSinceClause(pos domain.SourcePosition) (string, any) {
+	const numeric = `^[0-9]+$`
+
+	// The placeholder is written as an indexed verb so one bound value can be referenced
+	// three times: once to test whether it is numeric, then in each branch.
+	marker := func(column, value string) (string, any) {
+		return fmt.Sprintf(`(assertions.%[1]s <> ''
+			AND CASE
+				WHEN assertions.%[1]s ~ '%[2]s' AND $%%[1]d ~ '%[2]s'
+					THEN assertions.%[1]s::numeric > $%%[1]d::numeric
+				ELSE assertions.%[1]s > $%%[1]d
+			END)`, column, numeric), value
+	}
+
+	switch {
+	case pos.Sequence != "":
+		return marker("source_sequence", pos.Sequence)
+	case pos.Version != "":
+		return marker("source_version", pos.Version)
+	case pos.CommitTime != nil:
+		return `assertions.source_commit_time > $%d`, pos.CommitTime.UTC()
+	default:
+		return `assertions.source_time > $%d`, pos.SourceTime.UTC()
+	}
 }

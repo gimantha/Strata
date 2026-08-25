@@ -172,6 +172,9 @@ POST /v1/graph-spaces/{graph_space_id}/assertions/query   (workspace reader)
 |---|---|
 | `subject_ids`, `predicates`, `object_entity_ids`, `scope_key` | Structural |
 | `memory_kinds`, `statuses`, `min_confidence` | Selection |
+| `provenance_modes` | How a claim came to exist: `extracted`, `imported`, `inferred`, `derived`, `user_asserted` |
+| `source_ids`, `min_trust_level` | Which source it came from, and how authoritative that source is |
+| `changed_since` | A cursor in one source's own ordering |
 | `valid_at` | What held in the world at this instant |
 | `valid_between` | Claims whose validity overlaps a range |
 | `known_at` | What the system believed at this instant, including claims since replaced |
@@ -196,6 +199,37 @@ With `known_at` set, status is not filtered: a claim superseded today was curren
 then, and excluding it would answer the wrong question. Without it, the default is current
 belief - `active` and `disputed`. Disputed claims are included because a contested fact is
 still believed, and hiding it would present uncertainty as settled.
+
+### Provenance, authority, and change
+
+Three filters answer questions about *where a claim came from* rather than what it says.
+
+```bash
+# Which assertions were inferred rather than directly observed?
+-d '{"provenance_modes":["inferred","derived"]}'
+
+# Facts about this entity, only from audited sources.
+-d '{"subject_ids":["..."],"min_trust_level":"high"}'
+
+# What changed since source version 1837?
+-d '{"source_ids":["..."],"changed_since":{"version":"1837"}}'
+```
+
+`min_trust_level` is a floor, not an exact match: it admits every level at or above the one
+named, using the same authority ranking that decides conflicts between sources. Trust is a
+property of the registered source rather than of the claim, so the filter narrows through
+the event that produced it.
+
+`changed_since` takes `sequence`, `version`, `commit_time`, or `source_time`, in that order
+of precedence — the same ordering reconciliation uses, so a cursor never disagrees with the
+system about which claim is newer ([ADR 0010](../adr/0010-source-order-over-arrival-order.md)).
+Integer markers compare numerically, so version 999 precedes 1837 rather than following it
+in string order; LSNs and ULIDs compare lexicographically, which is how those formats are
+designed to sort.
+
+It requires exactly one entry in `source_ids` and is refused otherwise. A sequence from one
+system says nothing about a sequence from another, and answering across them would invent an
+order neither source stated.
 
 Results are capped at 100 by default and 1000 at most; unbounded reads are not offered.
 
@@ -294,6 +328,9 @@ cgctl assert --graph-space $GS --source-event $EV --episode $EP \
 cgctl ask --graph-space $GS --predicate role_at --valid-at 2026-03-25T00:00:00Z
 cgctl ask --graph-space $GS --predicate role_at --valid-at 2026-03-25T00:00:00Z \
     --known-at 2026-04-10T00:00:00Z
+cgctl ask --graph-space $GS --provenance-mode inferred
+cgctl ask --graph-space $GS --subject $ENTITY --min-trust high
+cgctl ask --graph-space $GS --source $SOURCE --changed-since 1837
 cgctl provenance --assertion $ID
 cgctl conflicts --graph-space $GS
 ```
