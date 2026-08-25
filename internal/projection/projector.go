@@ -23,11 +23,12 @@ import (
 	"github.com/gimantha/strata/internal/embedding"
 )
 
-// Names of the projections, as recorded on checkpoints.
+// Names of the projections, as recorded on checkpoints. Defined in the domain so the store
+// and the projector cannot disagree about which checkpoints a rebuild owns.
 const (
-	ProjectionVector  = "vector"
-	ProjectionLexical = "lexical"
-	ProjectionGraph   = "graph"
+	ProjectionVector  = domain.ProjectionVector
+	ProjectionLexical = domain.ProjectionLexical
+	ProjectionGraph   = domain.ProjectionGraph
 )
 
 // Store is the persistence the projector needs, declared by its consumer.

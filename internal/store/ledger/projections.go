@@ -544,8 +544,15 @@ func (s *Store) DeleteProjections(ctx context.Context, ws domain.WorkspaceID) er
 				return mapError(err, op, "cannot delete projection records")
 			}
 		}
+		// Only the checkpoints a rebuild owns. projection_checkpoints is shared: the
+		// consolidation job keeps its cursor in the same table, and clearing the table by
+		// workspace would reset a component that has nothing to do with retrieval. It
+		// would then rescan the whole ledger — idempotent, so not corrupting, but silent
+		// work nobody asked for and nobody could see the cause of.
 		if _, err := tx.Exec(ctx,
-			`DELETE FROM projection_checkpoints WHERE workspace_id = $1`, ws); err != nil {
+			`DELETE FROM projection_checkpoints
+			 WHERE workspace_id = $1 AND projection = ANY($2::text[])`,
+			ws, domain.RetrievalProjections()); err != nil {
 			return mapError(err, op, "cannot delete projection checkpoints")
 		}
 		return nil

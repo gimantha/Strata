@@ -230,6 +230,28 @@ func (q GraphExpandQuery) Normalize() GraphExpandQuery {
 	return q
 }
 
+// Names of the retrieval projections, as recorded on checkpoints.
+//
+// In the domain rather than in the projection package because two things need to agree on
+// them: the projector, which writes them, and the store, which must know exactly which
+// checkpoints a rebuild owns. projection_checkpoints is shared — the consolidation job
+// keeps its cursor there too — so a rebuild that cleared the table by workspace would
+// silently reset a component it has nothing to do with.
+const (
+	ProjectionVector  = "vector"
+	ProjectionLexical = "lexical"
+	ProjectionGraph   = "graph"
+)
+
+// RetrievalProjections lists the projections a rebuild is responsible for.
+//
+// The list is what makes the ownership explicit. A fourth retrieval projection added later
+// belongs here; a checkpoint written by something that is not a retrieval projection does
+// not, and stays untouched by a rebuild.
+func RetrievalProjections() []string {
+	return []string{ProjectionVector, ProjectionLexical, ProjectionGraph}
+}
+
 // ProjectionCheckpoint records how far a projection has consumed the ledger.
 type ProjectionCheckpoint struct {
 	WorkspaceID    WorkspaceID
