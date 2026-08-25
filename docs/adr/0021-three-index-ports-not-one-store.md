@@ -51,9 +51,9 @@ author assumed the incumbent did.
 
 ## Consequences
 
-Three of the five retrieval modes become substitutable: lexical, exact, and vector. Entity
-resolution stays canonical, and graph does not move — see below. That is a smaller claim
-than "the projections are replaceable", and it is the true one.
+Four of the five retrieval modes become substitutable: lexical, exact, vector, and — once
+the seam below is closed — graph. Entity resolution stays canonical, because resolving a
+name to an identity joins `entities` to `entity_aliases` and touches no projection.
 
 A partially configured `index.Set` degrades rather than panics, the way a nil embedder
 already did. A deployment moving one projection should not lose the other two mid-migration,
@@ -75,21 +75,39 @@ The recovery drill iterates the configured indexes rather than deleting known ta
 reports which backend serves each. Otherwise a deployment that had moved its vectors would
 get a green drill proving only that the PostgreSQL half of its derived data is disposable.
 
-## The graph seam, which does not hold
+## The graph seam
 
-`index.Graph` exists and is honest about being incomplete. `ExpandGraph` reads canonical
-`entities` twice: the recursive CTE seeds its roots there, and the final projection joins it
-for each hit's `canonical_name`. With `graph_edges` completely empty it still returns
-depth-0 rows. A backend holding only edges cannot satisfy it.
+`index.Graph` initially could not hold. `ExpandGraph` read canonical `entities` twice — the
+recursive CTE seeded its roots there, and the final projection joined it for each hit's
+`canonical_name` — so a backend holding only edges could not satisfy it. That was recorded
+here as an open seam rather than hidden, and closed in the following commit.
 
-Making it substitutable means returning edge-shaped hits and hydrating names in the
-retriever through one batched canonical read. That changes what `Expand` returns, so it is a
-change of behaviour rather than a change of shape, and it gets its own commit and its own
-test rather than being smuggled into a refactor that claims to change nothing.
+**Traversal now reports identifiers, and the retriever names them** in one batched
+`GetEntities` call. `domain.GraphHit` has no `Name` field: naming an entity is a canonical
+read, and a graph backend that had to perform one would have to hold the entity table to be
+a graph backend at all.
+
+**Roots are no longer returned.** They were only ever discarded by the single caller, and
+dropping them inside the traversal buys the tenancy property that the removed join used to
+provide: a walk seeded with an identifier from another workspace now comes back empty rather
+than echoing that identifier, because edges are scoped and a foreign root can reach nothing.
+Returning even the bare root would tell one tenant that an entity with that id exists in
+another. The filter is applied after the limit, not before, because the limit has always
+counted roots and moving it would quietly widen every traversal.
+
+Hydration introduces one case the join handled silently: an edge pointing at an entity the
+ledger does not have. PostgreSQL cannot produce one — `graph_edges` has foreign keys to
+`entities` with `ON DELETE CASCADE` — but a substituted backend has no such guarantee, and
+holding a stale edge briefly is what an eventually-consistent index does. The retriever drops
+the hit rather than returning a nameless entity.
+
+The change was expected to alter behaviour and did not: the golden is byte-identical, because
+the retriever already discarded depth-0 hits and the hydrated names match what the join
+produced. What changed is the contract, not the output.
 
 The alternative — denormalising `canonical_name` onto `graph_edges` — was rejected. A rename
-or a merge would leave traversal reporting a stale name until reprojection, where today's
-join is fresh by construction.
+or a merge would leave traversal reporting a stale name until reprojection, where the join
+was fresh by construction.
 
 ## Verification
 

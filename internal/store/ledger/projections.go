@@ -453,14 +453,20 @@ func (s *Store) ExpandGraph(ctx context.Context, q domain.GraphExpandQuery) ([]d
 	// looping, and each entity is reported at the shallowest depth it was reached.
 	rows, err := s.pool.Query(ctx, `
 		WITH RECURSIVE walk AS (
-			SELECT e.id AS entity_id,
+			-- Seeded from the ids the caller supplied rather than from the entities
+			-- table. Traversal walks edges; it does not own identities, and a graph
+			-- backend that had to read canonical entities to start would not be a graph
+			-- backend. The caller resolved these roots through a scoped canonical lookup
+			-- already, and hydrating the names afterwards drops anything that is not in
+			-- the workspace, so nothing reaches a caller that a join here would have
+			-- filtered.
+			SELECT root.id AS entity_id,
 			       0 AS depth,
 			       NULL::uuid AS via_assertion,
 			       ''::text AS via_predicate,
 			       NULL::uuid AS from_entity,
-			       ARRAY[e.id] AS path
-			FROM entities e
-			WHERE e.workspace_id = $1 AND e.id = ANY($2::uuid[])
+			       ARRAY[root.id] AS path
+			FROM unnest($2::uuid[]) AS root(id)
 
 			UNION ALL
 
@@ -499,14 +505,28 @@ func (s *Store) ExpandGraph(ctx context.Context, q domain.GraphExpandQuery) ([]d
 			WHERE w.depth < $7
 			  AND NOT next.entity_id = ANY(w.path)
 		)
-		SELECT DISTINCT ON (walk.entity_id)
-		       walk.entity_id, e.canonical_name, walk.depth,
-		       coalesce(walk.via_assertion::text, ''), walk.via_predicate,
-		       coalesce(walk.from_entity::text, '')
-		FROM walk
-		JOIN entities e ON e.id = walk.entity_id
-		ORDER BY walk.entity_id, walk.depth
-		LIMIT $8`,
+		SELECT reached.entity_id, reached.depth, reached.via_assertion,
+		       reached.via_predicate, reached.from_entity
+		FROM (
+			SELECT DISTINCT ON (walk.entity_id)
+			       walk.entity_id, walk.depth,
+			       coalesce(walk.via_assertion::text, '') AS via_assertion,
+			       walk.via_predicate,
+			       coalesce(walk.from_entity::text, '') AS from_entity
+			FROM walk
+			ORDER BY walk.entity_id, walk.depth
+			LIMIT $8
+		) reached
+		-- Roots are dropped rather than reported. They are already candidates from
+		-- whichever retriever found them, so the only caller discarded them anyway, and
+		-- dropping them here means a walk seeded with an id from another workspace
+		-- returns nothing at all: its edges are filtered by workspace, so it can reach
+		-- nothing, and it is no longer echoed back as a hit. Tenancy stays enforced by
+		-- the traversal rather than by whoever reads its results.
+		--
+		-- Filtered after the limit, not before, because the limit has always counted
+		-- roots. Moving it would quietly widen every traversal.
+		WHERE reached.depth > 0`,
 		q.Scope.WorkspaceID, idStrings(q.Roots), nullableString(q.Scope.GraphSpaceID),
 		statuses, predicates, validAt, q.Depth, q.Limit,
 		policyClassifications(q.Policy), orNilIDs(q.Policy.AllowedSources),
@@ -524,7 +544,7 @@ func (s *Store) ExpandGraph(ctx context.Context, q domain.GraphExpandQuery) ([]d
 			viaAssertion string
 			fromEntity   string
 		)
-		if err := rows.Scan(&hit.EntityID, &hit.Name, &hit.Depth, &viaAssertion,
+		if err := rows.Scan(&hit.EntityID, &hit.Depth, &viaAssertion,
 			&hit.ViaPredicate, &fromEntity); err != nil {
 			return nil, mapError(err, op, "cannot scan graph hit")
 		}

@@ -201,9 +201,14 @@ const MaxGraphDepth = 5
 const DefaultGraphDepth = 2
 
 // GraphHit is one entity reached by expansion.
+// GraphHit is one entity reached by traversal.
+//
+// No name. Traversal walks edges and reports identifiers; resolving an identifier to a
+// canonical name is a canonical read, and putting it here would mean a graph backend had to
+// hold the entity table to be a graph backend
+// (ADR 0021, "the graph seam"). The retriever hydrates names in one batched lookup.
 type GraphHit struct {
 	EntityID EntityID
-	Name     string
 	// Depth is how many hops from the nearest root.
 	Depth int
 	// ViaAssertion is the claim that produced the last edge walked, so a path can be

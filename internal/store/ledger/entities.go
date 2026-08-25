@@ -267,3 +267,37 @@ func prefixColumns(alias, columns string) string {
 	flush()
 	return string(out)
 }
+
+// GetEntities resolves several identities at once.
+//
+// Batched because the alternative is a lookup per graph hit, and a traversal returning fifty
+// entities would then cost fifty round trips to name them. Scoped to a workspace, which is
+// also what makes it safe for the graph port to seed a walk from caller-supplied ids: an id
+// belonging to another tenant resolves to nothing here and is dropped before it reaches a
+// caller (ADR 0021).
+func (s *Store) GetEntities(ctx context.Context, ws domain.WorkspaceID,
+	ids []domain.EntityID) (map[domain.EntityID]domain.Entity, error) {
+	const op = "ledger.GetEntities"
+
+	if len(ids) == 0 {
+		return map[domain.EntityID]domain.Entity{}, nil
+	}
+
+	rows, err := s.pool.Query(ctx,
+		`SELECT `+entityColumns+` FROM entities
+		 WHERE workspace_id = $1 AND id = ANY($2::uuid[])`, ws, idStrings(ids))
+	if err != nil {
+		return nil, mapError(err, op, "cannot load entities")
+	}
+	defer rows.Close()
+
+	out := make(map[domain.EntityID]domain.Entity, len(ids))
+	for rows.Next() {
+		entity, err := scanEntity(rowAdapter{rows}, op)
+		if err != nil {
+			return nil, err
+		}
+		out[entity.ID] = entity
+	}
+	return out, mapError(rows.Err(), op, "cannot load entities")
+}

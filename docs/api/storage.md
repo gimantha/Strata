@@ -11,7 +11,7 @@ Which storage each concern uses, what can be swapped, and how a swap is proven s
 | Raw archive | `blob.Store` | filesystem, S3-compatible | `CG_BLOB_BACKEND` |
 | Vector projection | `index.Vectors` | pgvector (HNSW) | `index.Set` |
 | Lexical projection | `index.Lexical` | PostgreSQL `tsvector` + pg_trgm | `index.Set` |
-| Graph projection | `index.Graph` | PostgreSQL `graph_edges` | `index.Set`, but see below |
+| Graph projection | `index.Graph` | PostgreSQL `graph_edges` | `index.Set` |
 
 The ledger is deliberately not swappable. Multi-temporal reconciliation, supersession, and
 the transactional outbox all depend on one database committing them together
@@ -122,19 +122,21 @@ only by the newcomer encodes whatever its author assumed the incumbent did.
 
 ### What is substitutable, and what is not
 
-Three of the five retrieval modes: **lexical**, **exact**, and **vector**. `SearchVectors`
-and `SearchLexical` are single-table queries that join nothing canonical, which is what makes
-them portable.
+Four of the five retrieval modes: **lexical**, **exact**, **vector**, and **graph**.
+`SearchVectors` and `SearchLexical` are single-table queries joining nothing canonical, and
+`Expand` reports identifiers only — the retriever names them in one batched canonical read,
+so a graph backend needs to hold nothing but edges.
 
 **Entity resolution is not.** `FindEntitiesByName` joins `entities` to `entity_aliases` —
 canonical tables — so a name-to-identity lookup stays on the ledger however the indexes are
 configured. It is on `retrieval.Ledger`, not on any index port.
 
-**Graph traversal is not, yet.** `index.Graph` exists, and its `Expand` is documented as
-incomplete: the PostgreSQL implementation seeds its roots from the canonical `entities` table
-and joins it again for each hit's canonical name. With `graph_edges` empty it still returns
-depth-0 rows. Making it substitutable means moving name hydration into the retriever, which
-changes what `Expand` returns and is therefore a behaviour change rather than a refactor.
+Two consequences of traversal reporting identifiers, both deliberate. A walk seeded with an
+identifier from another workspace returns nothing rather than echoing it back, since edges
+are scoped and a foreign root can reach nothing — the tenancy check the removed canonical
+join used to provide. And an edge pointing at an entity the ledger no longer has is dropped
+during hydration, which PostgreSQL's foreign keys make impossible but an eventually-consistent
+backend does not.
 
 ## What phase 15 has not built
 

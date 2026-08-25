@@ -31,6 +31,9 @@ type TraceSink interface {
 // of the five retrieval modes are substitutable; this is where the other two live.
 type Ledger interface {
 	FindEntitiesByName(ctx context.Context, scope domain.Scope, name string) ([]domain.Entity, error)
+	// GetEntities names the identities a graph traversal reached. Batched, because the
+	// alternative is one lookup per hit.
+	GetEntities(ctx context.Context, ws domain.WorkspaceID, ids []domain.EntityID) (map[domain.EntityID]domain.Entity, error)
 }
 
 // Retriever runs the planned candidate generators and fuses their results.
@@ -290,12 +293,32 @@ func (r *Retriever) graph(ctx context.Context, req domain.QueryRequest, seeds []
 		return nil, err
 	}
 
+	// Name the entities the walk reached. One batched canonical read, because traversal
+	// reports identifiers and only the ledger knows what they are called. Doing it here
+	// rather than inside the index is what lets a graph backend hold nothing but edges.
+	reached := make([]domain.EntityID, 0, len(hits))
+	for _, hit := range hits {
+		reached = append(reached, hit.EntityID)
+	}
+	names, err := r.ledger.GetEntities(ctx, req.Scope.WorkspaceID, reached)
+	if err != nil {
+		return nil, err
+	}
+
 	out := make([]candidate, 0, len(hits))
 	rank := 0
 	for _, hit := range hits {
-		// The seeds themselves are returned at depth zero. They are already candidates
-		// from whichever retriever found them, so re-adding them would double-count.
-		if hit.Depth == 0 {
+		// An edge can point at an entity the ledger does not have. Not with PostgreSQL,
+		// where graph_edges carries foreign keys to entities with ON DELETE CASCADE — but
+		// a substituted backend has no such guarantee, and holding a stale edge for a
+		// while is exactly what an eventually-consistent index does. Dropping the hit
+		// keeps a nameless result off the page and a citation from pointing at nothing.
+		//
+		// The scoped lookup means this also drops anything outside the workspace, which
+		// is the second line of the tenancy defence: the traversal already refuses a
+		// foreign root, and nothing it did return could be named here anyway.
+		entity, known := names[hit.EntityID]
+		if !known {
 			continue
 		}
 		rank++
@@ -306,7 +329,7 @@ func (r *Retriever) graph(ctx context.Context, req domain.QueryRequest, seeds []
 			hit: domain.Hit{
 				Surface:  domain.SurfaceEntity,
 				RecordID: string(hit.EntityID),
-				Content:  hit.Name,
+				Content:  entity.CanonicalName,
 				Detail:   map[string]any{"retriever": "graph", "depth": hit.Depth},
 			},
 			path: &domain.GraphPath{

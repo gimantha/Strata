@@ -99,12 +99,15 @@ type Graph interface {
 	// Expand walks outward from the root entities named in the query, to the depth and
 	// limit it sets, both of which are hard ceilings (AGENTS.md section 39).
 	//
-	// The PostgreSQL implementation joins the canonical entities table for the root rows
-	// and for each hit's canonical name. That join is why this port is not yet substitutable
-	// on its own, and it is recorded rather than hidden: a backend holding only edges cannot
-	// currently satisfy it. Making it substitutable means moving name hydration into the
-	// retriever, which changes what Expand returns and is therefore a change of behaviour
-	// rather than a change of shape.
+	// Returns identifiers, never names. Naming an entity is a canonical read, and a graph
+	// backend that had to perform one would have to hold the entity table to be a graph
+	// backend at all. The caller resolves names itself, in one batched lookup.
+	//
+	// Roots are not returned. Only entities reached by at least one edge appear, which
+	// also means a walk seeded with an identifier from another workspace comes back empty
+	// rather than echoing that identifier: edges are scoped, so a foreign root can reach
+	// nothing. Tenancy is the port's obligation, enforced by the traversal rather than by
+	// whoever reads its results.
 	Expand(ctx context.Context, q domain.GraphExpandQuery) ([]domain.GraphHit, error)
 
 	Purge(ctx context.Context, ws domain.WorkspaceID) error

@@ -171,10 +171,14 @@ func TestIntegrationOneWorkspaceCannotReachAnothersKnowledge(t *testing.T) {
 		if err != nil {
 			t.Fatalf("expand: %v", err)
 		}
-		for _, hit := range hits {
-			if strings.Contains(hit.Name, "Marrowgate") || strings.Contains(hit.Name, "Ferrisport") {
-				t.Fatalf("graph expansion crossed a workspace: %s", hit.Name)
-			}
+		// Nothing at all. Traversal reports identifiers rather than names now, so the
+		// check is on the identifiers: a root from another workspace can reach nothing,
+		// because edges are scoped, and it is not echoed back either. A walk that
+		// returned even the foreign root would be handing one tenant a fact about
+		// another's graph — that an entity with that id exists.
+		if len(hits) != 0 {
+			t.Fatalf("graph expansion from another workspace's root returned %d hit(s)",
+				len(hits))
 		}
 	})
 

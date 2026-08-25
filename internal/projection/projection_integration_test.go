@@ -231,7 +231,7 @@ func TestIntegrationGraphExpansionWalksBothDirections(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expand: %v", err)
 	}
-	names := namesOf(hits)
+	names := h.namesOf(t, hits)
 	if !contains(names, "Globex") {
 		t.Fatalf("one hop should reach Globex, got %v", names)
 	}
@@ -246,22 +246,22 @@ func TestIntegrationGraphExpansionWalksBothDirections(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expand: %v", err)
 	}
-	names = namesOf(hits)
+	names = h.namesOf(t, hits)
 	if !contains(names, "Initech") {
 		t.Fatalf("two hops should reach Initech, got %v", names)
 	}
 	for _, hit := range hits {
 		if hit.Depth > 0 && domain.IsZero(hit.ViaAssertion) {
-			t.Fatalf("%s was reached without recording which claim connected it", hit.Name)
+			t.Fatalf("%s was reached without recording which claim connected it", hit.EntityID)
 		}
 	}
 
 	// Traversal follows edges in reverse too: "who supplies Initech" is the same graph
 	// seen from the other end.
 	var initech domain.EntityID
-	for _, hit := range hits {
-		if hit.Name == "Initech" {
-			initech = hit.EntityID
+	for i, name := range h.namesOf(t, hits) {
+		if name == "Initech" {
+			initech = hits[i].EntityID
 		}
 	}
 	hits, err = h.fixture.Store.ExpandGraph(ctx, domain.GraphExpandQuery{
@@ -270,8 +270,8 @@ func TestIntegrationGraphExpansionWalksBothDirections(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expand: %v", err)
 	}
-	if !contains(namesOf(hits), "Acme") {
-		t.Fatalf("reverse traversal should reach Acme, got %v", namesOf(hits))
+	if reverse := h.namesOf(t, hits); !contains(reverse, "Acme") {
+		t.Fatalf("reverse traversal should reach Acme, got %v", reverse)
 	}
 }
 
@@ -311,7 +311,7 @@ func TestIntegrationGraphExpansionIsBounded(t *testing.T) {
 	}
 	for _, hit := range hits {
 		if hit.Depth > domain.MaxGraphDepth {
-			t.Fatalf("%s was returned at depth %d, past the ceiling", hit.Name, hit.Depth)
+			t.Fatalf("%s was returned at depth %d, past the ceiling", hit.EntityID, hit.Depth)
 		}
 	}
 
@@ -322,7 +322,7 @@ func TestIntegrationGraphExpansionIsBounded(t *testing.T) {
 	seen := map[domain.EntityID]bool{}
 	for _, hit := range hits {
 		if seen[hit.EntityID] {
-			t.Fatalf("%s was returned twice; the walk is not deduplicating", hit.Name)
+			t.Fatalf("%s was returned twice; the walk is not deduplicating", hit.EntityID)
 		}
 		seen[hit.EntityID] = true
 	}
@@ -721,10 +721,27 @@ func equalResults(a, b []string) bool {
 	return true
 }
 
-func namesOf(hits []domain.GraphHit) []string {
+// namesOf resolves traversal results to canonical names.
+//
+// Through the ledger, because traversal reports identifiers now: naming an entity is a
+// canonical read, and the graph index no longer performs one (ADR 0021). This mirrors what
+// the retriever does with the same results.
+func (h *harness) namesOf(t *testing.T, hits []domain.GraphHit) []string {
+	t.Helper()
+
+	ids := make([]domain.EntityID, 0, len(hits))
+	for _, hit := range hits {
+		ids = append(ids, hit.EntityID)
+	}
+	entities, err := h.fixture.Store.GetEntities(context.Background(),
+		h.scope().WorkspaceID, ids)
+	if err != nil {
+		t.Fatalf("resolve entity names: %v", err)
+	}
+
 	out := make([]string, 0, len(hits))
 	for _, hit := range hits {
-		out = append(out, hit.Name)
+		out = append(out, entities[hit.EntityID].CanonicalName)
 	}
 	return out
 }
