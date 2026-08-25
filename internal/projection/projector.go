@@ -21,6 +21,7 @@ import (
 
 	"github.com/gimantha/strata/internal/domain"
 	"github.com/gimantha/strata/internal/embedding"
+	"github.com/gimantha/strata/internal/store/index"
 )
 
 // Names of the projections, as recorded on checkpoints. Defined in the domain so the store
@@ -31,33 +32,41 @@ const (
 	ProjectionGraph   = domain.ProjectionGraph
 )
 
-// Store is the persistence the projector needs, declared by its consumer.
-type Store interface {
+// Ledger is the canonical material the projector reads, declared by its consumer.
+//
+// Reads only. The projector never writes canonical records — it derives from them — and an
+// interface that could would make the direction of the dependency arguable.
+type Ledger interface {
 	GetSourceEvent(ctx context.Context, ws domain.WorkspaceID, id domain.SourceEventID) (domain.SourceEvent, error)
 	ListSourceEventIDsAfter(ctx context.Context, ws domain.WorkspaceID, after *time.Time, afterID domain.SourceEventID, limit int) ([]domain.SourceEvent, error)
 	ListChunks(ctx context.Context, ws domain.WorkspaceID, eventID domain.SourceEventID) ([]domain.Chunk, error)
 	ListEntities(ctx context.Context, scope domain.Scope, entityType string, limit int) ([]domain.Entity, error)
 	GetEntity(ctx context.Context, ws domain.WorkspaceID, id domain.EntityID) (domain.Entity, error)
 	QueryAssertions(ctx context.Context, q domain.AssertionQuery) ([]domain.Assertion, error)
+}
 
-	UpsertVectors(ctx context.Context, records []domain.VectorRecord) error
-	RefreshVectorMetadata(ctx context.Context, model string, version int, records []domain.ProjectedRecord) error
-	UpsertLexical(ctx context.Context, records []domain.ProjectedRecord) error
-	UpsertGraphEdges(ctx context.Context, edges []domain.GraphEdge) error
-	ExistingVectorHashes(ctx context.Context, ws domain.WorkspaceID, model string, version int, surface domain.Surface, recordIDs []string) (map[string]string, error)
-
-	DeleteProjections(ctx context.Context, ws domain.WorkspaceID) error
+// Checkpoints records how far each projection has consumed the ledger.
+//
+// Its own port, and deliberately not per index. The high-water-mark rules — a position only
+// moves forward, counts accumulate unless a rebuild resets them — are one piece of
+// bookkeeping about the ledger, not index data, and making every backend reimplement them
+// would be asking each to get the same subtlety right independently. It is also not on
+// Ledger, which reads and does not write.
+type Checkpoints interface {
 	SaveCheckpoint(ctx context.Context, checkpoint domain.ProjectionCheckpoint) error
+	DeleteCheckpoints(ctx context.Context, ws domain.WorkspaceID, names []string) error
 }
 
 // Projector writes canonical records into the retrieval projections.
 type Projector struct {
-	store    Store
-	embedder embedding.Embedder
-	workerID string
-	now      func() time.Time
-	logger   *slog.Logger
-	tracer   trace.Tracer
+	ledger      Ledger
+	checkpoints Checkpoints
+	indexes     index.Set
+	embedder    embedding.Embedder
+	workerID    string
+	now         func() time.Time
+	logger      *slog.Logger
+	tracer      trace.Tracer
 }
 
 // Options configures the projector.
@@ -71,7 +80,8 @@ type Options struct {
 // New builds a projector. The embedder may be nil, in which case the lexical and graph
 // projections are still maintained: text search and traversal do not need a model, and a
 // deployment without one should not lose them.
-func New(store Store, embedder embedding.Embedder, opts Options, logger *slog.Logger, tracer trace.Tracer) *Projector {
+func New(ledger Ledger, checkpoints Checkpoints, indexes index.Set, embedder embedding.Embedder,
+	opts Options, logger *slog.Logger, tracer trace.Tracer) *Projector {
 	now := opts.Now
 	if now == nil {
 		now = func() time.Time { return time.Now().UTC() }
@@ -88,7 +98,8 @@ func New(store Store, embedder embedding.Embedder, opts Options, logger *slog.Lo
 		workerID = host + "/" + strconv.Itoa(os.Getpid())
 	}
 	return &Projector{
-		store: store, embedder: embedder, workerID: workerID,
+		ledger: ledger, checkpoints: checkpoints, indexes: indexes,
+		embedder: embedder, workerID: workerID,
 		now: now, logger: logger, tracer: tracer,
 	}
 }
@@ -145,7 +156,7 @@ func (p *Projector) ProjectEvent(ctx context.Context, scope domain.Scope, eventI
 // and indexing both would return the same passage twice under different surfaces, which
 // fusion in phase 7 would then have to undo.
 func (p *Projector) projectChunks(ctx context.Context, scope domain.Scope, eventID domain.SourceEventID) (Stats, error) {
-	chunks, err := p.store.ListChunks(ctx, scope.WorkspaceID, eventID)
+	chunks, err := p.ledger.ListChunks(ctx, scope.WorkspaceID, eventID)
 	if err != nil {
 		return Stats{}, err
 	}
@@ -157,7 +168,7 @@ func (p *Projector) projectChunks(ctx context.Context, scope domain.Scope, event
 	// per chunk. Without it a policy restricting a principal to certain sources could not
 	// filter passages, only claims.
 	var source domain.SourceID
-	if event, err := p.store.GetSourceEvent(ctx, scope.WorkspaceID, eventID); err == nil {
+	if event, err := p.ledger.GetSourceEvent(ctx, scope.WorkspaceID, eventID); err == nil {
 		source = event.SourceID
 	}
 
@@ -185,7 +196,7 @@ func (p *Projector) projectChunks(ctx context.Context, scope domain.Scope, event
 // "Acme SUPPLIES industrial fasteners" is searchable in a way that a row of identifiers is
 // not.
 func (p *Projector) projectAssertions(ctx context.Context, scope domain.Scope, eventID domain.SourceEventID) (Stats, error) {
-	assertions, err := p.store.QueryAssertions(ctx, domain.AssertionQuery{
+	assertions, err := p.ledger.QueryAssertions(ctx, domain.AssertionQuery{
 		Scope:         scope,
 		SourceEventID: eventID,
 		// Superseded and retracted claims are projected too: retrieval filters by status
@@ -220,7 +231,7 @@ func (p *Projector) projectAssertions(ctx context.Context, scope domain.Scope, e
 		if source, ok := sourceByEvent[id]; ok {
 			return source
 		}
-		event, err := p.store.GetSourceEvent(ctx, scope.WorkspaceID, id)
+		event, err := p.ledger.GetSourceEvent(ctx, scope.WorkspaceID, id)
 		if err != nil {
 			sourceByEvent[id] = ""
 			return ""
@@ -235,7 +246,7 @@ func (p *Projector) projectAssertions(ctx context.Context, scope domain.Scope, e
 		if name, ok := names[id]; ok {
 			return name
 		}
-		entity, err := p.store.GetEntity(ctx, scope.WorkspaceID, id)
+		entity, err := p.ledger.GetEntity(ctx, scope.WorkspaceID, id)
 		if err != nil {
 			names[id] = string(id)
 			return names[id]
@@ -312,8 +323,8 @@ func (p *Projector) projectAssertions(ctx context.Context, scope domain.Scope, e
 		return Stats{}, err
 	}
 
-	if len(edges) > 0 {
-		if err := p.store.UpsertGraphEdges(ctx, edges); err != nil {
+	if len(edges) > 0 && p.indexes.Graph != nil {
+		if err := p.indexes.Graph.UpsertEdges(ctx, edges); err != nil {
 			return Stats{}, err
 		}
 		stats.Edges = len(edges)
@@ -326,7 +337,7 @@ func (p *Projector) projectAssertions(ctx context.Context, scope domain.Scope, e
 // This is what makes an exact-identifier lookup work: a question naming an entity should
 // reach that entity directly rather than through whichever passage happens to mention it.
 func (p *Projector) ProjectEntities(ctx context.Context, scope domain.Scope) (Stats, error) {
-	entities, err := p.store.ListEntities(ctx, scope, "", domain.MaxAssertionLimit)
+	entities, err := p.ledger.ListEntities(ctx, scope, "", domain.MaxAssertionLimit)
 	if err != nil {
 		return Stats{}, err
 	}
@@ -360,12 +371,18 @@ func (p *Projector) write(ctx context.Context, scope domain.Scope, records []dom
 		return Stats{}, nil
 	}
 
-	if err := p.store.UpsertLexical(ctx, records); err != nil {
-		return Stats{}, err
+	var stats Stats
+	if p.indexes.Lexical != nil {
+		if err := p.indexes.Lexical.Upsert(ctx, records); err != nil {
+			return Stats{}, err
+		}
+		stats.Lexical = len(records)
 	}
-	stats := Stats{Lexical: len(records)}
 
-	if p.embedder == nil {
+	// A missing index is handled the same way as a missing embedder: the projections that
+	// are configured keep working. A deployment moving one projection elsewhere should not
+	// lose the other two while it does so.
+	if p.embedder == nil || p.indexes.Vectors == nil {
 		return stats, nil
 	}
 
@@ -374,7 +391,7 @@ func (p *Projector) write(ctx context.Context, scope domain.Scope, records []dom
 		return Stats{}, err
 	}
 	if len(vectors) > 0 {
-		if err := p.store.UpsertVectors(ctx, vectors); err != nil {
+		if err := p.indexes.Vectors.Upsert(ctx, vectors); err != nil {
 			return Stats{}, err
 		}
 	}
@@ -383,7 +400,7 @@ func (p *Projector) write(ctx context.Context, scope domain.Scope, records []dom
 	// deactivated, expired, or reclassified keeps its old standing in the vector index
 	// while the lexical index — which has no such skip — moves on.
 	if len(unchanged) > 0 {
-		if err := p.store.RefreshVectorMetadata(ctx,
+		if err := p.indexes.Vectors.RefreshMetadata(ctx,
 			p.embedder.Model(), p.embedder.Version(), unchanged); err != nil {
 			return Stats{}, err
 		}
@@ -410,7 +427,7 @@ func (p *Projector) embed(ctx context.Context, scope domain.Scope,
 		ids = append(ids, record.RecordID)
 	}
 
-	existing, err := p.store.ExistingVectorHashes(ctx, scope.WorkspaceID,
+	existing, err := p.indexes.Vectors.ExistingHashes(ctx, scope.WorkspaceID,
 		p.embedder.Model(), p.embedder.Version(), surface, ids)
 	if err != nil {
 		return nil, nil, err
@@ -481,7 +498,18 @@ func (p *Projector) Rebuild(ctx context.Context, ws domain.WorkspaceID) (Stats, 
 	defer span.End()
 
 	started := p.now()
-	if err := p.store.DeleteProjections(ctx, ws); err != nil {
+
+	// Checkpoints first, then the indexes. The ordering was hidden inside a single
+	// transaction before the projections became separate ports, and the choice it was
+	// hiding matters: a checkpoint left standing over an emptied index claims work that
+	// is no longer there, while a cleared checkpoint over a populated index only causes a
+	// replay, and every write below is an idempotent upsert. Of the two ways a partial
+	// failure can leave things, this picks the one that repeats work over the one that
+	// skips it.
+	if err := p.checkpoints.DeleteCheckpoints(ctx, ws, domain.RetrievalProjections()); err != nil {
+		return Stats{}, err
+	}
+	if err := p.indexes.Purge(ctx, ws); err != nil {
 		return Stats{}, err
 	}
 
@@ -493,7 +521,7 @@ func (p *Projector) Rebuild(ctx context.Context, ws domain.WorkspaceID) (Stats, 
 	)
 
 	for {
-		events, err := p.store.ListSourceEventIDsAfter(ctx, ws, cursor, cursorID, 200)
+		events, err := p.ledger.ListSourceEventIDsAfter(ctx, ws, cursor, cursorID, 200)
 		if err != nil {
 			return Stats{}, err
 		}
@@ -565,7 +593,7 @@ func (p *Projector) saveCheckpoints(ctx context.Context, ws domain.WorkspaceID, 
 		ProjectionGraph:   stats.Edges,
 	}
 	for name, count := range counts {
-		if err := p.store.SaveCheckpoint(ctx, domain.ProjectionCheckpoint{
+		if err := p.checkpoints.SaveCheckpoint(ctx, domain.ProjectionCheckpoint{
 			WorkspaceID:      ws,
 			Projection:       name,
 			LastRecordedAt:   cursor,

@@ -40,7 +40,7 @@ func newHarness(t *testing.T) *harness {
 	}
 
 	embedder := hashing.New()
-	projector := projection.New(f.Store, embedder, projection.Options{}, nil, nil)
+	projector := projection.New(f.Store, f.Store, f.Store.Indexes(), embedder, projection.Options{}, nil, nil)
 	stages := pipeline.DefaultStages(f.Store, blobs, pipeline.StageConfig{
 		ChunkMaxTokens: 256, ChunkOverlapTokens: 16,
 		Tokenizer: normalize.DefaultTokenizer, Projector: projector,
@@ -53,7 +53,7 @@ func newHarness(t *testing.T) *harness {
 		service:   knowledge.New(f.Store, knowledge.Options{}, nil, nil),
 		ontology:  ontology.New(f.Store, nil),
 		projector: projector,
-		retriever: retrieval.New(f.Store, embedder, retrieval.Options{}, nil, nil),
+		retriever: retrieval.New(f.Store, f.Store.Indexes(), embedder, retrieval.Options{}, nil, nil),
 	}
 }
 

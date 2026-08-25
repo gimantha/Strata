@@ -15,8 +15,6 @@ import (
 	"context"
 	"slices"
 	"strings"
-
-	"github.com/gimantha/strata/internal/domain"
 )
 
 // schemaMigrationsTable records which migrations have been applied.
@@ -158,11 +156,14 @@ func (c TableClassification) Problem() string {
 	return strings.Join(parts, "; ")
 }
 
-// DropDerived removes every derived record in a workspace, for a restore drill.
+// DerivedTablesNote records why the drill no longer goes through this file.
 //
-// Separate from DeleteProjections, which exists to support a rebuild in normal operation.
-// This one is named for what a drill does: prove the derived half is genuinely disposable
-// by disposing of it.
-func (s *Store) DropDerived(ctx context.Context, ws domain.WorkspaceID) error {
-	return s.DeleteProjections(ctx, ws)
-}
+// Dropping the derived half used to be a store method over known table names. It now goes
+// through the index ports, because the set of tables and the set of configured projections
+// stopped being the same thing the moment a projection could live in another system. A
+// drill that deleted these tables would report success having never touched a projection
+// that had moved away.
+//
+// The classification above still lists the PostgreSQL tables, because that is what a
+// PostgreSQL backup must contain. What changed is who decides what to empty.
+const DerivedTablesNote = "purge goes through index.Set, not through this table list"

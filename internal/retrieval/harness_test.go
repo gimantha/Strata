@@ -40,7 +40,7 @@ func newHarness(t *testing.T) *harness {
 	// structure for its results to mean anything. It does not generalize across synonyms,
 	// which is stated plainly in the package and is why the fixture does not test for that.
 	embedder := hashing.New()
-	projector := projection.New(f.Store, embedder, projection.Options{}, nil, nil)
+	projector := projection.New(f.Store, f.Store, f.Store.Indexes(), embedder, projection.Options{}, nil, nil)
 	service := knowledge.New(f.Store, knowledge.Options{}, nil, nil)
 
 	stages := pipeline.DefaultStages(f.Store, blobs, pipeline.StageConfig{
@@ -56,7 +56,7 @@ func newHarness(t *testing.T) *harness {
 		runner:    pipeline.NewRunner(f.Store, 1, stages, nil, nil, nil),
 		service:   service,
 		projector: projector,
-		retriever: retrieval.New(f.Store, embedder, retrieval.Options{}, nil, nil),
+		retriever: retrieval.New(f.Store, f.Store.Indexes(), embedder, retrieval.Options{}, nil, nil),
 	}
 }
 

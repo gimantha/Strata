@@ -36,7 +36,7 @@ func newHarness(t *testing.T) *harness {
 
 	gateway := ingest.New(f.Store, blobs, ingest.Options{PipelineVersion: 1}, nil, nil, nil)
 	service := knowledge.New(f.Store, knowledge.Options{}, nil, nil)
-	projector := projection.New(f.Store, hashing.New(), projection.Options{}, nil, nil)
+	projector := projection.New(f.Store, f.Store, f.Store.Indexes(), hashing.New(), projection.Options{}, nil, nil)
 
 	stages := pipeline.DefaultStages(f.Store, blobs, pipeline.StageConfig{
 		ChunkMaxTokens: 256, ChunkOverlapTokens: 16,

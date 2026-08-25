@@ -43,7 +43,7 @@ func newHarness(t *testing.T) *harness {
 
 	now := time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC)
 	embedder := hashing.New()
-	projector := projection.New(f.Store, embedder, projection.Options{}, nil, nil)
+	projector := projection.New(f.Store, f.Store, f.Store.Indexes(), embedder, projection.Options{}, nil, nil)
 	service := knowledge.New(f.Store, knowledge.Options{}, nil, nil)
 
 	stages := pipeline.DefaultStages(f.Store, blobs, pipeline.StageConfig{
@@ -57,7 +57,7 @@ func newHarness(t *testing.T) *harness {
 		runner:    pipeline.NewRunner(f.Store, 1, stages, nil, nil, nil),
 		service:   service,
 		projector: projector,
-		retriever: retrieval.New(f.Store, embedder, retrieval.Options{}, nil, nil),
+		retriever: retrieval.New(f.Store, f.Store.Indexes(), embedder, retrieval.Options{}, nil, nil),
 		memory: memory.New(f.Store, service, projector, memory.Options{
 			Clock: func() time.Time { return now },
 		}, nil, nil),

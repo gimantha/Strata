@@ -9,9 +9,9 @@ Which storage each concern uses, what can be swapped, and how a swap is proven s
 |---|---|---|---|
 | Canonical ledger | — | PostgreSQL 16 | not swappable; see below |
 | Raw archive | `blob.Store` | filesystem, S3-compatible | `CG_BLOB_BACKEND` |
-| Vector projection | `projection.Store` | pgvector (HNSW) | — |
-| Lexical projection | `projection.Store` | PostgreSQL `tsvector` + pg_trgm | — |
-| Graph projection | `projection.Store` | PostgreSQL `graph_edges` | — |
+| Vector projection | `index.Vectors` | pgvector (HNSW) | `index.Set` |
+| Lexical projection | `index.Lexical` | PostgreSQL `tsvector` + pg_trgm | `index.Set` |
+| Graph projection | `index.Graph` | PostgreSQL `graph_edges` | `index.Set`, but see below |
 
 The ledger is deliberately not swappable. Multi-temporal reconciliation, supersession, and
 the transactional outbox all depend on one database committing them together
@@ -92,10 +92,54 @@ NATS one avoids 4222: a developer's own server should not have this project's bu
 and dropped in it. `CG_REQUIRE_S3=1` turns a missing store into a failure rather than a skip,
 which is how CI avoids losing the coverage silently.
 
+## The index ports
+
+Three ports, one per projection, in `internal/store/index`
+([ADR 0021](../adr/0021-three-index-ports-not-one-store.md)). A deployment builds an
+`index.Set` and hands the same one to the projector and the retriever:
+
+```go
+indexes := index.Set{
+    Vectors: myVectorBackend,
+    Lexical: store.Indexes().Lexical,   // still PostgreSQL
+    Graph:   store.Indexes().Graph,
+}
+```
+
+Three ports rather than one, because a deployment putting its vectors elsewhere must not be
+made to implement full-text search and graph traversal to do it. Read and write stay
+together in each port: the fields a record is written with are the fields a query filters
+on, and no round-trip conformance test can span two interfaces a backend might implement
+inconsistently.
+
+A partially configured set degrades rather than panics. The projector writes the projections
+it has, and the retriever skips a mode whose index is absent — so a deployment can move one
+projection without losing the other two while it does so.
+
+Each port has an exported conformance suite — `index.RunVectorConformance`,
+`index.RunLexicalConformance` — run by PostgreSQL as well as by any substitute. A suite run
+only by the newcomer encodes whatever its author assumed the incumbent did.
+
+### What is substitutable, and what is not
+
+Three of the five retrieval modes: **lexical**, **exact**, and **vector**. `SearchVectors`
+and `SearchLexical` are single-table queries that join nothing canonical, which is what makes
+them portable.
+
+**Entity resolution is not.** `FindEntitiesByName` joins `entities` to `entity_aliases` —
+canonical tables — so a name-to-identity lookup stays on the ledger however the indexes are
+configured. It is on `retrieval.Ledger`, not on any index port.
+
+**Graph traversal is not, yet.** `index.Graph` exists, and its `Expand` is documented as
+incomplete: the PostgreSQL implementation seeds its roots from the canonical `entities` table
+and joins it again for each hit's canonical name. With `graph_edges` empty it still returns
+depth-0 rows. Making it substitutable means moving name hydration into the retriever, which
+changes what `Expand` returns and is therefore a behaviour change rather than a refactor.
+
 ## What phase 15 has not built
 
-Dedicated graph, vector, and lexical backends. The ports exist and the projections are
-rebuildable, so adding them is possible; whether they are needed is the open question in
-[performance.md](performance.md) — the measured finding there is that the vector index is
-correctly built and simply not reached by scoped queries, which points at a query-shape fix
-rather than at a different database.
+Backends behind the three ports other than PostgreSQL. The ports exist and the projections
+are rebuildable, so adding one is now possible without implementing the ledger; whether it is
+needed is the open question in [performance.md](performance.md) — the measured finding there
+is that the vector index is correctly built and simply not reached by scoped queries, which
+points at a query-shape fix rather than at a different database.

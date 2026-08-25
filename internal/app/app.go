@@ -37,6 +37,7 @@ import (
 	"github.com/gimantha/strata/internal/retrieval"
 	"github.com/gimantha/strata/internal/store/blob"
 	blobs3 "github.com/gimantha/strata/internal/store/blob/s3"
+	"github.com/gimantha/strata/internal/store/index"
 	"github.com/gimantha/strata/internal/store/ledger"
 )
 
@@ -52,6 +53,10 @@ type App struct {
 	Knowledge *knowledge.Service
 	Extractor *extraction.Extractor
 	Projector *projection.Projector
+	// Indexes is the retrieval projections as configured, so an operator can be told which
+	// backend serves each and a recovery drill can iterate them rather than guessing at
+	// table names.
+	Indexes   index.Set
 	Retriever *retrieval.Retriever
 	Assembler *contextblock.Assembler
 	Ontology  *ontology.Service
@@ -200,7 +205,11 @@ func New(ctx context.Context, cfg config.Config) (*App, error) {
 		return nil, err
 	}
 	app.Embedder = embedder
-	app.Projector = projection.New(store, embedder, projection.Options{}, logger, telemetry.Tracer)
+	// One index set, built from the ledger, shared by the writer and the reader. A
+	// deployment moving a projection elsewhere replaces an entry here and nothing else.
+	app.Indexes = store.Indexes()
+	app.Projector = projection.New(store, store, app.Indexes, embedder,
+		projection.Options{}, logger, telemetry.Tracer)
 	stageCfg.Projector = app.Projector
 	if embedder != nil {
 		logger.InfoContext(ctx, "vector projection enabled",
@@ -214,7 +223,7 @@ func New(ctx context.Context, cfg config.Config) (*App, error) {
 	app.Memory = memory.New(store, app.Knowledge, app.Projector, memory.Options{}, logger, telemetry.Tracer)
 
 	app.Connector = cdc.New(app.Gateway, store, cdc.Options{}, logger, telemetry.Tracer)
-	app.Retriever = retrieval.New(store, embedder, retrieval.Options{
+	app.Retriever = retrieval.New(store, app.Indexes, embedder, retrieval.Options{
 		Traces:          store,
 		RedactQueryText: cfg.RedactQueryText,
 	}, logger, telemetry.Tracer)

@@ -13,6 +13,7 @@ import (
 
 	"github.com/gimantha/strata/internal/domain"
 	"github.com/gimantha/strata/internal/embedding"
+	"github.com/gimantha/strata/internal/store/index"
 )
 
 // TraceSink persists query-time explainability, when the deployment wants it
@@ -22,16 +23,20 @@ type TraceSink interface {
 }
 
 // Store is the projection surface retrieval reads, declared by its consumer.
-type Store interface {
-	SearchLexical(ctx context.Context, q domain.LexicalQuery) ([]domain.Hit, error)
-	SearchVectors(ctx context.Context, q domain.VectorQuery) ([]domain.Hit, error)
-	ExpandGraph(ctx context.Context, q domain.GraphExpandQuery) ([]domain.GraphHit, error)
+// Ledger is the canonical material retrieval reads directly, declared by its consumer.
+//
+// One method, and it is not a mistake that it is small. Resolving a name to an identity is
+// a canonical lookup — it joins entities to entity_aliases and touches no projection — so
+// the entity leg of retrieval stays on the ledger however the indexes are configured. Three
+// of the five retrieval modes are substitutable; this is where the other two live.
+type Ledger interface {
 	FindEntitiesByName(ctx context.Context, scope domain.Scope, name string) ([]domain.Entity, error)
 }
 
 // Retriever runs the planned candidate generators and fuses their results.
 type Retriever struct {
-	store    Store
+	ledger   Ledger
+	indexes  index.Set
 	embedder embedding.Embedder
 	weights  Weights
 	traces   TraceSink
@@ -56,7 +61,8 @@ type Options struct {
 
 // New builds a retriever. The embedder may be nil, in which case the vector leg is skipped
 // and the plan records why.
-func New(store Store, embedder embedding.Embedder, opts Options, logger *slog.Logger, tracer trace.Tracer) *Retriever {
+func New(ledger Ledger, indexes index.Set, embedder embedding.Embedder, opts Options,
+	logger *slog.Logger, tracer trace.Tracer) *Retriever {
 	now := opts.Now
 	if now == nil {
 		now = func() time.Time { return time.Now().UTC() }
@@ -65,7 +71,8 @@ func New(store Store, embedder embedding.Embedder, opts Options, logger *slog.Lo
 		tracer = tracenoop.NewTracerProvider().Tracer("retrieval")
 	}
 	return &Retriever{
-		store:    store,
+		ledger:   ledger,
+		indexes:  indexes,
 		embedder: embedder,
 		weights:  opts.Weights.withDefaults(),
 		traces:   opts.Traces,
@@ -100,6 +107,14 @@ func (r *Retriever) Query(ctx context.Context, req domain.QueryRequest) (domain.
 	)
 
 	for _, mode := range plan.Modes {
+		// A mode whose index is not configured is skipped rather than failed. The planner
+		// picks modes from the query's shape, not from the deployment's, so a deployment
+		// running without one projection would otherwise have every query fail instead of
+		// answering from the legs it does have.
+		if !r.available(mode) {
+			continue
+		}
+
 		started := r.now()
 
 		var (
@@ -162,7 +177,7 @@ func (r *Retriever) lexical(ctx context.Context, req domain.QueryRequest, exact 
 		mode = domain.ModeExact
 	}
 
-	hits, err := r.store.SearchLexical(ctx, domain.LexicalQuery{
+	hits, err := r.indexes.Lexical.Search(ctx, domain.LexicalQuery{
 		Scope:          req.Scope,
 		Text:           req.Query,
 		Surfaces:       req.Filters.Surfaces,
@@ -201,7 +216,7 @@ func (r *Retriever) vector(ctx context.Context, req domain.QueryRequest) ([]cand
 		return nil, nil
 	}
 
-	hits, err := r.store.SearchVectors(ctx, domain.VectorQuery{
+	hits, err := r.indexes.Vectors.Search(ctx, domain.VectorQuery{
 		Scope:          req.Scope,
 		Embedding:      vectors[0],
 		Surfaces:       req.Filters.Surfaces,
@@ -224,7 +239,7 @@ func (r *Retriever) vector(ctx context.Context, req domain.QueryRequest) ([]cand
 
 // entity resolves the query as a name.
 func (r *Retriever) entity(ctx context.Context, req domain.QueryRequest) ([]candidate, error) {
-	entities, err := r.store.FindEntitiesByName(ctx, req.Scope, req.Query)
+	entities, err := r.ledger.FindEntitiesByName(ctx, req.Scope, req.Query)
 	if err != nil {
 		return nil, err
 	}
@@ -261,7 +276,7 @@ func (r *Retriever) graph(ctx context.Context, req domain.QueryRequest, seeds []
 		return nil, nil
 	}
 
-	hits, err := r.store.ExpandGraph(ctx, domain.GraphExpandQuery{
+	hits, err := r.indexes.Graph.Expand(ctx, domain.GraphExpandQuery{
 		Scope:      req.Scope,
 		Roots:      seeds,
 		Depth:      req.GraphDepth,
@@ -410,4 +425,21 @@ func (r *Retriever) record(ctx context.Context, req domain.QueryRequest, candida
 		return ""
 	}
 	return recorded.ID
+}
+
+// available reports whether the index a mode needs is configured.
+//
+// ModeEntity is always available: it resolves names against the canonical alias table, so
+// it depends on the ledger rather than on any index.
+func (r *Retriever) available(mode domain.RetrievalMode) bool {
+	switch mode {
+	case domain.ModeLexical, domain.ModeExact:
+		return r.indexes.Lexical != nil
+	case domain.ModeVector:
+		return r.indexes.Vectors != nil
+	case domain.ModeGraph:
+		return r.indexes.Graph != nil
+	default:
+		return true
+	}
 }

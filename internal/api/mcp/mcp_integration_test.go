@@ -52,10 +52,10 @@ func newHarness(t *testing.T) *harness {
 	}
 
 	embedder := hashing.New()
-	projector := projection.New(f.Store, embedder, projection.Options{}, nil, nil)
+	projector := projection.New(f.Store, f.Store, f.Store.Indexes(), embedder, projection.Options{}, nil, nil)
 	service := knowledge.New(f.Store, knowledge.Options{}, nil, nil)
 	gateway := ingest.New(f.Store, blobs, ingest.Options{PipelineVersion: 1}, nil, nil, nil)
-	retriever := retrieval.New(f.Store, embedder, retrieval.Options{Traces: f.Store}, nil, nil)
+	retriever := retrieval.New(f.Store, f.Store.Indexes(), embedder, retrieval.Options{Traces: f.Store}, nil, nil)
 
 	stages := pipeline.DefaultStages(f.Store, blobs, pipeline.StageConfig{
 		ChunkMaxTokens: 256, ChunkOverlapTokens: 16,

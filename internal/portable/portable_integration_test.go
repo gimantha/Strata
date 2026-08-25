@@ -70,7 +70,7 @@ func newHarness(t *testing.T) *harness {
 	}
 
 	embedder := hashing.New()
-	projector := projection.New(f.Store, embedder, projection.Options{}, nil, nil)
+	projector := projection.New(f.Store, f.Store, f.Store.Indexes(), embedder, projection.Options{}, nil, nil)
 	service := knowledge.New(f.Store, knowledge.Options{}, nil, nil)
 	gateway := ingest.New(f.Store, blobs, ingest.Options{PipelineVersion: 1}, nil, nil, nil)
 
@@ -87,7 +87,7 @@ func newHarness(t *testing.T) *harness {
 		runner:    runner,
 		service:   service,
 		projector: projector,
-		retriever: retrieval.New(f.Store, embedder, retrieval.Options{}, nil, nil),
+		retriever: retrieval.New(f.Store, f.Store.Indexes(), embedder, retrieval.Options{}, nil, nil),
 		exporter:  portable.NewExporter(f.Store, opts, nil),
 		importer: portable.NewImporter(f.Store, service,
 			recorder{gateway: gateway, runner: runner, store: f}, opts, nil),

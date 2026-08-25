@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"sort"
+	"strings"
 
 	"github.com/gimantha/strata/internal/app"
 	"github.com/gimantha/strata/internal/domain"
@@ -72,7 +73,7 @@ func cmdRecoveryDrill(ctx context.Context, a *app.App, args []string) error {
 		return err
 	}
 
-	before, err := a.Ledger.CountProjected(ctx, ws)
+	before, err := a.Indexes.Counts(ctx, ws)
 	if err != nil {
 		return err
 	}
@@ -82,11 +83,20 @@ func cmdRecoveryDrill(ctx context.Context, a *app.App, args []string) error {
 			"nothing; run the drill against a workspace with data in it")
 	}
 
+	fmt.Printf("backends: %s\n", formatBackends(a.Indexes.Names()))
+
 	fmt.Println("dropping every derived record...")
-	if err := a.Ledger.DropDerived(ctx, ws); err != nil {
+	// Through the index ports rather than by deleting known tables, so the drill covers
+	// whatever is actually configured. A deployment that had moved its vectors elsewhere
+	// would otherwise get a green drill proving only that the PostgreSQL half of its
+	// derived data is disposable.
+	if err := a.Ledger.DeleteCheckpoints(ctx, ws, domain.RetrievalProjections()); err != nil {
 		return err
 	}
-	emptied, err := a.Ledger.CountProjected(ctx, ws)
+	if err := a.Indexes.Purge(ctx, ws); err != nil {
+		return err
+	}
+	emptied, err := a.Indexes.Counts(ctx, ws)
 	if err != nil {
 		return err
 	}
@@ -100,7 +110,7 @@ func cmdRecoveryDrill(ctx context.Context, a *app.App, args []string) error {
 		return err
 	}
 
-	after, err := a.Ledger.CountProjected(ctx, ws)
+	after, err := a.Indexes.Counts(ctx, ws)
 	if err != nil {
 		return err
 	}
@@ -124,6 +134,21 @@ func cmdRecoveryDrill(ctx context.Context, a *app.App, args []string) error {
 	fmt.Println("\nDrill passed. Every derived index was reconstructed from the canonical")
 	fmt.Println("ledger, which is the property section 40's backup guidance depends on.")
 	return nil
+}
+
+// formatBackends names the backend serving each projection, in a stable order.
+func formatBackends(names map[string]string) string {
+	keys := make([]string, 0, len(names))
+	for name := range names {
+		keys = append(keys, name)
+	}
+	sort.Strings(keys)
+
+	parts := make([]string, 0, len(keys))
+	for _, key := range keys {
+		parts = append(parts, key+"="+names[key])
+	}
+	return strings.Join(parts, "  ")
 }
 
 func total(counts map[string]int) int {

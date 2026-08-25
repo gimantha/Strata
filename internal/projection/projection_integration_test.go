@@ -40,7 +40,7 @@ func newHarness(t *testing.T) *harness {
 
 	embedder := embeddingmock.New()
 	service := knowledge.New(f.Store, knowledge.Options{}, nil, nil)
-	projector := projection.New(f.Store, embedder, projection.Options{}, nil, nil)
+	projector := projection.New(f.Store, f.Store, f.Store.Indexes(), embedder, projection.Options{}, nil, nil)
 
 	stages := pipeline.DefaultStages(f.Store, blobs, pipeline.StageConfig{
 		ChunkMaxTokens:     128,
@@ -564,7 +564,7 @@ func TestIntegrationProjectionWorksWithoutAnEmbedder(t *testing.T) {
 	if err != nil {
 		t.Fatalf("blob store: %v", err)
 	}
-	projector := projection.New(f.Store, nil, projection.Options{}, nil, nil)
+	projector := projection.New(f.Store, f.Store, f.Store.Indexes(), nil, projection.Options{}, nil, nil)
 	runner := pipeline.NewRunner(f.Store, 1, pipeline.DefaultStages(f.Store, blobs,
 		pipeline.StageConfig{ChunkMaxTokens: 128, Projector: projector}), nil, nil, nil)
 
@@ -611,7 +611,7 @@ func TestIntegrationEmbeddingDimensionsAreEnforced(t *testing.T) {
 	// A model of the wrong width must be caught rather than writing vectors the schema
 	// cannot index.
 	wrong := embeddingmock.New().WithDimensions(64)
-	projector := projection.New(f.Store, wrong, projection.Options{}, nil, nil)
+	projector := projection.New(f.Store, f.Store, f.Store.Indexes(), wrong, projection.Options{}, nil, nil)
 
 	blobs, err := blob.NewFS(t.TempDir())
 	if err != nil {

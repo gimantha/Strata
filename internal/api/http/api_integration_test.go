@@ -110,8 +110,8 @@ func newAPIHarness(t *testing.T, keys ...keyEntry) *apiHarness {
 	// Retrieval is wired with a deterministic embedder so the query endpoint is exercised
 	// over real projections rather than a stub.
 	embedder := hashing.New()
-	projector := projection.New(f.Store, embedder, projection.Options{}, nil, nil)
-	retriever := retrieval.New(f.Store, embedder, retrieval.Options{}, nil, nil)
+	projector := projection.New(f.Store, f.Store, f.Store.Indexes(), embedder, projection.Options{}, nil, nil)
+	retriever := retrieval.New(f.Store, f.Store.Indexes(), embedder, retrieval.Options{}, nil, nil)
 	assembler := contextblock.New(retriever, f.Store, contextblock.Options{}, nil, nil)
 	connector := cdc.New(gateway, f.Store, cdc.Options{}, nil, nil)
 
