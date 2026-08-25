@@ -48,7 +48,6 @@ type Store interface {
 
 	DeleteProjections(ctx context.Context, ws domain.WorkspaceID) error
 	SaveCheckpoint(ctx context.Context, checkpoint domain.ProjectionCheckpoint) error
-	GetCheckpoint(ctx context.Context, ws domain.WorkspaceID, projection string) (domain.ProjectionCheckpoint, error)
 }
 
 // Projector writes canonical records into the retrieval projections.
@@ -516,8 +515,11 @@ func (p *Projector) Rebuild(ctx context.Context, ws domain.WorkspaceID) (Stats, 
 			cursor, cursorID = &recorded, event.ID
 		}
 
-		// Checkpoint after each page rather than only at the end, so an interrupted
-		// rebuild resumes rather than starting over.
+		// Checkpoint after each page rather than only at the end, so a long rebuild
+		// reports progress instead of going silent. Not for resumption: the cursor below
+		// starts at nil on every call, so an interrupted rebuild replays from the
+		// beginning — which is safe, because every projection write is an idempotent
+		// upsert on a deterministic key.
 		if err := p.saveCheckpoints(ctx, ws, cursor, cursorID, stats, nil); err != nil {
 			return Stats{}, err
 		}

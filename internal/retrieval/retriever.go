@@ -27,7 +27,6 @@ type Store interface {
 	SearchVectors(ctx context.Context, q domain.VectorQuery) ([]domain.Hit, error)
 	ExpandGraph(ctx context.Context, q domain.GraphExpandQuery) ([]domain.GraphHit, error)
 	FindEntitiesByName(ctx context.Context, scope domain.Scope, name string) ([]domain.Entity, error)
-	GetAssertion(ctx context.Context, ws domain.WorkspaceID, id domain.AssertionID) (domain.Assertion, error)
 }
 
 // Retriever runs the planned candidate generators and fuses their results.
