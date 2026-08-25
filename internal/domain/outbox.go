@@ -2,6 +2,7 @@ package domain
 
 import (
 	"encoding/json"
+	"strings"
 	"time"
 )
 
@@ -32,6 +33,11 @@ type OutboxEvent struct {
 	// DedupeKey makes publication idempotent: re-running the producer for the same
 	// logical work never enqueues a second item.
 	DedupeKey string
+	// PartitionKey serializes work that must not run concurrently with itself
+	// (AGENTS.md section 28.3). Two events sharing a key are handed out one at a time and
+	// in publication order; an empty key means no ordering requirement, which is true of
+	// most work and is what keeps the fleet parallel.
+	PartitionKey string
 
 	Status      OutboxStatus
 	Attempts    int
@@ -49,6 +55,26 @@ type OutboxEvent struct {
 	CreatedAt   time.Time
 	UpdatedAt   time.Time
 	CompletedAt *time.Time
+}
+
+// PartitionOf builds a partition key from the parts that must be ordered together.
+//
+// Scoped by workspace because two tenants' records are independent by construction, and
+// sharing a key across them would serialize unrelated work for no reason. With no parts it
+// returns empty, meaning "no ordering requirement" — which is most work, and is what keeps
+// the fleet parallel.
+func PartitionOf(ws WorkspaceID, parts ...string) string {
+	filtered := make([]string, 0, len(parts)+1)
+	filtered = append(filtered, string(ws))
+	for _, part := range parts {
+		if part != "" {
+			filtered = append(filtered, part)
+		}
+	}
+	if len(filtered) == 1 {
+		return ""
+	}
+	return strings.Join(filtered, "|")
 }
 
 func (o OutboxEvent) Validate() error {

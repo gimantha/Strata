@@ -232,12 +232,17 @@ func (q GraphExpandQuery) Normalize() GraphExpandQuery {
 
 // ProjectionCheckpoint records how far a projection has consumed the ledger.
 type ProjectionCheckpoint struct {
-	WorkspaceID      WorkspaceID
-	Projection       string
-	LastRecordedAt   *time.Time
-	LastRecordID     string
+	WorkspaceID    WorkspaceID
+	Projection     string
+	LastRecordedAt *time.Time
+	LastRecordID   string
+	// RecordsProjected is what this update contributes, not a running total: several
+	// workers advance one checkpoint, and the store accumulates their reports.
 	RecordsProjected int64
 	LastError        string
 	RebuiltAt        *time.Time
-	UpdatedAt        time.Time
+	// AdvancedBy names the worker that last moved this checkpoint, so a projection that
+	// has stopped progressing is attributable rather than merely stale.
+	AdvancedBy string
+	UpdatedAt  time.Time
 }

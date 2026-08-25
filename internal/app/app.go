@@ -18,6 +18,7 @@ import (
 	embeddingmock "github.com/gimantha/strata/internal/embedding/mock"
 	embeddingopenai "github.com/gimantha/strata/internal/embedding/openai"
 	"github.com/gimantha/strata/internal/eventbus"
+	"github.com/gimantha/strata/internal/eventbus/natsbus"
 	"github.com/gimantha/strata/internal/extraction"
 	"github.com/gimantha/strata/internal/identity"
 	"github.com/gimantha/strata/internal/ingest"
@@ -61,6 +62,10 @@ type App struct {
 	Embedder  embedding.Embedder
 	Bus       *eventbus.Outbox
 	Runner    *pipeline.Runner
+
+	// NATS is the optional push path. Nil means the deployment polls the ledger, which
+	// is the same behavior with more latency (AGENTS.md section 27.5).
+	NATS *natsbus.Bus
 }
 
 // New builds the application. It connects to PostgreSQL, applies migrations when
@@ -136,6 +141,29 @@ func New(ctx context.Context, cfg config.Config) (*App, error) {
 	app.Knowledge = knowledge.New(store, knowledge.Options{}, logger, telemetry.Tracer)
 
 	app.Bus = eventbus.NewOutbox(store, logger, telemetry.Metrics, telemetry.Tracer)
+
+	if cfg.NATSURL != "" {
+		bus, err := natsbus.Connect(ctx, natsbus.Options{
+			URL:           cfg.NATSURL,
+			Name:          cfg.ServiceName,
+			Stream:        cfg.NATSStream,
+			Durable:       cfg.NATSDurable,
+			AckWait:       cfg.NATSAckWait,
+			MaxDeliver:    cfg.WorkerMaxAttempts,
+			MaxAckPending: cfg.NATSMaxAckPending,
+		}, logger)
+		if err != nil {
+			// Startup fails rather than falling back silently: an operator who
+			// configured a bus and got polling instead would discover it as an
+			// unexplained latency regression.
+			app.closeLedger()
+			return nil, err
+		}
+		app.NATS = bus
+		// Announce committed work as soon as it exists, so a fleet reacts in
+		// milliseconds instead of at its next poll.
+		app.Gateway.SetNotifier(app.PublishWork)
+	}
 
 	// A model provider is optional. Without one the pipeline still ingests, segments, and
 	// chunks; extraction is simply not part of it.
@@ -281,6 +309,12 @@ func newEmbedder(cfg config.Config) (embedding.Embedder, error) {
 
 // Close releases resources.
 func (a *App) Close(ctx context.Context) error {
+	if a.NATS != nil {
+		if err := a.NATS.Close(); err != nil && a.Logger != nil {
+			a.Logger.WarnContext(ctx, "could not close the NATS connection",
+				slog.String("error", err.Error()))
+		}
+	}
 	a.closeLedger()
 	if a.Telemetry != nil {
 		return a.Telemetry.Shutdown(ctx)
@@ -306,12 +340,63 @@ func (a *App) Subscription() eventbus.SubscriptionSpec {
 		BackoffBase:  a.Config.BackoffBase,
 		BackoffMax:   a.Config.BackoffMax,
 		DrainTimeout: a.Config.ShutdownTimeout,
+
+		MaxEventsPerSecond: a.Config.WorkerMaxEventsPerSecond,
+		IdleBackoffMax:     a.Config.WorkerIdleBackoffMax,
 	}
 }
 
 // RunWorker consumes work until the context is cancelled.
+//
+// With a bus configured, two things run: the ledger consumer, which is the only thing
+// that ever claims or executes work, and a NATS subscription whose messages are turned
+// into wake-ups for it. Push delivery therefore buys latency without buying a second
+// path to the same work — the claim stays in PostgreSQL, so exactly-once processing and
+// partition ordering hold whether or not the bus is there, and whether or not it is
+// healthy (AGENTS.md section 28.1).
 func (a *App) RunWorker(ctx context.Context) error {
-	return a.Bus.Subscribe(ctx, a.Subscription(), a.HandleWork)
+	if a.NATS == nil {
+		return a.Bus.Subscribe(ctx, a.Subscription(), a.HandleWork)
+	}
+
+	notifyCtx, stopNotify := context.WithCancel(ctx)
+	defer stopNotify()
+
+	notifications := make(chan struct{})
+	go func() {
+		defer close(notifications)
+		spec := a.Subscription()
+		// One at a time: a notification is cheap, and this consumer does no work.
+		spec.Concurrency = 1
+		err := a.NATS.Subscribe(notifyCtx, spec, func(_ context.Context, event domain.OutboxEvent) error {
+			a.Bus.Notify()
+			return nil
+		})
+		if err != nil && notifyCtx.Err() == nil {
+			// Not fatal. Losing the hints means falling back to the poll interval,
+			// which is the deployment that has no bus at all.
+			a.Logger.WarnContext(ctx, "the NATS notifier stopped; falling back to polling",
+				slog.String("error", err.Error()))
+		}
+	}()
+
+	err := a.Bus.Subscribe(ctx, a.Subscription(), a.HandleWork)
+	stopNotify()
+	<-notifications
+	return err
+}
+
+// PublishWork mirrors committed work onto the bus so the fleet hears about it now
+// rather than at its next poll.
+//
+// Called after the transaction commits, never inside it: the outbox row is the durable
+// record and this is a hint about it. A failure here is logged by the adapter and
+// nothing more, because the work is already safe.
+func (a *App) PublishWork(ctx context.Context, events ...domain.OutboxEvent) {
+	if a.NATS == nil || len(events) == 0 {
+		return
+	}
+	_ = a.NATS.Publish(ctx, events...)
 }
 
 // HandleWork dispatches one work item.

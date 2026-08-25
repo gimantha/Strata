@@ -52,6 +52,34 @@ type Config struct {
 	WorkerMaxAttempts  int
 	BackoffBase        time.Duration
 	BackoffMax         time.Duration
+	// WorkerMaxEventsPerSecond caps how fast one worker takes on new work, 0 for
+	// uncapped. A fleet that can outrun a downstream model or a database is a fleet
+	// that turns a spike into an outage; this is the throttle that keeps a scaled-out
+	// deployment inside what its dependencies can serve (AGENTS.md section 27.5).
+	WorkerMaxEventsPerSecond float64
+	// WorkerIdleBackoffMax is how far the poll interval stretches when there is no work.
+	// Without it, fifty idle workers poll the ledger at the base interval forever, which
+	// is a load pattern proportional to fleet size rather than to work.
+	WorkerIdleBackoffMax time.Duration
+
+	// NATSURL enables push delivery through JetStream. Empty keeps the deployment on
+	// pure ledger polling, which is correct and simply slower to react.
+	//
+	// The ledger stays the durability boundary either way: the bus carries a copy of
+	// work that is already committed, so losing the bus costs latency, not work.
+	NATSURL string
+	// NATSStream names the JetStream stream. Two deployments sharing one NATS cluster
+	// need distinct names: a work-queue stream may not overlap another's subjects.
+	NATSStream string
+	// NATSDurable names the consumer group. Workers sharing it share the queue, which
+	// is how a fleet scales without processing anything twice.
+	NATSDurable string
+	// NATSAckWait is how long a delivery may go unacknowledged before redelivery. It is
+	// the bus's lease and should be reasoned about like CG_WORKER_LEASE.
+	NATSAckWait time.Duration
+	// NATSMaxAckPending bounds unacknowledged deliveries per consumer: the backpressure
+	// that makes a slow worker slow its own intake instead of hoarding a backlog.
+	NATSMaxAckPending int
 
 	PipelineVersion    int
 	ChunkMaxTokens     int
@@ -124,6 +152,17 @@ func LoadFrom(getenv func(string) string) (Config, error) {
 		BackoffBase:        l.duration("BACKOFF_BASE", time.Second),
 		BackoffMax:         l.duration("BACKOFF_MAX", 5*time.Minute),
 
+		WorkerMaxEventsPerSecond: l.floatVal("WORKER_MAX_EVENTS_PER_SECOND", 0),
+		WorkerIdleBackoffMax:     l.duration("WORKER_IDLE_BACKOFF_MAX", 5*time.Second),
+
+		NATSURL: l.str("NATS_URL", ""),
+		// The literal rather than natsbus.StreamName: configuration should not have to
+		// import a provider adapter to know its own default.
+		NATSStream:        l.str("NATS_STREAM", "STRATA_WORK"),
+		NATSDurable:       l.str("NATS_DURABLE", "strata-workers"),
+		NATSAckWait:       l.duration("NATS_ACK_WAIT", 60*time.Second),
+		NATSMaxAckPending: l.intVal("NATS_MAX_ACK_PENDING", 256),
+
 		LLMProvider:   strings.ToLower(l.str("LLM_PROVIDER", "none")),
 		LLMBaseURL:    l.str("LLM_BASE_URL", ""),
 		LLMModel:      l.str("LLM_MODEL", ""),
@@ -186,6 +225,20 @@ func (c Config) Validate() error {
 	// worker can renew them, turning healthy work into repeated redelivery.
 	if c.WorkerLease <= c.WorkerPollInterval {
 		problems = append(problems, "CG_WORKER_LEASE must exceed CG_WORKER_POLL_INTERVAL")
+	}
+	if c.WorkerMaxEventsPerSecond < 0 {
+		problems = append(problems, "CG_WORKER_MAX_EVENTS_PER_SECOND cannot be negative; use 0 for uncapped")
+	}
+	// Backoff that never exceeds the base is no backoff at all, and a fleet of idle
+	// workers would keep polling at full rate.
+	if c.WorkerIdleBackoffMax != 0 && c.WorkerIdleBackoffMax < c.WorkerPollInterval {
+		problems = append(problems, "CG_WORKER_IDLE_BACKOFF_MAX must be at least CG_WORKER_POLL_INTERVAL")
+	}
+	if c.NATSURL != "" && c.NATSAckWait <= 0 {
+		problems = append(problems, "CG_NATS_ACK_WAIT must be positive")
+	}
+	if c.NATSURL != "" && c.NATSMaxAckPending < 1 {
+		problems = append(problems, "CG_NATS_MAX_ACK_PENDING must be at least 1")
 	}
 	if c.BackoffBase <= 0 || c.BackoffMax < c.BackoffBase {
 		problems = append(problems, "CG_BACKOFF_MAX must be at least CG_BACKOFF_BASE, and both positive")
@@ -259,6 +312,10 @@ func (c Config) Redacted() map[string]any {
 		"embedded_worker":    c.EmbeddedWorker,
 		"worker_concurrency": c.WorkerConcurrency,
 		"pipeline_version":   c.PipelineVersion,
+		// The URL, never credentials: a NATS DSN can carry a token in its userinfo.
+		"nats_enabled": c.NATSURL != "",
+		"nats_stream":  c.NATSStream,
+		"nats_durable": c.NATSDurable,
 	}
 }
 
@@ -308,6 +365,19 @@ func (l *loader) intVal(key string, def int) int {
 	n, err := strconv.Atoi(v)
 	if err != nil {
 		l.errs = append(l.errs, fmt.Sprintf("%s%s must be an integer, got %q", prefix, key, v))
+		return def
+	}
+	return n
+}
+
+func (l *loader) floatVal(key string, def float64) float64 {
+	v, ok := l.raw(key)
+	if !ok {
+		return def
+	}
+	n, err := strconv.ParseFloat(v, 64)
+	if err != nil {
+		l.errs = append(l.errs, fmt.Sprintf("%s%s must be a number, got %q", prefix, key, v))
 		return def
 	}
 	return n

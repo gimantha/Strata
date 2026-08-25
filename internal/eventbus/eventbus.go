@@ -44,6 +44,18 @@ type SubscriptionSpec struct {
 	BackoffMax   time.Duration
 	// DrainTimeout bounds how long shutdown waits for in-flight work.
 	DrainTimeout time.Duration
+
+	// MaxEventsPerSecond throttles how fast one worker takes work, so a fleet cannot
+	// stampede a downstream a model provider or a database it shares. Zero is unlimited.
+	//
+	// A limit per worker rather than per fleet: a global limiter needs coordination that
+	// would itself become the bottleneck, and multiplying by the worker count is
+	// arithmetic an operator can do.
+	MaxEventsPerSecond float64
+	// IdleBackoffMax stretches the poll interval when the queue is repeatedly empty. A
+	// fleet polling an idle queue every 500ms is mostly a way to keep a database busy
+	// doing nothing.
+	IdleBackoffMax time.Duration
 }
 
 func (s SubscriptionSpec) withDefaults() SubscriptionSpec {
@@ -70,6 +82,9 @@ func (s SubscriptionSpec) withDefaults() SubscriptionSpec {
 	}
 	if s.DrainTimeout <= 0 {
 		s.DrainTimeout = 30 * time.Second
+	}
+	if s.IdleBackoffMax < s.PollInterval {
+		s.IdleBackoffMax = 8 * s.PollInterval
 	}
 	return s
 }
@@ -99,6 +114,25 @@ type Outbox struct {
 	logger   *slog.Logger
 	metrics  *observability.Metrics
 	tracer   trace.Tracer
+
+	// wake cuts a poll short when something outside the loop knows work has arrived.
+	// Buffered by one and never blocking: the signal only means "look now", so a
+	// second signal while one is pending adds nothing.
+	wake chan struct{}
+}
+
+// Notify tells a running consumer that work is available, so it polls now instead of
+// sleeping out its backoff.
+//
+// This is how push delivery is integrated without giving up the ledger's guarantees. A
+// NATS message is a hint, not a work item: the claim still happens in PostgreSQL, so
+// exactly-once and partition ordering keep working exactly as they do without a bus,
+// and a lost or duplicated hint costs nothing (AGENTS.md section 28.1).
+func (o *Outbox) Notify() {
+	select {
+	case o.wake <- struct{}{}:
+	default:
+	}
 }
 
 // NewOutbox builds a bus. The worker identifier is recorded on claims so an operator
@@ -117,6 +151,7 @@ func NewOutbox(store Store, logger *slog.Logger, metrics *observability.Metrics,
 		logger:   logger,
 		metrics:  metrics,
 		tracer:   tracer,
+		wake:     make(chan struct{}, 1),
 	}
 }
 
@@ -134,11 +169,13 @@ func (o *Outbox) Subscribe(ctx context.Context, spec SubscriptionSpec, handler H
 	spec = spec.withDefaults()
 
 	var (
-		wg   sync.WaitGroup
-		sem  = make(chan struct{}, spec.Concurrency)
-		tick = time.NewTicker(spec.PollInterval)
+		wg  sync.WaitGroup
+		sem = make(chan struct{}, spec.Concurrency)
+		// The poll interval grows while the queue is empty and snaps back the moment
+		// there is work, so an idle fleet is quiet and a busy one is responsive.
+		idle    = spec.PollInterval
+		limiter = newRateLimiter(spec.MaxEventsPerSecond)
 	)
-	defer tick.Stop()
 
 	if o.logger != nil {
 		o.logger.InfoContext(ctx, "outbox consumer started",
@@ -167,10 +204,15 @@ func (o *Outbox) Subscribe(ctx context.Context, spec SubscriptionSpec, handler H
 		}
 
 		// Claim no more than the free capacity, so items are not held under lease
-		// while waiting for a slot.
+		// while waiting for a slot. This is the backpressure: a worker whose handlers
+		// are all busy stops taking work rather than queueing it in memory, and the
+		// items stay visible to the rest of the fleet.
 		free := spec.Concurrency - len(sem)
 		if free > spec.BatchSize {
 			free = spec.BatchSize
+		}
+		if allowed := limiter.allowance(); allowed >= 0 && allowed < free {
+			free = allowed
 		}
 
 		claimed := 0
@@ -186,6 +228,7 @@ func (o *Outbox) Subscribe(ctx context.Context, spec SubscriptionSpec, handler H
 				if o.metrics != nil && claimed > 0 {
 					o.metrics.OutboxClaimed.Add(ctx, int64(claimed))
 				}
+				limiter.consume(claimed)
 				for _, event := range events {
 					sem <- struct{}{}
 					wg.Add(1)
@@ -204,13 +247,30 @@ func (o *Outbox) Subscribe(ctx context.Context, spec SubscriptionSpec, handler H
 			if ctx.Err() != nil {
 				break
 			}
+			idle = spec.PollInterval
 			continue
 		}
+		if claimed > 0 {
+			idle = spec.PollInterval
+		} else if idle < spec.IdleBackoffMax {
+			idle *= 2
+			if idle > spec.IdleBackoffMax {
+				idle = spec.IdleBackoffMax
+			}
+		}
 
+		timer := time.NewTimer(idle)
 		select {
 		case <-ctx.Done():
+			timer.Stop()
 			// Fall through to draining.
-		case <-tick.C:
+		case <-o.wake:
+			// Pushed at: skip the rest of the wait and reset the backoff, because a
+			// notification means the queue is no longer idle.
+			timer.Stop()
+			idle = spec.PollInterval
+			continue
+		case <-timer.C:
 			continue
 		}
 		break
@@ -256,10 +316,20 @@ func (o *Outbox) process(ctx context.Context, spec SubscriptionSpec, handler Han
 	))
 	defer span.End()
 
-	// Heartbeat the lease so long work is not reclaimed while it is progressing.
-	stopHeartbeat := o.heartbeat(workCtx, event.ID, spec.Lease)
+	// Heartbeat the lease so long work is not reclaimed while it is progressing — but stop
+	// renewing the moment this consumer is shutting down. The handler's context is
+	// deliberately detached so cancellation cannot abort work mid-transaction; the lease
+	// must not inherit that immortality, or a handler that never returns would hold its
+	// claim forever and the item would be unreachable to every other worker.
+	stopHeartbeat := o.heartbeat(ctx, workCtx, event.ID, spec.Lease)
 	err := handler(workCtx, event)
 	stopHeartbeat()
+
+	// Finishing an item can make more work claimable: anything queued behind this one in
+	// the same partition was passed over precisely because this was in flight. Without
+	// this the successor waits for the next poll, so a partitioned stream would move at
+	// one item per poll interval no matter how idle the fleet is.
+	defer o.Notify()
 
 	switch {
 	case err == nil:
@@ -309,8 +379,13 @@ func (o *Outbox) process(ctx context.Context, spec SubscriptionSpec, handler Han
 	}
 }
 
-// heartbeat renews a claim until the returned function is called.
-func (o *Outbox) heartbeat(ctx context.Context, id domain.OutboxEventID, lease time.Duration) func() {
+// heartbeat renews a claim until the work finishes or the consumer shuts down.
+//
+// Two contexts on purpose. The lifetime context is the subscriber's: when it is cancelled,
+// renewal stops and the lease is allowed to expire, so a replacement worker can reclaim the
+// item. The call context is the handler's detached one, used for the renewal statements
+// themselves so a shutdown does not cancel a query mid-flight.
+func (o *Outbox) heartbeat(lifetime, call context.Context, id domain.OutboxEventID, lease time.Duration) func() {
 	interval := lease / 3
 	if interval < 100*time.Millisecond {
 		interval = 100 * time.Millisecond
@@ -327,17 +402,27 @@ func (o *Outbox) heartbeat(ctx context.Context, id domain.OutboxEventID, lease t
 			select {
 			case <-stop:
 				return
+			case <-lifetime.Done():
+				// The consumer is shutting down. Whatever this handler is doing, its
+				// lease must be allowed to lapse so the work returns to the queue rather
+				// than being held by a process that is going away.
+				if o.logger != nil {
+					o.logger.WarnContext(call, "consumer stopped while work was in flight; "+
+						"releasing the lease for another worker to reclaim",
+						slog.String("outbox_id", string(id)))
+				}
+				return
 			case <-ticker.C:
-				held, err := o.store.RenewClaim(ctx, id, o.workerID, lease)
+				held, err := o.store.RenewClaim(call, id, o.workerID, lease)
 				if err != nil {
-					o.warn(ctx, "could not renew claim", err)
+					o.warn(call, "could not renew claim", err)
 					continue
 				}
 				if !held {
 					// The lease was lost, most likely reaped after a stall. Stop
 					// renewing: another worker may now own this item.
 					if o.logger != nil {
-						o.logger.WarnContext(ctx, "lease no longer held while work was in flight",
+						o.logger.WarnContext(call, "lease no longer held while work was in flight",
 							slog.String("outbox_id", string(id)))
 					}
 					return
@@ -403,4 +488,65 @@ func randomSuffix() string {
 		out[i] = alphabet[rand.IntN(len(alphabet))]
 	}
 	return string(out)
+}
+
+// rateLimiter is a token bucket over one worker's claim rate.
+//
+// Applied when claiming rather than when handling, because a claim takes a lease: throttling
+// after the fact would hold work under lease while waiting, hiding it from the rest of the
+// fleet and inviting the reaper to take it back.
+type rateLimiter struct {
+	mu       sync.Mutex
+	rate     float64
+	capacity float64
+	tokens   float64
+	last     time.Time
+}
+
+func newRateLimiter(perSecond float64) *rateLimiter {
+	if perSecond <= 0 {
+		return nil
+	}
+	// One second of burst: enough that a batch is not chopped into single items, small
+	// enough that a limit of ten per second cannot become a hundred at once.
+	return &rateLimiter{
+		rate: perSecond, capacity: perSecond, tokens: perSecond, last: time.Now(),
+	}
+}
+
+// allowance reports how many items may be claimed now, or -1 when unlimited.
+func (r *rateLimiter) allowance() int {
+	if r == nil {
+		return -1
+	}
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	now := time.Now()
+	r.tokens += now.Sub(r.last).Seconds() * r.rate
+	if r.tokens > r.capacity {
+		r.tokens = r.capacity
+	}
+	r.last = now
+
+	if r.tokens < 1 {
+		return 0
+	}
+	return int(r.tokens)
+}
+
+// consume records what was actually claimed.
+func (r *rateLimiter) consume(count int) {
+	if r == nil || count <= 0 {
+		return
+	}
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	r.tokens -= float64(count)
+	if r.tokens < 0 {
+		r.tokens = 0
+	}
 }

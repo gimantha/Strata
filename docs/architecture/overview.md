@@ -266,7 +266,27 @@ nothing in it: identifiers are provenance rather than identity, knowledge time i
 importer's own, predicate semantics arrive as candidates, and nothing is committed until the
 digest over every record verifies.
 
+## Running as a fleet
+
+Workers scale horizontally against one ledger. Claims use `FOR UPDATE SKIP LOCKED`, so any
+number of them share one queue without duplicate delivery, and a lease the survivors reap
+returns whatever a dead worker was holding.
+
+NATS JetStream is optional and deliberately weak: it carries notice that committed work
+exists, and a worker that receives one polls immediately instead of waiting out its interval
+([ADR 0019](../adr/0019-the-broker-carries-notice-the-ledger-carries-work.md)). Every
+guarantee stays in PostgreSQL, so a broker outage costs latency and nothing else.
+
+Ordering comes from a partition key on the work item rather than from a lock a handler has
+to remember to take: the claim refuses to hand out two items from a partition that already
+has one in flight. Ingest partitions by upstream record, so successive versions of one
+document serialize while different documents stay parallel. Backpressure is three separate
+limits — handlers in flight, a per-worker intake rate, and unacknowledged broker deliveries —
+and projection checkpoints are monotonic high-water marks that name the worker that last
+advanced them.
+
 ## What comes next
 
-Phase 14 adds distributed production mode: running the worker fleet across processes, an event
-bus beyond the local outbox, and the operational concerns that come with more than one node.
+Phase 15 adds dedicated storage adapters — graph, vector, lexical, and S3-compatible blob
+backends — behind the interfaces the earlier phases stabilized, without changing canonical
+semantics to suit any one of them.

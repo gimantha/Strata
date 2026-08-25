@@ -37,6 +37,10 @@ jobs:
       # Turn a missing database into a failure: integration coverage must not vanish
       # silently if the service container fails to start.
       CG_REQUIRE_PG: "1"
+      TEST_NATS_URL: nats://127.0.0.1:4222
+      # The same rule for the bus: no NATS server means a failed build, not a quiet loss
+      # of the distributed coverage.
+      CG_REQUIRE_NATS: "1"
 
     steps:
       - uses: actions/checkout@v4
@@ -45,6 +49,24 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+
+      # Not a service container: JetStream needs the -js argument, and a service block
+      # can set image, ports, and env but not the command. A plain NATS server accepts
+      # connections and then fails every stream operation — the same trap as a PostgreSQL
+      # server without pgvector — so it has to be started properly or not at all.
+      - name: Start NATS with JetStream
+        run: |
+          docker run -d --name strata-ci-nats -p 4222:4222 nats:2.10-alpine -js
+          for _ in $(seq 1 30); do
+            if (exec 3<>/dev/tcp/127.0.0.1/4222) 2>/dev/null; then
+              echo "NATS is accepting connections"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "NATS never became reachable" >&2
+          docker logs strata-ci-nats >&2
+          exit 1
 
       - name: Check formatting
         run: |

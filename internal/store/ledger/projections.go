@@ -539,21 +539,48 @@ func (s *Store) DeleteProjectionsForEvent(ctx context.Context, ws domain.Workspa
 func (s *Store) SaveCheckpoint(ctx context.Context, checkpoint domain.ProjectionCheckpoint) error {
 	const op = "ledger.SaveCheckpoint"
 
+	// A checkpoint is a high-water mark, and several workers advance it concurrently
+	// (phase 14). Two of them finishing out of order must not let the older position win,
+	// so the position only moves forward — while the counter accumulates and the error
+	// field always reflects the latest attempt, because a stale error is worse than none.
+	//
+	// The alternative, a lock around read-modify-write, would serialize every projecting
+	// worker on one row for a value that is a hint rather than a source of truth.
 	_, err := s.pool.Exec(ctx, `
 		INSERT INTO projection_checkpoints (workspace_id, projection, last_recorded_at,
 		                                    last_record_id, records_projected, last_error,
-		                                    rebuilt_at, updated_at)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,now())
+		                                    rebuilt_at, advanced_by, updated_at)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,now())
 		ON CONFLICT (workspace_id, projection)
-		DO UPDATE SET last_recorded_at = EXCLUDED.last_recorded_at,
-		              last_record_id = EXCLUDED.last_record_id,
-		              records_projected = EXCLUDED.records_projected,
-		              last_error = EXCLUDED.last_error,
-		              rebuilt_at = coalesce(EXCLUDED.rebuilt_at, projection_checkpoints.rebuilt_at),
-		              updated_at = now()`,
+		DO UPDATE SET
+		    last_recorded_at = CASE
+		        WHEN EXCLUDED.last_recorded_at IS NULL THEN projection_checkpoints.last_recorded_at
+		        WHEN projection_checkpoints.last_recorded_at IS NULL THEN EXCLUDED.last_recorded_at
+		        WHEN EXCLUDED.last_recorded_at > projection_checkpoints.last_recorded_at
+		            THEN EXCLUDED.last_recorded_at
+		        ELSE projection_checkpoints.last_recorded_at
+		    END,
+		    last_record_id = CASE
+		        WHEN EXCLUDED.last_recorded_at IS NULL THEN projection_checkpoints.last_record_id
+		        WHEN projection_checkpoints.last_recorded_at IS NULL THEN EXCLUDED.last_record_id
+		        WHEN EXCLUDED.last_recorded_at > projection_checkpoints.last_recorded_at
+		            THEN EXCLUDED.last_record_id
+		        ELSE projection_checkpoints.last_record_id
+		    END,
+		    -- Accumulated, not replaced: each worker reports what it did, and the total is
+		    -- the fleet's throughput rather than whichever member wrote last. A rebuild
+		    -- resets it instead, because after a rebuild the count describes the rebuild.
+		    records_projected = CASE
+		        WHEN EXCLUDED.rebuilt_at IS NOT NULL THEN EXCLUDED.records_projected
+		        ELSE projection_checkpoints.records_projected + EXCLUDED.records_projected
+		    END,
+		    last_error = EXCLUDED.last_error,
+		    rebuilt_at = coalesce(EXCLUDED.rebuilt_at, projection_checkpoints.rebuilt_at),
+		    advanced_by = EXCLUDED.advanced_by,
+		    updated_at = now()`,
 		checkpoint.WorkspaceID, checkpoint.Projection, checkpoint.LastRecordedAt,
 		nullableString(domain.EntityID(checkpoint.LastRecordID)), checkpoint.RecordsProjected,
-		checkpoint.LastError, checkpoint.RebuiltAt)
+		checkpoint.LastError, checkpoint.RebuiltAt, checkpoint.AdvancedBy)
 	return mapError(err, op, "cannot save projection checkpoint")
 }
 
@@ -568,11 +595,11 @@ func (s *Store) GetCheckpoint(ctx context.Context, ws domain.WorkspaceID, projec
 	)
 	err := s.pool.QueryRow(ctx, `
 		SELECT workspace_id, projection, last_recorded_at, last_record_id, records_projected,
-		       last_error, rebuilt_at, updated_at
+		       last_error, rebuilt_at, advanced_by, updated_at
 		FROM projection_checkpoints WHERE workspace_id = $1 AND projection = $2`, ws, projection,
 	).Scan(&checkpoint.WorkspaceID, &checkpoint.Projection, &checkpoint.LastRecordedAt,
 		&lastRecordID, &checkpoint.RecordsProjected, &checkpoint.LastError,
-		&checkpoint.RebuiltAt, &checkpoint.UpdatedAt)
+		&checkpoint.RebuiltAt, &checkpoint.AdvancedBy, &checkpoint.UpdatedAt)
 	if err != nil {
 		if isNoRows(err) {
 			return domain.ProjectionCheckpoint{WorkspaceID: ws, Projection: projection}, nil
@@ -591,7 +618,7 @@ func (s *Store) ListCheckpoints(ctx context.Context, ws domain.WorkspaceID) ([]d
 
 	rows, err := s.pool.Query(ctx, `
 		SELECT workspace_id, projection, last_recorded_at, last_record_id, records_projected,
-		       last_error, rebuilt_at, updated_at
+		       last_error, rebuilt_at, advanced_by, updated_at
 		FROM projection_checkpoints WHERE workspace_id = $1 ORDER BY projection`, ws)
 	if err != nil {
 		return nil, mapError(err, op, "cannot list projection checkpoints")
@@ -606,7 +633,8 @@ func (s *Store) ListCheckpoints(ctx context.Context, ws domain.WorkspaceID) ([]d
 		)
 		if err := rows.Scan(&checkpoint.WorkspaceID, &checkpoint.Projection,
 			&checkpoint.LastRecordedAt, &lastRecordID, &checkpoint.RecordsProjected,
-			&checkpoint.LastError, &checkpoint.RebuiltAt, &checkpoint.UpdatedAt); err != nil {
+			&checkpoint.LastError, &checkpoint.RebuiltAt, &checkpoint.AdvancedBy,
+			&checkpoint.UpdatedAt); err != nil {
 			return nil, mapError(err, op, "cannot scan projection checkpoint")
 		}
 		if lastRecordID != nil {

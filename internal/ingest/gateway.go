@@ -62,7 +62,21 @@ type Gateway struct {
 	logger  *slog.Logger
 	metrics *observability.Metrics
 	tracer  trace.Tracer
+
+	notify Notifier
 }
+
+// Notifier is told about work that has been committed, so a fleet can hear about it
+// before its next poll.
+//
+// Deliberately returns nothing. The work item is already durable in the ledger by the
+// time this runs; a notifier that could fail an ingest would make an optimization into
+// a dependency (AGENTS.md section 28.1).
+type Notifier func(ctx context.Context, events ...domain.OutboxEvent)
+
+// SetNotifier attaches the push path. Wired after construction because the bus and the
+// gateway are built in the same pass and neither should own the other.
+func (g *Gateway) SetNotifier(notify Notifier) { g.notify = notify }
 
 // New builds a gateway.
 func New(ledger Ledger, blobs BlobStore, opts Options, logger *slog.Logger, metrics *observability.Metrics, tracer trace.Tracer) *Gateway {
@@ -265,6 +279,11 @@ func (g *Gateway) Accept(ctx context.Context, req Request) (Receipt, error) {
 		if g.metrics != nil {
 			g.metrics.IngestBytes.Add(ctx, info.Size)
 		}
+		// After the commit, never inside it, and only for work that is genuinely new:
+		// a duplicate created no work item to announce.
+		if g.notify != nil {
+			g.notify(ctx, work)
+		}
 	}
 
 	span.SetAttributes(
@@ -324,9 +343,28 @@ func (g *Gateway) pipelineWorkItem(event domain.SourceEvent) (domain.OutboxEvent
 		SchemaVersion: domain.OutboxSchemaVersion,
 		Payload:       payload,
 		DedupeKey:     domain.PipelineDedupeKey(event.SourceID, event.IdempotencyKey, g.opts.PipelineVersion),
+		PartitionKey:  partitionFor(event),
 		Status:        domain.OutboxPending,
 		MaxAttempts:   g.opts.MaxAttempts,
 	}, nil
+}
+
+// partitionFor decides what this work item may not run concurrently with.
+//
+// Successive versions of one upstream record are ordered: processing an update alongside the
+// create it supersedes lets the older content win the race and leaves the graph describing a
+// state the source has already left. The CDC path takes an advisory lock for exactly this
+// (internal/store/ledger/cdc.go); a partition key is the same guarantee moved into the claim,
+// where it also holds across processes and across the NATS transport.
+//
+// Only records with an upstream identity are partitioned. An ingest with no external id is a
+// one-off document that supersedes nothing, and serializing every such upload from one source
+// would turn a bulk import into a queue of one.
+func partitionFor(event domain.SourceEvent) string {
+	if event.ExternalID == "" {
+		return ""
+	}
+	return domain.PartitionOf(event.WorkspaceID, string(event.SourceID), event.ExternalID)
 }
 
 // resolveSource looks up the source inside the resolved workspace, which is what stops

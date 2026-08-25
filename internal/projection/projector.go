@@ -10,6 +10,8 @@ package projection
 import (
 	"context"
 	"log/slog"
+	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -51,6 +53,7 @@ type Store interface {
 type Projector struct {
 	store    Store
 	embedder embedding.Embedder
+	workerID string
 	now      func() time.Time
 	logger   *slog.Logger
 	tracer   trace.Tracer
@@ -59,6 +62,9 @@ type Projector struct {
 // Options configures the projector.
 type Options struct {
 	Now func() time.Time
+	// WorkerID identifies this process on the checkpoints it advances. Defaults to
+	// host and pid, which is enough to find the machine that stopped making progress.
+	WorkerID string
 }
 
 // New builds a projector. The embedder may be nil, in which case the lexical and graph
@@ -72,7 +78,18 @@ func New(store Store, embedder embedding.Embedder, opts Options, logger *slog.Lo
 	if tracer == nil {
 		tracer = tracenoop.NewTracerProvider().Tracer("projection")
 	}
-	return &Projector{store: store, embedder: embedder, now: now, logger: logger, tracer: tracer}
+	workerID := opts.WorkerID
+	if workerID == "" {
+		host, err := os.Hostname()
+		if err != nil {
+			host = "unknown"
+		}
+		workerID = host + "/" + strconv.Itoa(os.Getpid())
+	}
+	return &Projector{
+		store: store, embedder: embedder, workerID: workerID,
+		now: now, logger: logger, tracer: tracer,
+	}
 }
 
 // Stats reports what a projection run wrote.
@@ -535,6 +552,9 @@ func (p *Projector) saveCheckpoints(ctx context.Context, ws domain.WorkspaceID, 
 			LastRecordID:     string(cursorID),
 			RecordsProjected: int64(count),
 			RebuiltAt:        rebuiltAt,
+			// Which process moved it, so a projection that has stopped progressing is
+			// attributable rather than merely stale.
+			AdvancedBy: p.workerID,
 		}); err != nil {
 			return err
 		}

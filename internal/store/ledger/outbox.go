@@ -13,7 +13,8 @@ import (
 
 const outboxColumns = `id, workspace_id, graph_space_id, source_event_id, topic, event_type,
 	schema_version, payload, dedupe_key, status, attempts, max_attempts, visible_at, claimed_by,
-	claim_expires_at, last_error, error_class, trace_parent, created_at, updated_at, completed_at`
+	claim_expires_at, last_error, error_class, trace_parent, created_at, updated_at,
+	completed_at, partition_key`
 
 // insertOutboxTx writes a work item inside the caller's transaction. This is the only
 // way work enters the system, which is what makes "commit then publish" impossible.
@@ -37,12 +38,12 @@ func (s *Store) insertOutboxTx(ctx context.Context, tx pgx.Tx, o domain.OutboxEv
 	_, err := tx.Exec(ctx, `
 		INSERT INTO outbox_events (id, workspace_id, graph_space_id, source_event_id, topic, event_type,
 		                           schema_version, payload, dedupe_key, status, max_attempts,
-		                           visible_at, trace_parent)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,coalesce($12, now()),$13)
+		                           visible_at, trace_parent, partition_key)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,coalesce($12, now()),$13,$14)
 		ON CONFLICT (workspace_id, dedupe_key) DO NOTHING`,
 		o.ID, o.WorkspaceID, nullableString(o.GraphSpaceID), nullableString(o.SourceEventID),
 		o.Topic, o.EventType, o.SchemaVersion, []byte(o.Payload), o.DedupeKey,
-		o.Status, o.MaxAttempts, visibleAtOrNil(o.VisibleAt), o.TraceParent)
+		o.Status, o.MaxAttempts, visibleAtOrNil(o.VisibleAt), o.TraceParent, o.PartitionKey)
 	return mapError(err, op, "cannot insert outbox event")
 }
 
@@ -82,22 +83,70 @@ func (s *Store) ClaimOutbox(ctx context.Context, topics []string, workerID strin
 		topics = []string{}
 	}
 
+	// Partitioned work is handed out one item per key at a time, in publication order
+	// (AGENTS.md section 28.3). Two events for the same record therefore never run
+	// concurrently — across workers, because a live claim on the key blocks the next one,
+	// and within a worker, because DISTINCT ON takes at most one per key per batch.
+	//
+	// Unpartitioned work is unaffected: an empty key means no ordering requirement, and
+	// serializing everything would make a fleet of workers behave like one.
+	// Partitioned work is handed out one item per key at a time, in publication order
+	// (AGENTS.md section 28.3). Two events for the same record therefore never run
+	// concurrently — across workers, because a live claim on the key blocks the next one,
+	// and within a worker, because only the first pending event per key is a candidate.
+	//
+	// Unpartitioned work is unaffected: an empty key means no ordering requirement, and
+	// serializing everything would make a fleet of workers behave like one.
+	//
+	// Two CTEs rather than one query because PostgreSQL refuses FOR UPDATE alongside
+	// window functions: the first picks one event per partition, the second locks those
+	// with SKIP LOCKED, which is what keeps concurrent claimers from colliding.
 	rows, err := s.pool.Query(ctx, `
+		WITH candidates AS (
+			SELECT o.id, o.visible_at, o.created_at,
+			       row_number() OVER (
+			           PARTITION BY CASE WHEN o.partition_key = '' THEN o.id::text
+			                             ELSE o.partition_key END
+			           ORDER BY o.visible_at, o.created_at
+			       ) AS position
+			FROM outbox_events o
+			WHERE o.status = 'pending'
+			  AND o.visible_at <= now()
+			  AND ($3::text[] IS NULL OR cardinality($3::text[]) = 0 OR o.topic = ANY($3::text[]))
+			  -- A partition with work already in flight is skipped entirely, so the next
+			  -- event for that record waits for its predecessor to finish.
+			  AND (o.partition_key = '' OR NOT EXISTS (
+			      SELECT 1 FROM outbox_events inflight
+			      WHERE inflight.workspace_id = o.workspace_id
+			        AND inflight.partition_key = o.partition_key
+			        AND inflight.status = 'claimed'
+			        AND inflight.claim_expires_at > now()
+			  ))
+			ORDER BY o.visible_at, o.created_at
+			-- A bounded window: enough rows that a batch can be filled even when many of
+			-- them share partitions, without scanning a deep backlog on every poll.
+			LIMIT $4 * 8
+		),
+		locked AS (
+			SELECT e.id
+			FROM outbox_events e
+			WHERE e.id IN (SELECT c.id FROM candidates c WHERE c.position = 1)
+			  -- Re-checked under the lock, not merely in the snapshot above. Two claimers
+			  -- can both see a row as pending while choosing candidates; the one that
+			  -- loses the race must find it already claimed rather than claiming it again.
+			  AND e.status = 'pending'
+			  AND e.visible_at <= now()
+			ORDER BY e.visible_at, e.created_at
+			FOR UPDATE SKIP LOCKED
+			LIMIT $4
+		)
 		UPDATE outbox_events
 		SET status = 'claimed',
 		    claimed_by = $1,
 		    claim_expires_at = now() + make_interval(secs => $2),
 		    attempts = outbox_events.attempts + 1,
 		    updated_at = now()
-		WHERE id IN (
-			SELECT id FROM outbox_events
-			WHERE status = 'pending'
-			  AND visible_at <= now()
-			  AND ($3::text[] IS NULL OR cardinality($3::text[]) = 0 OR topic = ANY($3::text[]))
-			ORDER BY visible_at, created_at
-			FOR UPDATE SKIP LOCKED
-			LIMIT $4
-		)
+		WHERE id IN (SELECT id FROM locked) AND status = 'pending'
 		RETURNING `+outboxColumns,
 		workerID, lease.Seconds(), topics, limit)
 	if err != nil {
@@ -357,7 +406,7 @@ func scanOutbox(rows pgx.Rows, op string) (domain.OutboxEvent, error) {
 	err := rows.Scan(&o.ID, &o.WorkspaceID, &graphSpaceID, &sourceEventID, &o.Topic, &o.EventType,
 		&o.SchemaVersion, &payload, &o.DedupeKey, &o.Status, &o.Attempts, &o.MaxAttempts,
 		&o.VisibleAt, &o.ClaimedBy, &o.ClaimExpiresAt, &o.LastError, &o.ErrorClass,
-		&o.TraceParent, &o.CreatedAt, &o.UpdatedAt, &o.CompletedAt)
+		&o.TraceParent, &o.CreatedAt, &o.UpdatedAt, &o.CompletedAt, &o.PartitionKey)
 	if err != nil {
 		return domain.OutboxEvent{}, mapError(err, op, "cannot scan outbox event")
 	}

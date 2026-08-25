@@ -13,10 +13,12 @@ this file.
 
 ## Status
 
-Phases 0 through 6 of the contract are implemented: the architecture skeleton, the
+Phases 0 through 14 of the contract are implemented: the architecture skeleton, the
 canonical ingestion ledger, the assertion-first knowledge model, schema-constrained
-extraction, conservative entity resolution, multi-temporal reconciliation, and rebuildable
-retrieval projections.
+extraction, conservative entity resolution, multi-temporal reconciliation, rebuildable
+retrieval projections, hybrid retrieval and context assembly, ontology modes, change data
+capture, attribute-based policy, memory lifecycle, portable packages and MCP, and
+distributed production mode.
 
 **Working today**
 
@@ -109,8 +111,13 @@ retrieval projections.
   identity, knowledge time is the importer's own, and nothing is committed until the digest
   over every record verifies
 
-**Not built yet** (later phases, in order): ABAC policy, memory lifecycle,
-MCP, and distributed operation.
+- Distributed operation: a worker fleet sharing one queue without duplicate delivery,
+  optional push delivery through NATS JetStream that carries notice rather than authority,
+  partition keys that keep successive versions of one upstream record in order, per-worker
+  rate limiting, and monotonic projection checkpoints that name the worker that advanced them
+
+**Not built yet** (phase 15): dedicated graph, vector, lexical, and S3-compatible blob
+storage adapters behind the interfaces the earlier phases stabilized.
 
 ## Quickstart
 
@@ -147,6 +154,11 @@ go run ./cmd/cgctl ingest file --graph-space "$GS" --source support-chat \
 # 7. Process it
 go run ./cmd/cgworker &     # or set CG_EMBEDDED_WORKER=true on the server
 go run ./cmd/cgctl event status --id <source_event_id>
+
+# Run several workers to scale out; they share one queue and never take the same item
+# twice. For push delivery instead of polling, start a broker and point them at it:
+#   ./scripts/dev-nats.sh start
+#   export CG_NATS_URL=nats://127.0.0.1:14222
 
 # 8. Ask it something
 go run ./cmd/cgctl search --graph-space "$GS" --query "who confirmed the renewal" --explain
@@ -283,4 +295,6 @@ are declared by the services that consume them; implementations live under `stor
   ways of forgetting
 - [docs/api/mcp.md](docs/api/mcp.md) — the MCP tool surface, and portable packages with
   their integrity manifests
+- [docs/api/distributed.md](docs/api/distributed.md) — running a worker fleet, push
+  delivery, partition keys, backpressure, and distributed checkpoints
 - [docs/adr/](docs/adr/) — decisions, alternatives, and trade-offs
