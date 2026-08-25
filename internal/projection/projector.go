@@ -40,6 +40,7 @@ type Store interface {
 	QueryAssertions(ctx context.Context, q domain.AssertionQuery) ([]domain.Assertion, error)
 
 	UpsertVectors(ctx context.Context, records []domain.VectorRecord) error
+	RefreshVectorMetadata(ctx context.Context, model string, version int, records []domain.ProjectedRecord) error
 	UpsertLexical(ctx context.Context, records []domain.ProjectedRecord) error
 	UpsertGraphEdges(ctx context.Context, edges []domain.GraphEdge) error
 	ExistingVectorHashes(ctx context.Context, ws domain.WorkspaceID, model string, version int, surface domain.Surface, recordIDs []string) (map[string]string, error)
@@ -368,7 +369,7 @@ func (p *Projector) write(ctx context.Context, scope domain.Scope, records []dom
 		return stats, nil
 	}
 
-	vectors, embedded, reused, err := p.embed(ctx, scope, records)
+	vectors, unchanged, err := p.embed(ctx, scope, records)
 	if err != nil {
 		return Stats{}, err
 	}
@@ -377,14 +378,30 @@ func (p *Projector) write(ctx context.Context, scope domain.Scope, records []dom
 			return Stats{}, err
 		}
 	}
+	// Records whose text was unchanged still need their metadata written. Skipping the
+	// embedding is a cost decision; skipping the row would mean a claim that has been
+	// deactivated, expired, or reclassified keeps its old standing in the vector index
+	// while the lexical index — which has no such skip — moves on.
+	if len(unchanged) > 0 {
+		if err := p.store.RefreshVectorMetadata(ctx,
+			p.embedder.Model(), p.embedder.Version(), unchanged); err != nil {
+			return Stats{}, err
+		}
+	}
 	stats.Vectors = len(vectors)
-	stats.Embedded = embedded
-	stats.Reused = reused
+	stats.Embedded = len(vectors)
+	stats.Reused = len(unchanged)
 	return stats, nil
 }
 
-// embed turns records into vectors, skipping text that is already embedded unchanged.
-func (p *Projector) embed(ctx context.Context, scope domain.Scope, records []domain.ProjectedRecord) ([]domain.VectorRecord, int, int, error) {
+// embed turns records into vectors, and reports which ones did not need embedding.
+//
+// The second return is not a count but the records themselves, because they still have to
+// be written: unchanged text does not mean an unchanged record. A caller that treated the
+// reused set as "nothing to do" is how lifecycle changes went missing from the vector
+// projection.
+func (p *Projector) embed(ctx context.Context, scope domain.Scope,
+	records []domain.ProjectedRecord) ([]domain.VectorRecord, []domain.ProjectedRecord, error) {
 	const op = "projection.embed"
 
 	surface := records[0].Surface
@@ -396,25 +413,25 @@ func (p *Projector) embed(ctx context.Context, scope domain.Scope, records []dom
 	existing, err := p.store.ExistingVectorHashes(ctx, scope.WorkspaceID,
 		p.embedder.Model(), p.embedder.Version(), surface, ids)
 	if err != nil {
-		return nil, 0, 0, err
+		return nil, nil, err
 	}
 
 	var (
-		pending []domain.ProjectedRecord
-		hashes  []string
-		reused  int
+		pending   []domain.ProjectedRecord
+		hashes    []string
+		unchanged []domain.ProjectedRecord
 	)
 	for _, record := range records {
 		hash := domain.ContentHash([]byte(record.Content))
 		if existing[record.RecordID] == hash {
-			reused++
+			unchanged = append(unchanged, record)
 			continue
 		}
 		pending = append(pending, record)
 		hashes = append(hashes, hash)
 	}
 	if len(pending) == 0 {
-		return nil, 0, reused, nil
+		return nil, unchanged, nil
 	}
 
 	out := make([]domain.VectorRecord, 0, len(pending))
@@ -429,16 +446,16 @@ func (p *Projector) embed(ctx context.Context, scope domain.Scope, records []dom
 
 		vectors, err := p.embedder.Embed(ctx, texts)
 		if err != nil {
-			return nil, 0, 0, err
+			return nil, nil, err
 		}
 		if len(vectors) != len(batch) {
-			return nil, 0, 0, domain.Errorf(domain.CodeProviderUnavailable, op,
+			return nil, nil, domain.Errorf(domain.CodeProviderUnavailable, op,
 				"embedder returned %d vectors for %d inputs", len(vectors), len(batch))
 		}
 
 		for i, record := range batch {
 			if err := vectors[i].Validate(p.embedder.Dimensions()); err != nil {
-				return nil, 0, 0, err
+				return nil, nil, err
 			}
 			out = append(out, domain.VectorRecord{
 				ProjectedRecord: record,
@@ -449,7 +466,7 @@ func (p *Projector) embed(ctx context.Context, scope domain.Scope, records []dom
 			})
 		}
 	}
-	return out, len(pending), reused, nil
+	return out, unchanged, nil
 }
 
 // Rebuild drops every projection for a workspace and replays it from the ledger.

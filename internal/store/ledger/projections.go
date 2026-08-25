@@ -1000,3 +1000,52 @@ func (s *Store) explain(ctx context.Context, op, sql string, args []any,
 	}
 	return plan.String(), mapError(rows.Err(), op, "cannot read the query plan")
 }
+
+// RefreshVectorMetadata updates everything about a vector row except the vector itself.
+//
+// It exists because embedding is expensive and lifecycle is not. The projector skips
+// re-embedding text whose content is unchanged, and a claim that has been deactivated,
+// expired, superseded, or reclassified has exactly that shape: identical text, different
+// standing. Without a metadata-only write, skipping the embedding also skipped the
+// lifecycle, and a forgotten claim stayed active in the vector index while the lexical
+// index dropped it (AGENTS.md section 21).
+//
+// Scoped to one model and version, matching how ExistingVectorHashes decides what is
+// already embedded: rows from another model are a different projection with their own
+// lifecycle to maintain.
+func (s *Store) RefreshVectorMetadata(ctx context.Context, model string, version int,
+	records []domain.ProjectedRecord) error {
+	const op = "ledger.RefreshVectorMetadata"
+
+	if len(records) == 0 {
+		return nil
+	}
+
+	return s.InTx(ctx, func(tx pgx.Tx) error {
+		batch := &pgx.Batch{}
+		for _, record := range records {
+			batch.Queue(`
+				UPDATE vector_records
+				SET valid_from = $6, valid_to = $7, status = $8, classification = $9,
+				    memory_kind = $10, entity_type = $11, source_id = $12, predicate = $13,
+				    active_from = $14, active_until = $15, decay_starts_at = $16, expires_at = $17
+				WHERE workspace_id = $1 AND surface = $2 AND record_id = $3
+				  AND embedding_model = $4 AND embedding_version = $5`,
+				record.Scope.WorkspaceID, record.Surface, record.RecordID, model, version,
+				record.ValidFrom, record.ValidTo, record.Status, record.Classification,
+				record.MemoryKind, record.EntityType,
+				nullableString(record.SourceID), record.Predicate,
+				record.Lifecycle.ActiveFrom, record.Lifecycle.ActiveUntil,
+				record.Lifecycle.DecayStartsAt, record.Lifecycle.ExpiresAt)
+		}
+
+		results := tx.SendBatch(ctx, batch)
+		defer func() { _ = results.Close() }()
+		for range records {
+			if _, err := results.Exec(); err != nil {
+				return mapError(err, op, "cannot refresh vector metadata")
+			}
+		}
+		return nil
+	})
+}
