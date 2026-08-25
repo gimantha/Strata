@@ -36,6 +36,7 @@ import (
 	"github.com/gimantha/strata/internal/projection"
 	"github.com/gimantha/strata/internal/retrieval"
 	"github.com/gimantha/strata/internal/store/blob"
+	blobs3 "github.com/gimantha/strata/internal/store/blob/s3"
 	"github.com/gimantha/strata/internal/store/ledger"
 )
 
@@ -45,7 +46,7 @@ type App struct {
 	Telemetry *observability.Telemetry
 	Logger    *slog.Logger
 	Ledger    *ledger.Store
-	Blobs     *blob.FS
+	Blobs     blob.Store
 	Identity  *identity.Service
 	Gateway   *ingest.Gateway
 	Knowledge *knowledge.Service
@@ -100,7 +101,7 @@ func New(ctx context.Context, cfg config.Config) (*App, error) {
 		}
 	}
 
-	blobs, err := blob.NewFS(cfg.BlobDir)
+	blobs, err := newBlobStore(ctx, cfg)
 	if err != nil {
 		app.closeLedger()
 		return nil, domain.Wrap(err, domain.CodeInvalidArgument, "app.New", "cannot open blob storage")
@@ -425,5 +426,28 @@ func (a *App) HandleWork(ctx context.Context, event domain.OutboxEvent) error {
 
 	default:
 		return domain.Errorf(domain.CodeInvalidArgument, op, "unknown event type %q", event.EventType)
+	}
+}
+
+// newBlobStore opens the configured artifact store.
+//
+// Both backends satisfy the same port and pass the same conformance suite, so nothing
+// downstream of here knows or cares which one is running. The choice is an operational one:
+// the filesystem for a single node, an object store where the bytes need versioning and
+// replication of their own (AGENTS.md sections 3, 40.2).
+func newBlobStore(ctx context.Context, cfg config.Config) (blob.Store, error) {
+	switch cfg.BlobBackend {
+	case "s3":
+		return blobs3.Open(ctx, blobs3.Options{
+			Bucket:          cfg.S3Bucket,
+			Prefix:          cfg.S3Prefix,
+			Endpoint:        cfg.S3Endpoint,
+			Region:          cfg.S3Region,
+			AccessKeyID:     cfg.S3AccessKey,
+			SecretAccessKey: cfg.S3Secret,
+			PathStyle:       cfg.S3PathStyle,
+		})
+	default:
+		return blob.NewFS(cfg.BlobDir)
 	}
 }

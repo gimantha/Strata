@@ -145,3 +145,16 @@ func TestFSDeleteRemovesContent(t *testing.T) {
 		t.Fatal("deleted content must be unreadable: a surviving blob is a leak")
 	}
 }
+
+// TestFSMeetsTheBlobContract runs the same suite the S3 backend runs.
+//
+// Both backends against one suite is what makes the port claim testable rather than
+// aspirational: a caller can stop caring which is configured only if they behave the same,
+// and behaviour is not something an interface can enforce.
+func TestFSMeetsTheBlobContract(t *testing.T) {
+	store, err := NewFS(t.TempDir())
+	if err != nil {
+		t.Fatalf("create store: %v", err)
+	}
+	RunConformance(t, "fs", store)
+}

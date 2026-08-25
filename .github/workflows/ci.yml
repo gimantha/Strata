@@ -41,6 +41,12 @@ jobs:
       # The same rule for the bus: no NATS server means a failed build, not a quiet loss
       # of the distributed coverage.
       CG_REQUIRE_NATS: "1"
+      TEST_S3_ENDPOINT: http://127.0.0.1:9000
+      TEST_S3_ACCESS_KEY: strata
+      TEST_S3_SECRET_KEY: strata-secret
+      # And for the object store, so the S3 adapter is verified against a real
+      # implementation rather than skipped.
+      CG_REQUIRE_S3: "1"
 
     steps:
       - uses: actions/checkout@v4
@@ -66,6 +72,26 @@ jobs:
           done
           echo "NATS never became reachable" >&2
           docker logs strata-ci-nats >&2
+          exit 1
+
+      # Also not a service container: MinIO needs the `server /data` command, which a
+      # service block cannot set. Tested against MinIO rather than AWS because the adapter
+      # claims S3 compatibility, and a compatibility claim tested only against S3 is
+      # untested.
+      - name: Start MinIO
+        run: |
+          docker run -d --name strata-ci-minio -p 9000:9000 \
+            -e MINIO_ROOT_USER=strata -e MINIO_ROOT_PASSWORD=strata-secret \
+            minio/minio:latest server /data
+          for _ in $(seq 1 30); do
+            if (exec 3<>/dev/tcp/127.0.0.1/9000) 2>/dev/null; then
+              echo "MinIO is accepting connections"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "MinIO never became reachable" >&2
+          docker logs strata-ci-minio >&2
           exit 1
 
       - name: Check formatting

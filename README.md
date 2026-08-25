@@ -312,4 +312,6 @@ are declared by the services that consume them; implementations live under `stor
   harness, and the invariants checked on every commit
 - [docs/api/backup-and-recovery.md](docs/api/backup-and-recovery.md) — what a backup must
   contain, what rebuilds, and how to prove the difference
+- [docs/api/storage.md](docs/api/storage.md) — the storage ports, the backends behind them,
+  and the conformance suite they share
 - [docs/adr/](docs/adr/) — decisions, alternatives, and trade-offs

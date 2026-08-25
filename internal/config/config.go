@@ -35,7 +35,28 @@ type Config struct {
 	// to one command. Disable it where migrations are a separate deployment step.
 	AutoMigrate bool
 
+	// BlobBackend selects where raw source material is archived: fs or s3.
+	//
+	// The filesystem is correct and has no versioning or replication of its own, which
+	// makes protecting the bytes every claim is cited to the deployment's problem. s3
+	// hands that to an object store (AGENTS.md section 40.2).
+	BlobBackend string
 	BlobDir     string
+
+	// S3 settings, used when CG_BLOB_BACKEND=s3. The endpoint makes this work with any
+	// S3-compatible store, not only AWS.
+	S3Bucket   string
+	S3Prefix   string
+	S3Endpoint string
+	S3Region   string
+	// S3AccessKey and S3Secret are optional: leaving both empty uses the ambient
+	// credential chain, which is how a deployment on AWS avoids holding credentials at
+	// all. The secret is never logged.
+	S3AccessKey string
+	S3Secret    string
+	// S3PathStyle addresses buckets as endpoint/bucket/key. Required by most self-hosted
+	// implementations, which have no wildcard DNS for virtual-host addressing.
+	S3PathStyle bool
 	APIKeysFile string
 
 	LogLevel     string
@@ -136,7 +157,16 @@ func LoadFrom(getenv func(string) string) (Config, error) {
 		DBMaxConns:  int32(l.intVal("DB_MAX_CONNS", 10)),
 		DBMinConns:  int32(l.intVal("DB_MIN_CONNS", 0)),
 
+		BlobBackend: strings.ToLower(l.str("BLOB_BACKEND", "fs")),
 		BlobDir:     l.str("BLOB_DIR", "./.data/blobs"),
+
+		S3Bucket:    l.str("S3_BUCKET", ""),
+		S3Prefix:    l.str("S3_PREFIX", ""),
+		S3Endpoint:  l.str("S3_ENDPOINT", ""),
+		S3Region:    l.str("S3_REGION", "us-east-1"),
+		S3AccessKey: l.str("S3_ACCESS_KEY_ID", ""),
+		S3Secret:    l.str("S3_SECRET_ACCESS_KEY", ""),
+		S3PathStyle: l.boolVal("S3_PATH_STYLE", false),
 		APIKeysFile: l.str("API_KEYS_FILE", "./configs/api-keys.json"),
 
 		LogLevel:     strings.ToLower(l.str("LOG_LEVEL", "info")),
@@ -203,8 +233,17 @@ func (c Config) Validate() error {
 	if c.HTTPAddr == "" {
 		problems = append(problems, "CG_HTTP_ADDR is required")
 	}
-	if c.BlobDir == "" {
-		problems = append(problems, "CG_BLOB_DIR is required")
+	switch c.BlobBackend {
+	case "fs":
+		if c.BlobDir == "" {
+			problems = append(problems, "CG_BLOB_DIR is required for the fs backend")
+		}
+	case "s3":
+		if c.S3Bucket == "" {
+			problems = append(problems, "CG_S3_BUCKET is required for the s3 backend")
+		}
+	default:
+		problems = append(problems, "CG_BLOB_BACKEND must be fs or s3")
 	}
 	if c.DBMaxConns < 1 {
 		problems = append(problems, "CG_DB_MAX_CONNS must be at least 1")
@@ -302,11 +341,13 @@ func (c Config) Validate() error {
 // credentials removed. Configuration is logged; secrets are not.
 func (c Config) Redacted() map[string]any {
 	return map[string]any{
-		"env":                c.Env,
-		"service_name":       c.ServiceName,
-		"http_addr":          c.HTTPAddr,
-		"database":           redactDSN(c.DatabaseURL),
-		"blob_dir":           c.BlobDir,
+		"env":          c.Env,
+		"service_name": c.ServiceName,
+		"http_addr":    c.HTTPAddr,
+		"database":     redactDSN(c.DatabaseURL),
+		"blob_backend": c.BlobBackend,
+		// The bucket and endpoint, never the credentials.
+		"blob_location":      c.blobLocation(),
 		"log_level":          c.LogLevel,
 		"otlp_enabled":       c.OTLPEndpoint != "",
 		"embedded_worker":    c.EmbeddedWorker,
@@ -317,6 +358,21 @@ func (c Config) Redacted() map[string]any {
 		"nats_stream":  c.NATSStream,
 		"nats_durable": c.NATSDurable,
 	}
+}
+
+// blobLocation describes where artifacts live, without disclosing how to reach them.
+func (c Config) blobLocation() string {
+	if c.BlobBackend == "s3" {
+		location := c.S3Bucket
+		if c.S3Prefix != "" {
+			location += "/" + c.S3Prefix
+		}
+		if c.S3Endpoint != "" {
+			location += " @ " + c.S3Endpoint
+		}
+		return location
+	}
+	return c.BlobDir
 }
 
 // redactDSN strips userinfo from a connection string so a password can never reach
