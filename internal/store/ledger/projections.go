@@ -183,7 +183,12 @@ func buildVectorSearch(op string, q domain.VectorQuery) (string, []any, error) {
 		       v.decay_starts_at
 		FROM vector_records v
 		WHERE ` + strings.Join(where, " AND ") + `
-		ORDER BY v.embedding <=> $` + strconv.Itoa(probe) + `::vector
+		-- record_id breaks ties. Without it two records at the same distance come back
+		-- in whatever physical order the scan produced, so the same query against
+		-- unchanged data can return a different order on a different machine or after a
+		-- vacuum. Fusion turns that into different scores, and a caller paging through
+		-- results can see an item twice or never.
+		ORDER BY v.embedding <=> $` + strconv.Itoa(probe) + `::vector, v.record_id
 		LIMIT $` + strconv.Itoa(len(args))
 
 	return sql, args, nil
@@ -324,7 +329,7 @@ func buildLexicalSearch(op string, q domain.LexicalQuery) (string, []any, error)
 		              l.decay_starts_at
 		       FROM lexical_records l
 		       WHERE ` + strings.Join(where, " AND ") + `
-		       ORDER BY score DESC, length(l.content)
+		       ORDER BY score DESC, length(l.content), l.record_id
 		       LIMIT $` + strconv.Itoa(len(args))
 	} else {
 		where = append(where, fmt.Sprintf("l.search_vector @@ websearch_to_tsquery('english', $%d)", term))
@@ -335,7 +340,7 @@ func buildLexicalSearch(op string, q domain.LexicalQuery) (string, []any, error)
 		              l.decay_starts_at
 		       FROM lexical_records l
 		       WHERE ` + strings.Join(where, " AND ") + `
-		       ORDER BY score DESC
+		       ORDER BY score DESC, l.record_id
 		       LIMIT $` + strconv.Itoa(len(args))
 	}
 

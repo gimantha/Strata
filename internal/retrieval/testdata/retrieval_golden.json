@@ -1,970 +1,812 @@
 [
   {
     "query": "hybrid / exact error code",
-    "results": [
-      {
-        "rank": 1,
-        "surface": "chunk",
-        "label": "error",
-        "score": 0.0557,
-        "found_by": [
-          "exact",
-          "lexical",
-          "vector"
-        ]
-      },
-      {
-        "rank": 2,
-        "surface": "chunk",
-        "label": "other-error",
-        "score": 0.0116,
-        "found_by": [
-          "vector"
-        ]
-      },
-      {
-        "rank": 3,
-        "surface": "entity",
-        "label": "Globex Industries",
-        "score": 0.0115,
-        "found_by": [
-          "graph"
-        ]
-      }
-    ]
+    "labels": [
+      "chunk:error",
+      "chunk:other-error",
+      "entity:Globex Industries"
+    ],
+    "scores": [
+      0.0557,
+      0.0116,
+      0.0115
+    ],
+    "found_by": {
+      "chunk:error": [
+        "exact",
+        "lexical",
+        "vector"
+      ],
+      "chunk:other-error": [
+        "vector"
+      ],
+      "entity:Globex Industries": [
+        "graph"
+      ]
+    }
   },
   {
     "query": "hybrid / exact part number",
-    "results": [
-      {
-        "rank": 1,
-        "surface": "chunk",
-        "label": "part",
-        "score": 0.0557,
-        "found_by": [
-          "exact",
-          "lexical",
-          "vector"
-        ]
-      },
-      {
-        "rank": 2,
-        "surface": "entity",
-        "label": "Acme Corporation",
-        "score": 0.0115,
-        "found_by": [
-          "graph"
-        ]
-      },
-      {
-        "rank": 3,
-        "surface": "chunk",
-        "label": "other-part",
-        "score": 0.011,
-        "found_by": [
-          "vector"
-        ]
-      }
-    ]
+    "labels": [
+      "chunk:other-part",
+      "chunk:part"
+    ],
+    "scores": [
+      0.0557,
+      0.011
+    ],
+    "found_by": {
+      "chunk:other-part": [
+        "vector"
+      ],
+      "chunk:part": [
+        "exact",
+        "lexical",
+        "vector"
+      ]
+    }
   },
   {
     "query": "hybrid / prose with shared vocabulary",
-    "results": [
-      {
-        "rank": 1,
-        "surface": "chunk",
-        "label": "supply",
-        "score": 0.0328,
-        "found_by": [
-          "lexical",
-          "vector"
-        ]
-      },
-      {
-        "rank": 2,
-        "surface": "entity",
-        "label": "Globex Industries",
-        "score": 0.0115,
-        "found_by": [
-          "graph"
-        ]
-      }
-    ]
+    "labels": [
+      "chunk:supply",
+      "entity:Globex Industries"
+    ],
+    "scores": [
+      0.0328,
+      0.0115
+    ],
+    "found_by": {
+      "chunk:supply": [
+        "lexical",
+        "vector"
+      ],
+      "entity:Globex Industries": [
+        "graph"
+      ]
+    }
   },
   {
     "query": "hybrid / wording the document does not use",
-    "results": [
-      {
-        "rank": 1,
-        "surface": "chunk",
-        "label": "turbine",
-        "score": 0.0328,
-        "found_by": [
-          "lexical",
-          "vector"
-        ]
-      },
-      {
-        "rank": 2,
-        "surface": "chunk",
-        "label": "energy-market",
-        "score": 0.0135,
-        "found_by": [
-          "vector"
-        ]
-      },
-      {
-        "rank": 3,
-        "surface": "chunk",
-        "label": "housing",
-        "score": 0.01,
-        "found_by": [
-          "vector"
-        ]
-      }
-    ]
+    "labels": [
+      "chunk:energy-market",
+      "chunk:housing",
+      "chunk:turbine"
+    ],
+    "scores": [
+      0.0328,
+      0.0135,
+      0.01
+    ],
+    "found_by": {
+      "chunk:energy-market": [
+        "vector"
+      ],
+      "chunk:housing": [
+        "vector"
+      ],
+      "chunk:turbine": [
+        "lexical",
+        "vector"
+      ]
+    }
   },
   {
     "query": "hybrid / entity by name",
-    "results": [
-      {
-        "rank": 1,
-        "surface": "entity",
-        "label": "Globex Industries (organization)",
-        "score": 0.0493,
-        "found_by": [
-          "entity",
-          "lexical",
-          "vector"
-        ]
-      },
-      {
-        "rank": 2,
-        "surface": "assertion",
-        "label": "Acme Corporation supplies Globex Industries",
-        "score": 0.0277,
-        "found_by": [
-          "lexical",
-          "vector"
-        ]
-      },
-      {
-        "rank": 3,
-        "surface": "chunk",
-        "label": "supply",
-        "score": 0.0275,
-        "found_by": [
-          "lexical",
-          "vector"
-        ]
-      },
-      {
-        "rank": 4,
-        "surface": "chunk",
-        "label": "turbine",
-        "score": 0.0244,
-        "found_by": [
-          "lexical",
-          "vector"
-        ]
-      }
-    ]
+    "labels": [
+      "assertion:Acme Corporation supplies Globex Industries",
+      "chunk:supply",
+      "chunk:turbine",
+      "entity:Acme Corporation",
+      "entity:Globex Industries (organization)"
+    ],
+    "scores": [
+      0.0496,
+      0.0275,
+      0.0272,
+      0.0246,
+      0.0115
+    ],
+    "found_by": {
+      "assertion:Acme Corporation supplies Globex Industries": [
+        "lexical",
+        "vector"
+      ],
+      "chunk:supply": [
+        "lexical",
+        "vector"
+      ],
+      "chunk:turbine": [
+        "lexical",
+        "vector"
+      ],
+      "entity:Acme Corporation": [
+        "graph"
+      ],
+      "entity:Globex Industries (organization)": [
+        "entity",
+        "lexical",
+        "vector"
+      ]
+    }
   },
   {
     "query": "hybrid / relationship no passage states",
-    "results": [
-      {
-        "rank": 1,
-        "surface": "entity",
-        "label": "Acme Corporation (organization)",
-        "score": 0.0519,
-        "found_by": [
-          "entity",
-          "lexical",
-          "vector"
-        ]
-      },
-      {
-        "rank": 2,
-        "surface": "assertion",
-        "label": "Acme Corporation supplies Globex Industries",
-        "score": 0.0303,
-        "found_by": [
-          "lexical",
-          "vector"
-        ]
-      },
-      {
-        "rank": 3,
-        "surface": "chunk",
-        "label": "supply",
-        "score": 0.0272,
-        "found_by": [
-          "lexical",
-          "vector"
-        ]
-      },
-      {
-        "rank": 4,
-        "surface": "entity",
-        "label": "Globex Industries",
-        "score": 0.0115,
-        "found_by": [
-          "graph"
-        ]
-      }
-    ]
+    "labels": [
+      "assertion:Acme Corporation supplies Globex Industries",
+      "chunk:supply",
+      "entity:Acme Corporation (organization)",
+      "entity:Globex Industries"
+    ],
+    "scores": [
+      0.0522,
+      0.0298,
+      0.0275,
+      0.0115
+    ],
+    "found_by": {
+      "assertion:Acme Corporation supplies Globex Industries": [
+        "lexical",
+        "vector"
+      ],
+      "chunk:supply": [
+        "lexical",
+        "vector"
+      ],
+      "entity:Acme Corporation (organization)": [
+        "entity",
+        "lexical",
+        "vector"
+      ],
+      "entity:Globex Industries": [
+        "graph"
+      ]
+    }
   },
   {
     "query": "hybrid / policy question",
-    "results": [
-      {
-        "rank": 1,
-        "surface": "chunk",
-        "label": "housing",
-        "score": 0.0164,
-        "found_by": [
-          "vector"
-        ]
-      },
-      {
-        "rank": 2,
-        "surface": "chunk",
-        "label": "supplier-review",
-        "score": 0.0161,
-        "found_by": [
-          "vector"
-        ]
-      },
-      {
-        "rank": 3,
-        "surface": "chunk",
-        "label": "fastener-policy",
-        "score": 0.0146,
-        "found_by": [
-          "vector"
-        ]
-      },
-      {
-        "rank": 4,
-        "surface": "chunk",
-        "label": "delivery",
-        "score": 0.0144,
-        "found_by": [
-          "vector"
-        ]
-      },
-      {
-        "rank": 5,
-        "surface": "chunk",
-        "label": "part",
-        "score": 0.0141,
-        "found_by": [
-          "vector"
-        ]
-      },
-      {
-        "rank": 6,
-        "surface": "chunk",
-        "label": "refund",
-        "score": 0.0136,
-        "found_by": [
-          "vector"
-        ]
-      },
-      {
-        "rank": 7,
-        "surface": "chunk",
-        "label": "invoice",
-        "score": 0.0132,
-        "found_by": [
-          "vector"
-        ]
-      }
-    ]
+    "labels": [
+      "chunk:delivery",
+      "chunk:fastener-policy",
+      "chunk:housing",
+      "chunk:invoice",
+      "chunk:part",
+      "chunk:refund",
+      "chunk:supplier-review"
+    ],
+    "scores": [
+      0.0164,
+      0.0161,
+      0.0146,
+      0.0144,
+      0.0141,
+      0.0136,
+      0.0132
+    ],
+    "found_by": {
+      "chunk:delivery": [
+        "vector"
+      ],
+      "chunk:fastener-policy": [
+        "vector"
+      ],
+      "chunk:housing": [
+        "vector"
+      ],
+      "chunk:invoice": [
+        "vector"
+      ],
+      "chunk:part": [
+        "vector"
+      ],
+      "chunk:refund": [
+        "vector"
+      ],
+      "chunk:supplier-review": [
+        "vector"
+      ]
+    }
   },
   {
     "query": "hybrid / escalation threshold",
-    "results": [
-      {
-        "rank": 1,
-        "surface": "chunk",
-        "label": "escalation",
-        "score": 0.0328,
-        "found_by": [
-          "lexical",
-          "vector"
-        ]
-      },
-      {
-        "rank": 2,
-        "surface": "chunk",
-        "label": "charges",
-        "score": 0.0105,
-        "found_by": [
-          "vector"
-        ]
-      }
-    ]
+    "labels": [
+      "chunk:charges",
+      "chunk:escalation"
+    ],
+    "scores": [
+      0.0328,
+      0.0105
+    ],
+    "found_by": {
+      "chunk:charges": [
+        "vector"
+      ],
+      "chunk:escalation": [
+        "lexical",
+        "vector"
+      ]
+    }
   },
   {
     "query": "lexical / exact error code",
     "modes": [
       "lexical"
     ],
-    "results": [
-      {
-        "rank": 1,
-        "surface": "chunk",
-        "label": "error",
-        "score": 0.0164,
-        "found_by": [
-          "lexical"
-        ]
-      }
-    ]
+    "labels": [
+      "chunk:error"
+    ],
+    "scores": [
+      0.0164
+    ],
+    "found_by": {
+      "chunk:error": [
+        "lexical"
+      ]
+    }
   },
   {
     "query": "lexical / exact part number",
     "modes": [
       "lexical"
     ],
-    "results": [
-      {
-        "rank": 1,
-        "surface": "chunk",
-        "label": "part",
-        "score": 0.0164,
-        "found_by": [
-          "lexical"
-        ]
-      }
-    ]
+    "labels": [
+      "chunk:part"
+    ],
+    "scores": [
+      0.0164
+    ],
+    "found_by": {
+      "chunk:part": [
+        "lexical"
+      ]
+    }
   },
   {
     "query": "lexical / prose with shared vocabulary",
     "modes": [
       "lexical"
     ],
-    "results": [
-      {
-        "rank": 1,
-        "surface": "chunk",
-        "label": "supply",
-        "score": 0.0164,
-        "found_by": [
-          "lexical"
-        ]
-      }
-    ]
+    "labels": [
+      "chunk:supply"
+    ],
+    "scores": [
+      0.0164
+    ],
+    "found_by": {
+      "chunk:supply": [
+        "lexical"
+      ]
+    }
   },
   {
     "query": "lexical / wording the document does not use",
     "modes": [
       "lexical"
     ],
-    "results": [
-      {
-        "rank": 1,
-        "surface": "chunk",
-        "label": "turbine",
-        "score": 0.0164,
-        "found_by": [
-          "lexical"
-        ]
-      }
-    ]
+    "labels": [
+      "chunk:turbine"
+    ],
+    "scores": [
+      0.0164
+    ],
+    "found_by": {
+      "chunk:turbine": [
+        "lexical"
+      ]
+    }
   },
   {
     "query": "lexical / entity by name",
     "modes": [
       "lexical"
     ],
-    "results": [
-      {
-        "rank": 1,
-        "surface": "chunk",
-        "label": "supply",
-        "score": 0.0164,
-        "found_by": [
-          "lexical"
-        ]
-      },
-      {
-        "rank": 2,
-        "surface": "assertion",
-        "label": "Acme Corporation supplies Globex Industries",
-        "score": 0.0137,
-        "found_by": [
-          "lexical"
-        ]
-      },
-      {
-        "rank": 3,
-        "surface": "chunk",
-        "label": "turbine",
-        "score": 0.0135,
-        "found_by": [
-          "lexical"
-        ]
-      },
-      {
-        "rank": 4,
-        "surface": "entity",
-        "label": "Globex Industries (organization)",
-        "score": 0.0133,
-        "found_by": [
-          "lexical"
-        ]
-      }
-    ]
+    "labels": [
+      "assertion:Acme Corporation supplies Globex Industries",
+      "chunk:supply",
+      "chunk:turbine",
+      "entity:Globex Industries (organization)"
+    ],
+    "scores": [
+      0.0164,
+      0.0137,
+      0.0135,
+      0.0133
+    ],
+    "found_by": {
+      "assertion:Acme Corporation supplies Globex Industries": [
+        "lexical"
+      ],
+      "chunk:supply": [
+        "lexical"
+      ],
+      "chunk:turbine": [
+        "lexical"
+      ],
+      "entity:Globex Industries (organization)": [
+        "lexical"
+      ]
+    }
   },
   {
     "query": "lexical / relationship no passage states",
     "modes": [
       "lexical"
     ],
-    "results": [
-      {
-        "rank": 1,
-        "surface": "assertion",
-        "label": "Acme Corporation supplies Globex Industries",
-        "score": 0.0164,
-        "found_by": [
-          "lexical"
-        ]
-      },
-      {
-        "rank": 2,
-        "surface": "chunk",
-        "label": "supply",
-        "score": 0.0161,
-        "found_by": [
-          "lexical"
-        ]
-      },
-      {
-        "rank": 3,
-        "surface": "entity",
-        "label": "Acme Corporation (organization)",
-        "score": 0.0159,
-        "found_by": [
-          "lexical"
-        ]
-      }
-    ]
+    "labels": [
+      "assertion:Acme Corporation supplies Globex Industries",
+      "chunk:supply",
+      "entity:Acme Corporation (organization)"
+    ],
+    "scores": [
+      0.0164,
+      0.0161,
+      0.0159
+    ],
+    "found_by": {
+      "assertion:Acme Corporation supplies Globex Industries": [
+        "lexical"
+      ],
+      "chunk:supply": [
+        "lexical"
+      ],
+      "entity:Acme Corporation (organization)": [
+        "lexical"
+      ]
+    }
   },
   {
     "query": "lexical / policy question",
     "modes": [
       "lexical"
     ],
-    "results": []
+    "labels": null,
+    "scores": null,
+    "found_by": {}
   },
   {
     "query": "lexical / escalation threshold",
     "modes": [
       "lexical"
     ],
-    "results": [
-      {
-        "rank": 1,
-        "surface": "chunk",
-        "label": "escalation",
-        "score": 0.0164,
-        "found_by": [
-          "lexical"
-        ]
-      }
-    ]
+    "labels": [
+      "chunk:escalation"
+    ],
+    "scores": [
+      0.0164
+    ],
+    "found_by": {
+      "chunk:escalation": [
+        "lexical"
+      ]
+    }
   },
   {
     "query": "exact / exact error code",
     "modes": [
       "exact"
     ],
-    "results": [
-      {
-        "rank": 1,
-        "surface": "chunk",
-        "label": "error",
-        "score": 0.023,
-        "found_by": [
-          "exact"
-        ]
-      }
-    ]
+    "labels": [
+      "chunk:error"
+    ],
+    "scores": [
+      0.023
+    ],
+    "found_by": {
+      "chunk:error": [
+        "exact"
+      ]
+    }
   },
   {
     "query": "exact / exact part number",
     "modes": [
       "exact"
     ],
-    "results": [
-      {
-        "rank": 1,
-        "surface": "chunk",
-        "label": "part",
-        "score": 0.023,
-        "found_by": [
-          "exact"
-        ]
-      }
-    ]
+    "labels": [
+      "chunk:part"
+    ],
+    "scores": [
+      0.023
+    ],
+    "found_by": {
+      "chunk:part": [
+        "exact"
+      ]
+    }
   },
   {
     "query": "exact / prose with shared vocabulary",
     "modes": [
       "exact"
     ],
-    "results": []
+    "labels": null,
+    "scores": null,
+    "found_by": {}
   },
   {
     "query": "exact / wording the document does not use",
     "modes": [
       "exact"
     ],
-    "results": []
+    "labels": null,
+    "scores": null,
+    "found_by": {}
   },
   {
     "query": "exact / entity by name",
     "modes": [
       "exact"
     ],
-    "results": [
-      {
-        "rank": 1,
-        "surface": "entity",
-        "label": "Globex Industries (organization)",
-        "score": 0.023,
-        "found_by": [
-          "exact"
-        ]
-      },
-      {
-        "rank": 2,
-        "surface": "assertion",
-        "label": "Acme Corporation supplies Globex Industries",
-        "score": 0.019,
-        "found_by": [
-          "exact"
-        ]
-      },
-      {
-        "rank": 3,
-        "surface": "chunk",
-        "label": "turbine",
-        "score": 0.0143,
-        "found_by": [
-          "exact"
-        ]
-      },
-      {
-        "rank": 4,
-        "surface": "chunk",
-        "label": "supply",
-        "score": 0.0137,
-        "found_by": [
-          "exact"
-        ]
-      }
-    ]
+    "labels": [
+      "assertion:Acme Corporation supplies Globex Industries",
+      "chunk:supply",
+      "chunk:turbine",
+      "entity:Globex Industries (organization)"
+    ],
+    "scores": [
+      0.023,
+      0.019,
+      0.0143,
+      0.0137
+    ],
+    "found_by": {
+      "assertion:Acme Corporation supplies Globex Industries": [
+        "exact"
+      ],
+      "chunk:supply": [
+        "exact"
+      ],
+      "chunk:turbine": [
+        "exact"
+      ],
+      "entity:Globex Industries (organization)": [
+        "exact"
+      ]
+    }
   },
   {
     "query": "exact / relationship no passage states",
     "modes": [
       "exact"
     ],
-    "results": [
-      {
-        "rank": 1,
-        "surface": "entity",
-        "label": "Acme Corporation (organization)",
-        "score": 0.023,
-        "found_by": [
-          "exact"
-        ]
-      },
-      {
-        "rank": 2,
-        "surface": "assertion",
-        "label": "Acme Corporation supplies Globex Industries",
-        "score": 0.0174,
-        "found_by": [
-          "exact"
-        ]
-      }
-    ]
+    "labels": [
+      "assertion:Acme Corporation supplies Globex Industries",
+      "entity:Acme Corporation (organization)"
+    ],
+    "scores": [
+      0.023,
+      0.0174
+    ],
+    "found_by": {
+      "assertion:Acme Corporation supplies Globex Industries": [
+        "exact"
+      ],
+      "entity:Acme Corporation (organization)": [
+        "exact"
+      ]
+    }
   },
   {
     "query": "exact / policy question",
     "modes": [
       "exact"
     ],
-    "results": []
+    "labels": null,
+    "scores": null,
+    "found_by": {}
   },
   {
     "query": "exact / escalation threshold",
     "modes": [
       "exact"
     ],
-    "results": []
+    "labels": null,
+    "scores": null,
+    "found_by": {}
   },
   {
     "query": "vector / exact error code",
     "modes": [
       "vector"
     ],
-    "results": [
-      {
-        "rank": 1,
-        "surface": "chunk",
-        "label": "error",
-        "score": 0.0164,
-        "found_by": [
-          "vector"
-        ]
-      },
-      {
-        "rank": 2,
-        "surface": "chunk",
-        "label": "other-error",
-        "score": 0.0116,
-        "found_by": [
-          "vector"
-        ]
-      }
-    ]
+    "labels": [
+      "chunk:error",
+      "chunk:other-error"
+    ],
+    "scores": [
+      0.0164,
+      0.0116
+    ],
+    "found_by": {
+      "chunk:error": [
+        "vector"
+      ],
+      "chunk:other-error": [
+        "vector"
+      ]
+    }
   },
   {
     "query": "vector / exact part number",
     "modes": [
       "vector"
     ],
-    "results": [
-      {
-        "rank": 1,
-        "surface": "chunk",
-        "label": "part",
-        "score": 0.0164,
-        "found_by": [
-          "vector"
-        ]
-      },
-      {
-        "rank": 2,
-        "surface": "chunk",
-        "label": "other-part",
-        "score": 0.011,
-        "found_by": [
-          "vector"
-        ]
-      }
-    ]
+    "labels": [
+      "chunk:other-part",
+      "chunk:part"
+    ],
+    "scores": [
+      0.0164,
+      0.011
+    ],
+    "found_by": {
+      "chunk:other-part": [
+        "vector"
+      ],
+      "chunk:part": [
+        "vector"
+      ]
+    }
   },
   {
     "query": "vector / prose with shared vocabulary",
     "modes": [
       "vector"
     ],
-    "results": [
-      {
-        "rank": 1,
-        "surface": "chunk",
-        "label": "supply",
-        "score": 0.0164,
-        "found_by": [
-          "vector"
-        ]
-      }
-    ]
+    "labels": [
+      "chunk:supply"
+    ],
+    "scores": [
+      0.0164
+    ],
+    "found_by": {
+      "chunk:supply": [
+        "vector"
+      ]
+    }
   },
   {
     "query": "vector / wording the document does not use",
     "modes": [
       "vector"
     ],
-    "results": [
-      {
-        "rank": 1,
-        "surface": "chunk",
-        "label": "turbine",
-        "score": 0.0164,
-        "found_by": [
-          "vector"
-        ]
-      },
-      {
-        "rank": 2,
-        "surface": "chunk",
-        "label": "energy-market",
-        "score": 0.0135,
-        "found_by": [
-          "vector"
-        ]
-      },
-      {
-        "rank": 3,
-        "surface": "chunk",
-        "label": "housing",
-        "score": 0.01,
-        "found_by": [
-          "vector"
-        ]
-      }
-    ]
+    "labels": [
+      "chunk:energy-market",
+      "chunk:housing",
+      "chunk:turbine"
+    ],
+    "scores": [
+      0.0164,
+      0.0135,
+      0.01
+    ],
+    "found_by": {
+      "chunk:energy-market": [
+        "vector"
+      ],
+      "chunk:housing": [
+        "vector"
+      ],
+      "chunk:turbine": [
+        "vector"
+      ]
+    }
   },
   {
     "query": "vector / entity by name",
     "modes": [
       "vector"
     ],
-    "results": [
-      {
-        "rank": 1,
-        "surface": "entity",
-        "label": "(entity, no content)",
-        "score": 0.0164,
-        "found_by": [
-          "vector"
-        ]
-      },
-      {
-        "rank": 2,
-        "surface": "assertion",
-        "label": "(assertion, no content)",
-        "score": 0.0139,
-        "found_by": [
-          "vector"
-        ]
-      },
-      {
-        "rank": 3,
-        "surface": "chunk",
-        "label": "supply",
-        "score": 0.0111,
-        "found_by": [
-          "vector"
-        ]
-      },
-      {
-        "rank": 4,
-        "surface": "chunk",
-        "label": "turbine",
-        "score": 0.0109,
-        "found_by": [
-          "vector"
-        ]
-      }
-    ]
+    "labels": [
+      "assertion:(assertion, no content)",
+      "chunk:supply",
+      "chunk:turbine",
+      "entity:(entity, no content)"
+    ],
+    "scores": [
+      0.0164,
+      0.0139,
+      0.0111,
+      0.0109
+    ],
+    "found_by": {
+      "assertion:(assertion, no content)": [
+        "vector"
+      ],
+      "chunk:supply": [
+        "vector"
+      ],
+      "chunk:turbine": [
+        "vector"
+      ],
+      "entity:(entity, no content)": [
+        "vector"
+      ]
+    }
   },
   {
     "query": "vector / relationship no passage states",
     "modes": [
       "vector"
     ],
-    "results": [
-      {
-        "rank": 1,
-        "surface": "entity",
-        "label": "(entity, no content)",
-        "score": 0.0164,
-        "found_by": [
-          "vector"
-        ]
-      },
-      {
-        "rank": 2,
-        "surface": "assertion",
-        "label": "(assertion, no content)",
-        "score": 0.0139,
-        "found_by": [
-          "vector"
-        ]
-      },
-      {
-        "rank": 3,
-        "surface": "chunk",
-        "label": "supply",
-        "score": 0.0111,
-        "found_by": [
-          "vector"
-        ]
-      }
-    ]
+    "labels": [
+      "assertion:(assertion, no content)",
+      "chunk:supply",
+      "entity:(entity, no content)"
+    ],
+    "scores": [
+      0.0164,
+      0.0139,
+      0.0111
+    ],
+    "found_by": {
+      "assertion:(assertion, no content)": [
+        "vector"
+      ],
+      "chunk:supply": [
+        "vector"
+      ],
+      "entity:(entity, no content)": [
+        "vector"
+      ]
+    }
   },
   {
     "query": "vector / policy question",
     "modes": [
       "vector"
     ],
-    "results": [
-      {
-        "rank": 1,
-        "surface": "chunk",
-        "label": "housing",
-        "score": 0.0164,
-        "found_by": [
-          "vector"
-        ]
-      },
-      {
-        "rank": 2,
-        "surface": "chunk",
-        "label": "supplier-review",
-        "score": 0.0161,
-        "found_by": [
-          "vector"
-        ]
-      },
-      {
-        "rank": 3,
-        "surface": "chunk",
-        "label": "fastener-policy",
-        "score": 0.0146,
-        "found_by": [
-          "vector"
-        ]
-      },
-      {
-        "rank": 4,
-        "surface": "chunk",
-        "label": "delivery",
-        "score": 0.0144,
-        "found_by": [
-          "vector"
-        ]
-      },
-      {
-        "rank": 5,
-        "surface": "chunk",
-        "label": "part",
-        "score": 0.0141,
-        "found_by": [
-          "vector"
-        ]
-      },
-      {
-        "rank": 6,
-        "surface": "chunk",
-        "label": "refund",
-        "score": 0.0136,
-        "found_by": [
-          "vector"
-        ]
-      },
-      {
-        "rank": 7,
-        "surface": "chunk",
-        "label": "invoice",
-        "score": 0.0132,
-        "found_by": [
-          "vector"
-        ]
-      }
-    ]
+    "labels": [
+      "chunk:delivery",
+      "chunk:fastener-policy",
+      "chunk:housing",
+      "chunk:invoice",
+      "chunk:part",
+      "chunk:refund",
+      "chunk:supplier-review"
+    ],
+    "scores": [
+      0.0164,
+      0.0161,
+      0.0146,
+      0.0144,
+      0.0141,
+      0.0136,
+      0.0132
+    ],
+    "found_by": {
+      "chunk:delivery": [
+        "vector"
+      ],
+      "chunk:fastener-policy": [
+        "vector"
+      ],
+      "chunk:housing": [
+        "vector"
+      ],
+      "chunk:invoice": [
+        "vector"
+      ],
+      "chunk:part": [
+        "vector"
+      ],
+      "chunk:refund": [
+        "vector"
+      ],
+      "chunk:supplier-review": [
+        "vector"
+      ]
+    }
   },
   {
     "query": "vector / escalation threshold",
     "modes": [
       "vector"
     ],
-    "results": [
-      {
-        "rank": 1,
-        "surface": "chunk",
-        "label": "escalation",
-        "score": 0.0164,
-        "found_by": [
-          "vector"
-        ]
-      },
-      {
-        "rank": 2,
-        "surface": "chunk",
-        "label": "charges",
-        "score": 0.0105,
-        "found_by": [
-          "vector"
-        ]
-      }
-    ]
+    "labels": [
+      "chunk:charges",
+      "chunk:escalation"
+    ],
+    "scores": [
+      0.0164,
+      0.0105
+    ],
+    "found_by": {
+      "chunk:charges": [
+        "vector"
+      ],
+      "chunk:escalation": [
+        "vector"
+      ]
+    }
   },
   {
     "query": "entity / exact error code",
     "modes": [
       "entity"
     ],
-    "results": []
+    "labels": null,
+    "scores": null,
+    "found_by": {}
   },
   {
     "query": "entity / exact part number",
     "modes": [
       "entity"
     ],
-    "results": []
+    "labels": null,
+    "scores": null,
+    "found_by": {}
   },
   {
     "query": "entity / prose with shared vocabulary",
     "modes": [
       "entity"
     ],
-    "results": []
+    "labels": null,
+    "scores": null,
+    "found_by": {}
   },
   {
     "query": "entity / wording the document does not use",
     "modes": [
       "entity"
     ],
-    "results": []
+    "labels": null,
+    "scores": null,
+    "found_by": {}
   },
   {
     "query": "entity / entity by name",
     "modes": [
       "entity"
     ],
-    "results": [
-      {
-        "rank": 1,
-        "surface": "entity",
-        "label": "Globex Industries",
-        "score": 0.0197,
-        "found_by": [
-          "entity"
-        ]
-      }
-    ]
+    "labels": [
+      "entity:Globex Industries"
+    ],
+    "scores": [
+      0.0197
+    ],
+    "found_by": {
+      "entity:Globex Industries": [
+        "entity"
+      ]
+    }
   },
   {
     "query": "entity / relationship no passage states",
     "modes": [
       "entity"
     ],
-    "results": [
-      {
-        "rank": 1,
-        "surface": "entity",
-        "label": "Acme Corporation",
-        "score": 0.0197,
-        "found_by": [
-          "entity"
-        ]
-      }
-    ]
+    "labels": [
+      "entity:Acme Corporation"
+    ],
+    "scores": [
+      0.0197
+    ],
+    "found_by": {
+      "entity:Acme Corporation": [
+        "entity"
+      ]
+    }
   },
   {
     "query": "entity / policy question",
     "modes": [
       "entity"
     ],
-    "results": []
+    "labels": null,
+    "scores": null,
+    "found_by": {}
   },
   {
     "query": "entity / escalation threshold",
     "modes": [
       "entity"
     ],
-    "results": []
+    "labels": null,
+    "scores": null,
+    "found_by": {}
   },
   {
     "query": "entity+graph / exact error code",
@@ -972,7 +814,9 @@
       "entity",
       "graph"
     ],
-    "results": []
+    "labels": null,
+    "scores": null,
+    "found_by": {}
   },
   {
     "query": "entity+graph / exact part number",
@@ -980,7 +824,9 @@
       "entity",
       "graph"
     ],
-    "results": []
+    "labels": null,
+    "scores": null,
+    "found_by": {}
   },
   {
     "query": "entity+graph / prose with shared vocabulary",
@@ -988,7 +834,9 @@
       "entity",
       "graph"
     ],
-    "results": []
+    "labels": null,
+    "scores": null,
+    "found_by": {}
   },
   {
     "query": "entity+graph / wording the document does not use",
@@ -996,7 +844,9 @@
       "entity",
       "graph"
     ],
-    "results": []
+    "labels": null,
+    "scores": null,
+    "found_by": {}
   },
   {
     "query": "entity+graph / entity by name",
@@ -1004,26 +854,22 @@
       "entity",
       "graph"
     ],
-    "results": [
-      {
-        "rank": 1,
-        "surface": "entity",
-        "label": "Globex Industries",
-        "score": 0.0197,
-        "found_by": [
-          "entity"
-        ]
-      },
-      {
-        "rank": 2,
-        "surface": "entity",
-        "label": "Acme Corporation",
-        "score": 0.0115,
-        "found_by": [
-          "graph"
-        ]
-      }
-    ]
+    "labels": [
+      "entity:Acme Corporation",
+      "entity:Globex Industries"
+    ],
+    "scores": [
+      0.0197,
+      0.0115
+    ],
+    "found_by": {
+      "entity:Acme Corporation": [
+        "graph"
+      ],
+      "entity:Globex Industries": [
+        "entity"
+      ]
+    }
   },
   {
     "query": "entity+graph / relationship no passage states",
@@ -1031,26 +877,22 @@
       "entity",
       "graph"
     ],
-    "results": [
-      {
-        "rank": 1,
-        "surface": "entity",
-        "label": "Acme Corporation",
-        "score": 0.0197,
-        "found_by": [
-          "entity"
-        ]
-      },
-      {
-        "rank": 2,
-        "surface": "entity",
-        "label": "Globex Industries",
-        "score": 0.0115,
-        "found_by": [
-          "graph"
-        ]
-      }
-    ]
+    "labels": [
+      "entity:Acme Corporation",
+      "entity:Globex Industries"
+    ],
+    "scores": [
+      0.0197,
+      0.0115
+    ],
+    "found_by": {
+      "entity:Acme Corporation": [
+        "entity"
+      ],
+      "entity:Globex Industries": [
+        "graph"
+      ]
+    }
   },
   {
     "query": "entity+graph / policy question",
@@ -1058,7 +900,9 @@
       "entity",
       "graph"
     ],
-    "results": []
+    "labels": null,
+    "scores": null,
+    "found_by": {}
   },
   {
     "query": "entity+graph / escalation threshold",
@@ -1066,6 +910,8 @@
       "entity",
       "graph"
     ],
-    "results": []
+    "labels": null,
+    "scores": null,
+    "found_by": {}
   }
 ]

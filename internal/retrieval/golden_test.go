@@ -21,25 +21,36 @@ import (
 // Same convention as internal/normalize/golden_test.go.
 var update = flag.Bool("update", false, "rewrite the retrieval golden file")
 
-// goldenResult is one ranked result, rendered so it survives a fresh fixture.
-//
 // Record ids are UUIDs minted per run, so a golden keyed on them would fail every time.
-// Label resolves an id back to something stable: the corpus key a chunk came from, or the
+// Labels resolve an id back to something stable: the corpus key a chunk came from, or the
 // canonical name of an entity. Scores are rounded, because the last digits of a float are
 // not part of the contract and a golden that pinned them would break on an unrelated
 // PostgreSQL upgrade.
-type goldenResult struct {
-	Rank    int      `json:"rank"`
-	Surface string   `json:"surface"`
-	Label   string   `json:"label"`
-	Score   float64  `json:"score"`
-	FoundBy []string `json:"found_by"`
-}
-
+// goldenQuery records one query's results in an order-insensitive form.
+//
+// Labels and scores are captured as two sorted lists rather than as pairs, and that is a
+// deliberate weakening with a specific reason. Two records that tie inside a retriever are
+// ranked in whatever order that retriever returned them; fusion turns those ranks into
+// adjacent-but-different scores, so which of the two ends up with the higher score is
+// arbitrary. It is now at least stable for a given corpus — the retrievers break ties on
+// record id — but record ids are fresh UUIDs in every fixture, so the arbitrary choice
+// differs between one run of this test and the next. CI and a laptop disagreed about
+// exactly this, which is how the tie-breaking defect was found.
+//
+// So the pairing between a label and its score is not pinned. Everything else is: a record
+// entering or leaving the results, a score changing value, the number of results, and which
+// retrievers found each one. What this cannot catch is exactly two records exchanging
+// scores, which is the noise it exists to tolerate.
 type goldenQuery struct {
-	Query   string         `json:"query"`
-	Modes   []string       `json:"modes,omitempty"`
-	Results []goldenResult `json:"results"`
+	Query string   `json:"query"`
+	Modes []string `json:"modes,omitempty"`
+	// Labels are the records returned, sorted. Order-insensitive: see above.
+	Labels []string `json:"labels"`
+	// Scores are the fused scores, sorted descending, paired with nothing.
+	Scores []float64 `json:"scores"`
+	// FoundBy maps each record to the retrievers that surfaced it. Stable, because it does
+	// not depend on rank.
+	FoundBy map[string][]string `json:"found_by"`
 }
 
 // TestIntegrationRetrievalOutputIsGolden pins what retrieval returns, so a refactor can be
@@ -87,22 +98,25 @@ func TestIntegrationRetrievalOutputIsGolden(t *testing.T) {
 				t.Fatalf("%s / %s: %v", set.name, query.name, err)
 			}
 
-			results := make([]goldenResult, 0, len(result.Items))
-			for i, item := range result.Items {
+			var (
+				labels  []string
+				scores  []float64
+				foundBy = map[string][]string{}
+			)
+			for _, item := range result.Items {
+				name := string(item.Surface) + ":" + label(item, keyByRecord)
+				labels = append(labels, name)
+				scores = append(scores, round(item.Score))
+
 				found := make([]string, 0, len(item.FoundBy))
 				for _, mode := range item.FoundBy {
 					found = append(found, string(mode))
 				}
 				sort.Strings(found)
-
-				results = append(results, goldenResult{
-					Rank:    i + 1,
-					Surface: string(item.Surface),
-					Label:   label(item, keyByRecord),
-					Score:   round(item.Score),
-					FoundBy: found,
-				})
+				foundBy[name] = found
 			}
+			sort.Strings(labels)
+			sort.Sort(sort.Reverse(sort.Float64Slice(scores)))
 
 			modes := make([]string, 0, len(set.modes))
 			for _, mode := range set.modes {
@@ -111,7 +125,9 @@ func TestIntegrationRetrievalOutputIsGolden(t *testing.T) {
 			captured = append(captured, goldenQuery{
 				Query:   set.name + " / " + query.name,
 				Modes:   modes,
-				Results: results,
+				Labels:  labels,
+				Scores:  scores,
+				FoundBy: foundBy,
 			})
 		}
 	}
@@ -191,23 +207,23 @@ func firstDifference(want, got []goldenQuery) string {
 		}
 
 		a, b := want[i], got[i]
-		if renderResults(a.Results) == renderResults(b.Results) {
+		if render(a) == render(b) {
 			continue
 		}
-		fmt.Fprintf(&out, "query %q\n  before: %s\n  after:  %s\n",
-			a.Query, renderResults(a.Results), renderResults(b.Results))
+		fmt.Fprintf(&out, "query %q\n  before: %s\n  after:  %s\n", a.Query, render(a), render(b))
 		return out.String()
 	}
 	return "the files differ but no query does; the difference is formatting"
 }
 
-func renderResults(results []goldenResult) string {
-	parts := make([]string, 0, len(results))
-	for _, r := range results {
-		parts = append(parts, fmt.Sprintf("%s:%s@%.4f", r.Surface, r.Label, r.Score))
-	}
-	if len(parts) == 0 {
+func render(q goldenQuery) string {
+	if len(q.Labels) == 0 {
 		return "(no results)"
 	}
-	return strings.Join(parts, ", ")
+	scores := make([]string, 0, len(q.Scores))
+	for _, score := range q.Scores {
+		scores = append(scores, fmt.Sprintf("%.4f", score))
+	}
+	return fmt.Sprintf("%s | scores %s",
+		strings.Join(q.Labels, ", "), strings.Join(scores, ", "))
 }
