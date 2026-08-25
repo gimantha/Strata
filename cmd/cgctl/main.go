@@ -59,6 +59,7 @@ Commands:
   entity merge|split       Merge identities, and undo a merge
   resolutions              Review how mentions were resolved
   projections rebuild|status  Replay or inspect the retrieval projections
+  recovery classify|drill  What a backup must contain, and whether it rebuilds
   search                   Hybrid retrieval across all five paths
   context                  Assemble a prompt-ready context block
   assert                   Record a claim against a source event
@@ -130,6 +131,11 @@ func run(args []string) error {
 		return withSubcommand(rest, map[string]appCommand{
 			"rebuild": cmdProjectionsRebuild,
 			"status":  cmdProjectionsStatus,
+		})
+	case "recovery":
+		return withSubcommand(rest, map[string]appCommand{
+			"classify": cmdRecoveryClassify,
+			"drill":    cmdRecoveryDrill,
 		})
 	case "search":
 		return withApp(rest, cmdSearch)

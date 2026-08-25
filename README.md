@@ -310,4 +310,6 @@ are declared by the services that consume them; implementations live under `stor
   delivery, partition keys, backpressure, and distributed checkpoints
 - [docs/api/performance.md](docs/api/performance.md) — measured targets, the benchmark
   harness, and the invariants checked on every commit
+- [docs/api/backup-and-recovery.md](docs/api/backup-and-recovery.md) — what a backup must
+  contain, what rebuilds, and how to prove the difference
 - [docs/adr/](docs/adr/) — decisions, alternatives, and trade-offs
