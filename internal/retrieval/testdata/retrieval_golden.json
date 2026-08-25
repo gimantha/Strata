@@ -1,0 +1,1071 @@
+[
+  {
+    "query": "hybrid / exact error code",
+    "results": [
+      {
+        "rank": 1,
+        "surface": "chunk",
+        "label": "error",
+        "score": 0.0557,
+        "found_by": [
+          "exact",
+          "lexical",
+          "vector"
+        ]
+      },
+      {
+        "rank": 2,
+        "surface": "chunk",
+        "label": "other-error",
+        "score": 0.0116,
+        "found_by": [
+          "vector"
+        ]
+      },
+      {
+        "rank": 3,
+        "surface": "entity",
+        "label": "Globex Industries",
+        "score": 0.0115,
+        "found_by": [
+          "graph"
+        ]
+      }
+    ]
+  },
+  {
+    "query": "hybrid / exact part number",
+    "results": [
+      {
+        "rank": 1,
+        "surface": "chunk",
+        "label": "part",
+        "score": 0.0557,
+        "found_by": [
+          "exact",
+          "lexical",
+          "vector"
+        ]
+      },
+      {
+        "rank": 2,
+        "surface": "entity",
+        "label": "Acme Corporation",
+        "score": 0.0115,
+        "found_by": [
+          "graph"
+        ]
+      },
+      {
+        "rank": 3,
+        "surface": "chunk",
+        "label": "other-part",
+        "score": 0.011,
+        "found_by": [
+          "vector"
+        ]
+      }
+    ]
+  },
+  {
+    "query": "hybrid / prose with shared vocabulary",
+    "results": [
+      {
+        "rank": 1,
+        "surface": "chunk",
+        "label": "supply",
+        "score": 0.0328,
+        "found_by": [
+          "lexical",
+          "vector"
+        ]
+      },
+      {
+        "rank": 2,
+        "surface": "entity",
+        "label": "Globex Industries",
+        "score": 0.0115,
+        "found_by": [
+          "graph"
+        ]
+      }
+    ]
+  },
+  {
+    "query": "hybrid / wording the document does not use",
+    "results": [
+      {
+        "rank": 1,
+        "surface": "chunk",
+        "label": "turbine",
+        "score": 0.0328,
+        "found_by": [
+          "lexical",
+          "vector"
+        ]
+      },
+      {
+        "rank": 2,
+        "surface": "chunk",
+        "label": "energy-market",
+        "score": 0.0135,
+        "found_by": [
+          "vector"
+        ]
+      },
+      {
+        "rank": 3,
+        "surface": "chunk",
+        "label": "housing",
+        "score": 0.01,
+        "found_by": [
+          "vector"
+        ]
+      }
+    ]
+  },
+  {
+    "query": "hybrid / entity by name",
+    "results": [
+      {
+        "rank": 1,
+        "surface": "entity",
+        "label": "Globex Industries (organization)",
+        "score": 0.0493,
+        "found_by": [
+          "entity",
+          "lexical",
+          "vector"
+        ]
+      },
+      {
+        "rank": 2,
+        "surface": "assertion",
+        "label": "Acme Corporation supplies Globex Industries",
+        "score": 0.0277,
+        "found_by": [
+          "lexical",
+          "vector"
+        ]
+      },
+      {
+        "rank": 3,
+        "surface": "chunk",
+        "label": "supply",
+        "score": 0.0275,
+        "found_by": [
+          "lexical",
+          "vector"
+        ]
+      },
+      {
+        "rank": 4,
+        "surface": "chunk",
+        "label": "turbine",
+        "score": 0.0244,
+        "found_by": [
+          "lexical",
+          "vector"
+        ]
+      }
+    ]
+  },
+  {
+    "query": "hybrid / relationship no passage states",
+    "results": [
+      {
+        "rank": 1,
+        "surface": "entity",
+        "label": "Acme Corporation (organization)",
+        "score": 0.0519,
+        "found_by": [
+          "entity",
+          "lexical",
+          "vector"
+        ]
+      },
+      {
+        "rank": 2,
+        "surface": "assertion",
+        "label": "Acme Corporation supplies Globex Industries",
+        "score": 0.0303,
+        "found_by": [
+          "lexical",
+          "vector"
+        ]
+      },
+      {
+        "rank": 3,
+        "surface": "chunk",
+        "label": "supply",
+        "score": 0.0272,
+        "found_by": [
+          "lexical",
+          "vector"
+        ]
+      },
+      {
+        "rank": 4,
+        "surface": "entity",
+        "label": "Globex Industries",
+        "score": 0.0115,
+        "found_by": [
+          "graph"
+        ]
+      }
+    ]
+  },
+  {
+    "query": "hybrid / policy question",
+    "results": [
+      {
+        "rank": 1,
+        "surface": "chunk",
+        "label": "housing",
+        "score": 0.0164,
+        "found_by": [
+          "vector"
+        ]
+      },
+      {
+        "rank": 2,
+        "surface": "chunk",
+        "label": "supplier-review",
+        "score": 0.0161,
+        "found_by": [
+          "vector"
+        ]
+      },
+      {
+        "rank": 3,
+        "surface": "chunk",
+        "label": "fastener-policy",
+        "score": 0.0146,
+        "found_by": [
+          "vector"
+        ]
+      },
+      {
+        "rank": 4,
+        "surface": "chunk",
+        "label": "delivery",
+        "score": 0.0144,
+        "found_by": [
+          "vector"
+        ]
+      },
+      {
+        "rank": 5,
+        "surface": "chunk",
+        "label": "part",
+        "score": 0.0141,
+        "found_by": [
+          "vector"
+        ]
+      },
+      {
+        "rank": 6,
+        "surface": "chunk",
+        "label": "refund",
+        "score": 0.0136,
+        "found_by": [
+          "vector"
+        ]
+      },
+      {
+        "rank": 7,
+        "surface": "chunk",
+        "label": "invoice",
+        "score": 0.0132,
+        "found_by": [
+          "vector"
+        ]
+      }
+    ]
+  },
+  {
+    "query": "hybrid / escalation threshold",
+    "results": [
+      {
+        "rank": 1,
+        "surface": "chunk",
+        "label": "escalation",
+        "score": 0.0328,
+        "found_by": [
+          "lexical",
+          "vector"
+        ]
+      },
+      {
+        "rank": 2,
+        "surface": "chunk",
+        "label": "charges",
+        "score": 0.0105,
+        "found_by": [
+          "vector"
+        ]
+      }
+    ]
+  },
+  {
+    "query": "lexical / exact error code",
+    "modes": [
+      "lexical"
+    ],
+    "results": [
+      {
+        "rank": 1,
+        "surface": "chunk",
+        "label": "error",
+        "score": 0.0164,
+        "found_by": [
+          "lexical"
+        ]
+      }
+    ]
+  },
+  {
+    "query": "lexical / exact part number",
+    "modes": [
+      "lexical"
+    ],
+    "results": [
+      {
+        "rank": 1,
+        "surface": "chunk",
+        "label": "part",
+        "score": 0.0164,
+        "found_by": [
+          "lexical"
+        ]
+      }
+    ]
+  },
+  {
+    "query": "lexical / prose with shared vocabulary",
+    "modes": [
+      "lexical"
+    ],
+    "results": [
+      {
+        "rank": 1,
+        "surface": "chunk",
+        "label": "supply",
+        "score": 0.0164,
+        "found_by": [
+          "lexical"
+        ]
+      }
+    ]
+  },
+  {
+    "query": "lexical / wording the document does not use",
+    "modes": [
+      "lexical"
+    ],
+    "results": [
+      {
+        "rank": 1,
+        "surface": "chunk",
+        "label": "turbine",
+        "score": 0.0164,
+        "found_by": [
+          "lexical"
+        ]
+      }
+    ]
+  },
+  {
+    "query": "lexical / entity by name",
+    "modes": [
+      "lexical"
+    ],
+    "results": [
+      {
+        "rank": 1,
+        "surface": "chunk",
+        "label": "supply",
+        "score": 0.0164,
+        "found_by": [
+          "lexical"
+        ]
+      },
+      {
+        "rank": 2,
+        "surface": "assertion",
+        "label": "Acme Corporation supplies Globex Industries",
+        "score": 0.0137,
+        "found_by": [
+          "lexical"
+        ]
+      },
+      {
+        "rank": 3,
+        "surface": "chunk",
+        "label": "turbine",
+        "score": 0.0135,
+        "found_by": [
+          "lexical"
+        ]
+      },
+      {
+        "rank": 4,
+        "surface": "entity",
+        "label": "Globex Industries (organization)",
+        "score": 0.0133,
+        "found_by": [
+          "lexical"
+        ]
+      }
+    ]
+  },
+  {
+    "query": "lexical / relationship no passage states",
+    "modes": [
+      "lexical"
+    ],
+    "results": [
+      {
+        "rank": 1,
+        "surface": "assertion",
+        "label": "Acme Corporation supplies Globex Industries",
+        "score": 0.0164,
+        "found_by": [
+          "lexical"
+        ]
+      },
+      {
+        "rank": 2,
+        "surface": "chunk",
+        "label": "supply",
+        "score": 0.0161,
+        "found_by": [
+          "lexical"
+        ]
+      },
+      {
+        "rank": 3,
+        "surface": "entity",
+        "label": "Acme Corporation (organization)",
+        "score": 0.0159,
+        "found_by": [
+          "lexical"
+        ]
+      }
+    ]
+  },
+  {
+    "query": "lexical / policy question",
+    "modes": [
+      "lexical"
+    ],
+    "results": []
+  },
+  {
+    "query": "lexical / escalation threshold",
+    "modes": [
+      "lexical"
+    ],
+    "results": [
+      {
+        "rank": 1,
+        "surface": "chunk",
+        "label": "escalation",
+        "score": 0.0164,
+        "found_by": [
+          "lexical"
+        ]
+      }
+    ]
+  },
+  {
+    "query": "exact / exact error code",
+    "modes": [
+      "exact"
+    ],
+    "results": [
+      {
+        "rank": 1,
+        "surface": "chunk",
+        "label": "error",
+        "score": 0.023,
+        "found_by": [
+          "exact"
+        ]
+      }
+    ]
+  },
+  {
+    "query": "exact / exact part number",
+    "modes": [
+      "exact"
+    ],
+    "results": [
+      {
+        "rank": 1,
+        "surface": "chunk",
+        "label": "part",
+        "score": 0.023,
+        "found_by": [
+          "exact"
+        ]
+      }
+    ]
+  },
+  {
+    "query": "exact / prose with shared vocabulary",
+    "modes": [
+      "exact"
+    ],
+    "results": []
+  },
+  {
+    "query": "exact / wording the document does not use",
+    "modes": [
+      "exact"
+    ],
+    "results": []
+  },
+  {
+    "query": "exact / entity by name",
+    "modes": [
+      "exact"
+    ],
+    "results": [
+      {
+        "rank": 1,
+        "surface": "entity",
+        "label": "Globex Industries (organization)",
+        "score": 0.023,
+        "found_by": [
+          "exact"
+        ]
+      },
+      {
+        "rank": 2,
+        "surface": "assertion",
+        "label": "Acme Corporation supplies Globex Industries",
+        "score": 0.019,
+        "found_by": [
+          "exact"
+        ]
+      },
+      {
+        "rank": 3,
+        "surface": "chunk",
+        "label": "turbine",
+        "score": 0.0143,
+        "found_by": [
+          "exact"
+        ]
+      },
+      {
+        "rank": 4,
+        "surface": "chunk",
+        "label": "supply",
+        "score": 0.0137,
+        "found_by": [
+          "exact"
+        ]
+      }
+    ]
+  },
+  {
+    "query": "exact / relationship no passage states",
+    "modes": [
+      "exact"
+    ],
+    "results": [
+      {
+        "rank": 1,
+        "surface": "entity",
+        "label": "Acme Corporation (organization)",
+        "score": 0.023,
+        "found_by": [
+          "exact"
+        ]
+      },
+      {
+        "rank": 2,
+        "surface": "assertion",
+        "label": "Acme Corporation supplies Globex Industries",
+        "score": 0.0174,
+        "found_by": [
+          "exact"
+        ]
+      }
+    ]
+  },
+  {
+    "query": "exact / policy question",
+    "modes": [
+      "exact"
+    ],
+    "results": []
+  },
+  {
+    "query": "exact / escalation threshold",
+    "modes": [
+      "exact"
+    ],
+    "results": []
+  },
+  {
+    "query": "vector / exact error code",
+    "modes": [
+      "vector"
+    ],
+    "results": [
+      {
+        "rank": 1,
+        "surface": "chunk",
+        "label": "error",
+        "score": 0.0164,
+        "found_by": [
+          "vector"
+        ]
+      },
+      {
+        "rank": 2,
+        "surface": "chunk",
+        "label": "other-error",
+        "score": 0.0116,
+        "found_by": [
+          "vector"
+        ]
+      }
+    ]
+  },
+  {
+    "query": "vector / exact part number",
+    "modes": [
+      "vector"
+    ],
+    "results": [
+      {
+        "rank": 1,
+        "surface": "chunk",
+        "label": "part",
+        "score": 0.0164,
+        "found_by": [
+          "vector"
+        ]
+      },
+      {
+        "rank": 2,
+        "surface": "chunk",
+        "label": "other-part",
+        "score": 0.011,
+        "found_by": [
+          "vector"
+        ]
+      }
+    ]
+  },
+  {
+    "query": "vector / prose with shared vocabulary",
+    "modes": [
+      "vector"
+    ],
+    "results": [
+      {
+        "rank": 1,
+        "surface": "chunk",
+        "label": "supply",
+        "score": 0.0164,
+        "found_by": [
+          "vector"
+        ]
+      }
+    ]
+  },
+  {
+    "query": "vector / wording the document does not use",
+    "modes": [
+      "vector"
+    ],
+    "results": [
+      {
+        "rank": 1,
+        "surface": "chunk",
+        "label": "turbine",
+        "score": 0.0164,
+        "found_by": [
+          "vector"
+        ]
+      },
+      {
+        "rank": 2,
+        "surface": "chunk",
+        "label": "energy-market",
+        "score": 0.0135,
+        "found_by": [
+          "vector"
+        ]
+      },
+      {
+        "rank": 3,
+        "surface": "chunk",
+        "label": "housing",
+        "score": 0.01,
+        "found_by": [
+          "vector"
+        ]
+      }
+    ]
+  },
+  {
+    "query": "vector / entity by name",
+    "modes": [
+      "vector"
+    ],
+    "results": [
+      {
+        "rank": 1,
+        "surface": "entity",
+        "label": "(entity, no content)",
+        "score": 0.0164,
+        "found_by": [
+          "vector"
+        ]
+      },
+      {
+        "rank": 2,
+        "surface": "assertion",
+        "label": "(assertion, no content)",
+        "score": 0.0139,
+        "found_by": [
+          "vector"
+        ]
+      },
+      {
+        "rank": 3,
+        "surface": "chunk",
+        "label": "supply",
+        "score": 0.0111,
+        "found_by": [
+          "vector"
+        ]
+      },
+      {
+        "rank": 4,
+        "surface": "chunk",
+        "label": "turbine",
+        "score": 0.0109,
+        "found_by": [
+          "vector"
+        ]
+      }
+    ]
+  },
+  {
+    "query": "vector / relationship no passage states",
+    "modes": [
+      "vector"
+    ],
+    "results": [
+      {
+        "rank": 1,
+        "surface": "entity",
+        "label": "(entity, no content)",
+        "score": 0.0164,
+        "found_by": [
+          "vector"
+        ]
+      },
+      {
+        "rank": 2,
+        "surface": "assertion",
+        "label": "(assertion, no content)",
+        "score": 0.0139,
+        "found_by": [
+          "vector"
+        ]
+      },
+      {
+        "rank": 3,
+        "surface": "chunk",
+        "label": "supply",
+        "score": 0.0111,
+        "found_by": [
+          "vector"
+        ]
+      }
+    ]
+  },
+  {
+    "query": "vector / policy question",
+    "modes": [
+      "vector"
+    ],
+    "results": [
+      {
+        "rank": 1,
+        "surface": "chunk",
+        "label": "housing",
+        "score": 0.0164,
+        "found_by": [
+          "vector"
+        ]
+      },
+      {
+        "rank": 2,
+        "surface": "chunk",
+        "label": "supplier-review",
+        "score": 0.0161,
+        "found_by": [
+          "vector"
+        ]
+      },
+      {
+        "rank": 3,
+        "surface": "chunk",
+        "label": "fastener-policy",
+        "score": 0.0146,
+        "found_by": [
+          "vector"
+        ]
+      },
+      {
+        "rank": 4,
+        "surface": "chunk",
+        "label": "delivery",
+        "score": 0.0144,
+        "found_by": [
+          "vector"
+        ]
+      },
+      {
+        "rank": 5,
+        "surface": "chunk",
+        "label": "part",
+        "score": 0.0141,
+        "found_by": [
+          "vector"
+        ]
+      },
+      {
+        "rank": 6,
+        "surface": "chunk",
+        "label": "refund",
+        "score": 0.0136,
+        "found_by": [
+          "vector"
+        ]
+      },
+      {
+        "rank": 7,
+        "surface": "chunk",
+        "label": "invoice",
+        "score": 0.0132,
+        "found_by": [
+          "vector"
+        ]
+      }
+    ]
+  },
+  {
+    "query": "vector / escalation threshold",
+    "modes": [
+      "vector"
+    ],
+    "results": [
+      {
+        "rank": 1,
+        "surface": "chunk",
+        "label": "escalation",
+        "score": 0.0164,
+        "found_by": [
+          "vector"
+        ]
+      },
+      {
+        "rank": 2,
+        "surface": "chunk",
+        "label": "charges",
+        "score": 0.0105,
+        "found_by": [
+          "vector"
+        ]
+      }
+    ]
+  },
+  {
+    "query": "entity / exact error code",
+    "modes": [
+      "entity"
+    ],
+    "results": []
+  },
+  {
+    "query": "entity / exact part number",
+    "modes": [
+      "entity"
+    ],
+    "results": []
+  },
+  {
+    "query": "entity / prose with shared vocabulary",
+    "modes": [
+      "entity"
+    ],
+    "results": []
+  },
+  {
+    "query": "entity / wording the document does not use",
+    "modes": [
+      "entity"
+    ],
+    "results": []
+  },
+  {
+    "query": "entity / entity by name",
+    "modes": [
+      "entity"
+    ],
+    "results": [
+      {
+        "rank": 1,
+        "surface": "entity",
+        "label": "Globex Industries",
+        "score": 0.0197,
+        "found_by": [
+          "entity"
+        ]
+      }
+    ]
+  },
+  {
+    "query": "entity / relationship no passage states",
+    "modes": [
+      "entity"
+    ],
+    "results": [
+      {
+        "rank": 1,
+        "surface": "entity",
+        "label": "Acme Corporation",
+        "score": 0.0197,
+        "found_by": [
+          "entity"
+        ]
+      }
+    ]
+  },
+  {
+    "query": "entity / policy question",
+    "modes": [
+      "entity"
+    ],
+    "results": []
+  },
+  {
+    "query": "entity / escalation threshold",
+    "modes": [
+      "entity"
+    ],
+    "results": []
+  },
+  {
+    "query": "entity+graph / exact error code",
+    "modes": [
+      "entity",
+      "graph"
+    ],
+    "results": []
+  },
+  {
+    "query": "entity+graph / exact part number",
+    "modes": [
+      "entity",
+      "graph"
+    ],
+    "results": []
+  },
+  {
+    "query": "entity+graph / prose with shared vocabulary",
+    "modes": [
+      "entity",
+      "graph"
+    ],
+    "results": []
+  },
+  {
+    "query": "entity+graph / wording the document does not use",
+    "modes": [
+      "entity",
+      "graph"
+    ],
+    "results": []
+  },
+  {
+    "query": "entity+graph / entity by name",
+    "modes": [
+      "entity",
+      "graph"
+    ],
+    "results": [
+      {
+        "rank": 1,
+        "surface": "entity",
+        "label": "Globex Industries",
+        "score": 0.0197,
+        "found_by": [
+          "entity"
+        ]
+      },
+      {
+        "rank": 2,
+        "surface": "entity",
+        "label": "Acme Corporation",
+        "score": 0.0115,
+        "found_by": [
+          "graph"
+        ]
+      }
+    ]
+  },
+  {
+    "query": "entity+graph / relationship no passage states",
+    "modes": [
+      "entity",
+      "graph"
+    ],
+    "results": [
+      {
+        "rank": 1,
+        "surface": "entity",
+        "label": "Acme Corporation",
+        "score": 0.0197,
+        "found_by": [
+          "entity"
+        ]
+      },
+      {
+        "rank": 2,
+        "surface": "entity",
+        "label": "Globex Industries",
+        "score": 0.0115,
+        "found_by": [
+          "graph"
+        ]
+      }
+    ]
+  },
+  {
+    "query": "entity+graph / policy question",
+    "modes": [
+      "entity",
+      "graph"
+    ],
+    "results": []
+  },
+  {
+    "query": "entity+graph / escalation threshold",
+    "modes": [
+      "entity",
+      "graph"
+    ],
+    "results": []
+  }
+]
