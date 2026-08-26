@@ -49,6 +49,15 @@ them would be asking each to get the same subtlety right alone.
 substitute. A suite written after the fact and run only by the newcomer encodes whatever its
 author assumed the incumbent did.
 
+That principle was applied too narrowly at first. The original vector suite covered the shape
+of the port — write, read, converge, purge — and exercised seven of `VectorQuery`'s fourteen
+fields and none of `PolicyFilters`' thirteen. A backend that leaked restricted
+classifications, ignored denied sources, or hid every passage behind an entity-type rule
+would have passed it. `RunVectorFilterConformance` closes that: twenty-six cases declaring a
+query and the exact set of records it must return, because a filter that admits too much
+fails in the direction that matters. Writing it found a policy hole in the reference, which
+is what a suite the incumbent runs is for.
+
 ## Consequences
 
 Four of the five retrieval modes become substitutable: lexical, exact, vector, and — once

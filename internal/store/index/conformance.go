@@ -36,6 +36,15 @@ type Fixture struct {
 	// Model and Version identify the embedding these vectors came from.
 	Model   string
 	Version int
+
+	// SourceA, SourceB, CollectionA and CollectionB are references the filter suite writes
+	// onto records so policy narrowing can be checked. They must be real in backends that
+	// enforce referential integrity — PostgreSQL has foreign keys on both — which is why
+	// the fixture supplies them rather than inventing identifiers.
+	SourceA     domain.SourceID
+	SourceB     domain.SourceID
+	CollectionA domain.CollectionID
+	CollectionB domain.CollectionID
 }
 
 // RunVectorConformance exercises the behaviour every vector backend must share.
