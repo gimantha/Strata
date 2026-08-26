@@ -172,6 +172,9 @@ type GraphEdge struct {
 	SourceID       SourceID
 	CollectionID   CollectionID
 	Classification Classification
+	// MemoryKind travels with the edge so a policy rule about it narrows the walk rather
+	// than its results. Entity type cannot: it belongs to the entity, not the edge.
+	MemoryKind MemoryKind
 	// ActiveUntil and ExpiresAt keep expired relationships out of traversal.
 	ActiveUntil *time.Time
 	ExpiresAt   *time.Time

@@ -93,6 +93,12 @@ policy bugs live.
 classification ceiling all become SQL predicates in the vector, lexical, and graph searches,
 so unauthorized material is not fetched and then discarded.
 
+Two conditions cannot be pushed all the way into the graph traversal, and are applied where
+the disclosure happens instead. An entity carries no classification and no memory kind — those
+belong to claims — so a rule about entity types is checked when a traversal hit is resolved
+into a name, which is the read that turns an opaque identifier into something a person can
+see. That is narrowing at the point of disclosure rather than filtering afterwards.
+
 A record that is not scoped by a condition is not what that condition is about, and an allow
 rule does not hide it. A passage ingested into no collection survives a rule allowing one
 collection; a chunk has no entity type, so a rule allowing certain entity types does not

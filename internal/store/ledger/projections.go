@@ -422,8 +422,8 @@ func (s *Store) UpsertGraphEdges(ctx context.Context, edges []domain.GraphEdge) 
 			INSERT INTO graph_edges (id, workspace_id, graph_space_id, subject_id, predicate,
 			                         object_entity_id, assertion_id, valid_from, valid_to,
 			                         status, confidence, classification, source_id,
-			                         collection_id, active_until, expires_at)
-			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
+			                         collection_id, memory_kind, active_until, expires_at)
+			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
 			ON CONFLICT (assertion_id)
 			DO UPDATE SET status = EXCLUDED.status,
 			              graph_space_id = EXCLUDED.graph_space_id,
@@ -433,12 +433,14 @@ func (s *Store) UpsertGraphEdges(ctx context.Context, edges []domain.GraphEdge) 
 			              classification = EXCLUDED.classification,
 			              source_id = EXCLUDED.source_id,
 			              collection_id = EXCLUDED.collection_id,
+			              memory_kind = EXCLUDED.memory_kind,
 			              active_until = EXCLUDED.active_until,
 			              expires_at = EXCLUDED.expires_at`,
 			domain.NewUUIDString(), edge.WorkspaceID, edge.GraphSpaceID, edge.SubjectID,
 			edge.Predicate, edge.ObjectEntityID, edge.AssertionID, edge.ValidFrom, edge.ValidTo,
 			edge.Status, edge.Confidence, edge.Classification, nullableString(edge.SourceID),
-			nullableString(edge.CollectionID), edge.ActiveUntil, edge.ExpiresAt)
+			nullableString(edge.CollectionID), string(edge.MemoryKind),
+			edge.ActiveUntil, edge.ExpiresAt)
 	}
 
 	return s.InTx(ctx, func(tx pgx.Tx) error {
@@ -565,7 +567,8 @@ func (s *Store) ExpandGraph(ctx context.Context, q domain.GraphExpandQuery) ([]d
 		policyClassifications(q.Policy), orNilIDs(q.Policy.AllowedSources),
 		orNilIDs(q.Policy.DeniedSources), orNilStrings(q.Policy.AllowedPredicates),
 		orNilStrings(q.Policy.DeniedPredicates), activeAtOrNil(q.ActiveAt),
-		orNilIDs(q.Policy.AllowedCollections), orNilIDs(q.Policy.DeniedCollections))
+		orNilIDs(q.Policy.AllowedCollections), orNilIDs(q.Policy.DeniedCollections),
+		orNilEnums(q.Policy.AllowedMemoryKinds), orNilEnums(q.Policy.DeniedMemoryKinds))
 	if err != nil {
 		return nil, mapError(err, op, "cannot expand graph")
 	}
@@ -932,7 +935,9 @@ const edgePolicyClause = `AND ($9::text[] IS NULL OR ge.classification = ANY($9:
 				  AND ($12::text[] IS NULL OR ge.predicate = ANY($12::text[]))
 				  AND ($13::text[] IS NULL OR NOT (ge.predicate = ANY($13::text[])))
 				  AND ($15::uuid[] IS NULL OR ge.collection_id IS NULL OR ge.collection_id = ANY($15::uuid[]))
-				  AND ($16::uuid[] IS NULL OR ge.collection_id IS NULL OR NOT (ge.collection_id = ANY($16::uuid[])))`
+				  AND ($16::uuid[] IS NULL OR ge.collection_id IS NULL OR NOT (ge.collection_id = ANY($16::uuid[])))
+				  AND ($17::text[] IS NULL OR ge.memory_kind = ANY($17::text[]))
+				  AND ($18::text[] IS NULL OR NOT (ge.memory_kind = ANY($18::text[])))`
 
 // policyClassifications renders the permitted set, or nil when policy does not narrow.
 func policyClassifications(filters domain.PolicyFilters) []string {
@@ -940,6 +945,14 @@ func policyClassifications(filters domain.PolicyFilters) []string {
 		return nil
 	}
 	return enumStrings(filters.PermittedClassifications())
+}
+
+// orNilEnums renders an enum set, or nil when the policy does not narrow by it.
+func orNilEnums[T ~string](values []T) []string {
+	if len(values) == 0 {
+		return nil
+	}
+	return enumStrings(values)
 }
 
 func orNilIDs[T ~string](values []T) []string {

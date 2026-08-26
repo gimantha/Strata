@@ -321,6 +321,19 @@ func (r *Retriever) graph(ctx context.Context, req domain.QueryRequest, seeds []
 		if !known {
 			continue
 		}
+		// The same check the entity leg makes, for the same reason. An entity carries no
+		// classification, so its type is the only lever policy has, and graph_edges has no
+		// column for it — the type lives on the entity, which is why this cannot be pushed
+		// into the traversal.
+		//
+		// It is applied here rather than later because here is where the disclosure
+		// happens: traversal returns opaque identifiers and this is the read that turns
+		// one into a name. Filtering at the point a name is produced is not the
+		// after-the-fact filtering section 22.4 forbids; it is the narrowing, applied
+		// where the data actually appears.
+		if !req.Policy.Allows("", "", "", "", entity.EntityType) {
+			continue
+		}
 		rank++
 		out = append(out, candidate{
 			mode:  domain.ModeGraph,

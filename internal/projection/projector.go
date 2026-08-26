@@ -326,6 +326,7 @@ func (p *Projector) projectAssertions(ctx context.Context, scope domain.Scope, e
 				Status:         assertion.Status,
 				SourceID:       source,
 				CollectionID:   collection,
+				MemoryKind:     assertion.MemoryKind,
 				ActiveUntil:    assertion.Temporal.ActiveUntil,
 				ExpiresAt:      assertion.Temporal.ExpiresAt,
 				Confidence:     assertion.Confidence,
