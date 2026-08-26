@@ -31,9 +31,9 @@ func (s *Store) UpsertVectors(ctx context.Context, records []domain.VectorRecord
 			                            embedding_model, embedding_version, embedding,
 			                            valid_from, valid_to, status, classification, memory_kind,
 			                            source_event_id, content_hash, entity_type,
-			                            source_id, predicate,
+			                            source_id, collection_id, predicate,
 			                            active_from, active_until, decay_starts_at, expires_at)
-			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)
+			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23)
 			ON CONFLICT (workspace_id, surface, record_id, embedding_model, embedding_version)
 			DO UPDATE SET embedding = EXCLUDED.embedding,
 			              valid_from = EXCLUDED.valid_from,
@@ -44,6 +44,7 @@ func (s *Store) UpsertVectors(ctx context.Context, records []domain.VectorRecord
 			              content_hash = EXCLUDED.content_hash,
 			              entity_type = EXCLUDED.entity_type,
 			              source_id = EXCLUDED.source_id,
+			              collection_id = EXCLUDED.collection_id,
 			              predicate = EXCLUDED.predicate,
 			              active_from = EXCLUDED.active_from,
 			              active_until = EXCLUDED.active_until,
@@ -54,7 +55,8 @@ func (s *Store) UpsertVectors(ctx context.Context, records []domain.VectorRecord
 			formatVector(record.Embedding),
 			record.ValidFrom, record.ValidTo, record.Status, record.Classification,
 			record.MemoryKind, nullableString(record.SourceEventID), record.ContentHash,
-			record.EntityType, nullableString(record.SourceID), record.Predicate,
+			record.EntityType, nullableString(record.SourceID),
+			nullableString(record.Scope.CollectionID), record.Predicate,
 			record.Lifecycle.ActiveFrom, record.Lifecycle.ActiveUntil,
 			record.Lifecycle.DecayStartsAt, record.Lifecycle.ExpiresAt)
 	}
@@ -224,9 +226,9 @@ func (s *Store) UpsertLexical(ctx context.Context, records []domain.ProjectedRec
 			INSERT INTO lexical_records (id, workspace_id, graph_space_id, surface, record_id,
 			                             content, valid_from, valid_to, status, classification,
 			                             memory_kind, source_event_id, entity_type,
-			                             source_id, predicate,
+			                             source_id, collection_id, predicate,
 			                             active_from, active_until, decay_starts_at, expires_at)
-			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)
+			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)
 			ON CONFLICT (workspace_id, surface, record_id)
 			DO UPDATE SET content = EXCLUDED.content,
 			              valid_from = EXCLUDED.valid_from,
@@ -236,6 +238,7 @@ func (s *Store) UpsertLexical(ctx context.Context, records []domain.ProjectedRec
 			              memory_kind = EXCLUDED.memory_kind,
 			              entity_type = EXCLUDED.entity_type,
 			              source_id = EXCLUDED.source_id,
+			              collection_id = EXCLUDED.collection_id,
 			              predicate = EXCLUDED.predicate,
 			              active_from = EXCLUDED.active_from,
 			              active_until = EXCLUDED.active_until,
@@ -245,7 +248,8 @@ func (s *Store) UpsertLexical(ctx context.Context, records []domain.ProjectedRec
 			record.Surface, record.RecordID, record.Content,
 			record.ValidFrom, record.ValidTo, record.Status, record.Classification,
 			record.MemoryKind, nullableString(record.SourceEventID), record.EntityType,
-			nullableString(record.SourceID), record.Predicate,
+			nullableString(record.SourceID), nullableString(record.Scope.CollectionID),
+			record.Predicate,
 			record.Lifecycle.ActiveFrom, record.Lifecycle.ActiveUntil,
 			record.Lifecycle.DecayStartsAt, record.Lifecycle.ExpiresAt)
 	}
@@ -407,8 +411,8 @@ func (s *Store) UpsertGraphEdges(ctx context.Context, edges []domain.GraphEdge) 
 			INSERT INTO graph_edges (id, workspace_id, graph_space_id, subject_id, predicate,
 			                         object_entity_id, assertion_id, valid_from, valid_to,
 			                         status, confidence, classification, source_id,
-			                         active_until, expires_at)
-			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+			                         collection_id, active_until, expires_at)
+			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
 			ON CONFLICT (assertion_id)
 			DO UPDATE SET status = EXCLUDED.status,
 			              valid_from = EXCLUDED.valid_from,
@@ -416,12 +420,13 @@ func (s *Store) UpsertGraphEdges(ctx context.Context, edges []domain.GraphEdge) 
 			              confidence = EXCLUDED.confidence,
 			              classification = EXCLUDED.classification,
 			              source_id = EXCLUDED.source_id,
+			              collection_id = EXCLUDED.collection_id,
 			              active_until = EXCLUDED.active_until,
 			              expires_at = EXCLUDED.expires_at`,
 			domain.NewUUIDString(), edge.WorkspaceID, edge.GraphSpaceID, edge.SubjectID,
 			edge.Predicate, edge.ObjectEntityID, edge.AssertionID, edge.ValidFrom, edge.ValidTo,
 			edge.Status, edge.Confidence, edge.Classification, nullableString(edge.SourceID),
-			edge.ActiveUntil, edge.ExpiresAt)
+			nullableString(edge.CollectionID), edge.ActiveUntil, edge.ExpiresAt)
 	}
 
 	return s.InTx(ctx, func(tx pgx.Tx) error {
@@ -547,7 +552,8 @@ func (s *Store) ExpandGraph(ctx context.Context, q domain.GraphExpandQuery) ([]d
 		statuses, predicates, validAt, q.Depth, q.Limit,
 		policyClassifications(q.Policy), orNilIDs(q.Policy.AllowedSources),
 		orNilIDs(q.Policy.DeniedSources), orNilStrings(q.Policy.AllowedPredicates),
-		orNilStrings(q.Policy.DeniedPredicates), activeAtOrNil(q.ActiveAt))
+		orNilStrings(q.Policy.DeniedPredicates), activeAtOrNil(q.ActiveAt),
+		orNilIDs(q.Policy.AllowedCollections), orNilIDs(q.Policy.DeniedCollections))
 	if err != nil {
 		return nil, mapError(err, op, "cannot expand graph")
 	}
@@ -856,6 +862,17 @@ func applyPolicyFilters(add func(clause string, value any), alias string, filter
 	add(alias+".classification = ANY($%d::text[])",
 		enumStrings(filters.PermittedClassifications()))
 
+	// Collections, in the same shape as sources. A record in no collection is not
+	// collection-scoped material, so an allow rule about collections must not hide it —
+	// the reasoning already applied to entity_type and predicate below.
+	if len(filters.AllowedCollections) > 0 {
+		add("("+alias+".collection_id IS NULL OR "+alias+".collection_id = ANY($%d::uuid[]))",
+			idStrings(filters.AllowedCollections))
+	}
+	if len(filters.DeniedCollections) > 0 {
+		add("("+alias+".collection_id IS NULL OR NOT ("+alias+".collection_id = ANY($%d::uuid[])))",
+			idStrings(filters.DeniedCollections))
+	}
 	if len(filters.AllowedSources) > 0 {
 		add(alias+".source_id = ANY($%d::uuid[])", idStrings(filters.AllowedSources))
 	}
@@ -901,7 +918,9 @@ const edgePolicyClause = `AND ($9::text[] IS NULL OR ge.classification = ANY($9:
 				  AND ($10::uuid[] IS NULL OR ge.source_id = ANY($10::uuid[]))
 				  AND ($11::uuid[] IS NULL OR ge.source_id IS NULL OR NOT (ge.source_id = ANY($11::uuid[])))
 				  AND ($12::text[] IS NULL OR ge.predicate = ANY($12::text[]))
-				  AND ($13::text[] IS NULL OR NOT (ge.predicate = ANY($13::text[])))`
+				  AND ($13::text[] IS NULL OR NOT (ge.predicate = ANY($13::text[])))
+				  AND ($15::uuid[] IS NULL OR ge.collection_id IS NULL OR ge.collection_id = ANY($15::uuid[]))
+				  AND ($16::uuid[] IS NULL OR ge.collection_id IS NULL OR NOT (ge.collection_id = ANY($16::uuid[])))`
 
 // policyClassifications renders the permitted set, or nil when policy does not narrow.
 func policyClassifications(filters domain.PolicyFilters) []string {
@@ -1076,6 +1095,7 @@ func (s *Store) RefreshVectorMetadata(ctx context.Context, model string, version
 				UPDATE vector_records
 				SET valid_from = $6, valid_to = $7, status = $8, classification = $9,
 				    memory_kind = $10, entity_type = $11, source_id = $12, predicate = $13,
+				    collection_id = $18,
 				    active_from = $14, active_until = $15, decay_starts_at = $16, expires_at = $17
 				WHERE workspace_id = $1 AND surface = $2 AND record_id = $3
 				  AND embedding_model = $4 AND embedding_version = $5`,
@@ -1084,7 +1104,8 @@ func (s *Store) RefreshVectorMetadata(ctx context.Context, model string, version
 				record.MemoryKind, record.EntityType,
 				nullableString(record.SourceID), record.Predicate,
 				record.Lifecycle.ActiveFrom, record.Lifecycle.ActiveUntil,
-				record.Lifecycle.DecayStartsAt, record.Lifecycle.ExpiresAt)
+				record.Lifecycle.DecayStartsAt, record.Lifecycle.ExpiresAt,
+				nullableString(record.Scope.CollectionID))
 		}
 
 		results := tx.SendBatch(ctx, batch)

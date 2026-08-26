@@ -88,6 +88,17 @@ around protects nothing.
 baseline. No priorities, no most-specific-match, no first-match ordering — those are where
 policy bugs live.
 
+**Every condition that names material narrows the query itself**, never the results
+(section 22.4). Sources, collections, entity types, predicates, memory kinds, and the
+classification ceiling all become SQL predicates in the vector, lexical, and graph searches,
+so unauthorized material is not fetched and then discarded.
+
+A record that is not scoped by a condition is not what that condition is about, and an allow
+rule does not hide it. A passage ingested into no collection survives a rule allowing one
+collection; a chunk has no entity type, so a rule allowing certain entity types does not
+remove every passage. The alternative — treating "unscoped" as "not permitted" — makes one
+narrow rule quietly delete most of the corpus.
+
 ## Roles are the baseline
 
 | Role | read | write | export | admin |

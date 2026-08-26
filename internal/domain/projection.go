@@ -166,8 +166,11 @@ type GraphEdge struct {
 	ValidTo        *time.Time
 	Status         AssertionStatus
 	Confidence     float64
-	// SourceID is copied for policy filtering during traversal.
+	// SourceID and CollectionID are copied for policy filtering during traversal: a rule
+	// restricting a principal to certain sources or collections has to narrow the walk
+	// rather than its results (AGENTS.md section 22.4).
 	SourceID       SourceID
+	CollectionID   CollectionID
 	Classification Classification
 	// ActiveUntil and ExpiresAt keep expired relationships out of traversal.
 	ActiveUntil *time.Time

@@ -164,12 +164,16 @@ func (p *Projector) projectChunks(ctx context.Context, scope domain.Scope, event
 		return Stats{}, nil
 	}
 
-	// Every chunk in one event shares its source, so this is one lookup rather than one
-	// per chunk. Without it a policy restricting a principal to certain sources could not
-	// filter passages, only claims.
-	var source domain.SourceID
+	// Every chunk in one event shares its source and its collection, so this is one lookup
+	// rather than one per chunk. Without it a policy restricting a principal to certain
+	// sources or collections could not filter passages, only claims.
+	var (
+		source     domain.SourceID
+		collection domain.CollectionID
+	)
 	if event, err := p.ledger.GetSourceEvent(ctx, scope.WorkspaceID, eventID); err == nil {
 		source = event.SourceID
+		collection = event.CollectionID
 	}
 
 	records := make([]domain.ProjectedRecord, 0, len(chunks))
@@ -178,7 +182,11 @@ func (p *Projector) projectChunks(ctx context.Context, scope domain.Scope, event
 			continue
 		}
 		records = append(records, domain.ProjectedRecord{
-			Scope:          domain.Scope{WorkspaceID: chunk.WorkspaceID, GraphSpaceID: chunk.GraphSpaceID},
+			Scope: domain.Scope{
+				WorkspaceID:  chunk.WorkspaceID,
+				GraphSpaceID: chunk.GraphSpaceID,
+				CollectionID: collection,
+			},
 			Surface:        domain.SurfaceChunk,
 			RecordID:       string(chunk.ID),
 			Content:        chunk.Content,
@@ -227,17 +235,22 @@ func (p *Projector) projectAssertions(ctx context.Context, scope domain.Scope, e
 	// Which source each claim came from, so policy can filter projections by source without
 	// a join. One lookup per event rather than per claim: a batch usually shares one.
 	sourceByEvent := map[domain.SourceEventID]domain.SourceID{}
-	sourceOf := func(id domain.SourceEventID) domain.SourceID {
+	collectionByEvent := map[domain.SourceEventID]domain.CollectionID{}
+	// Memoized together: both come off the same event, and a claim needs both for policy
+	// to be able to filter it by source and by collection.
+	originOf := func(id domain.SourceEventID) (domain.SourceID, domain.CollectionID) {
 		if source, ok := sourceByEvent[id]; ok {
-			return source
+			return source, collectionByEvent[id]
 		}
 		event, err := p.ledger.GetSourceEvent(ctx, scope.WorkspaceID, id)
 		if err != nil {
 			sourceByEvent[id] = ""
-			return ""
+			collectionByEvent[id] = ""
+			return "", ""
 		}
 		sourceByEvent[id] = event.SourceID
-		return event.SourceID
+		collectionByEvent[id] = event.CollectionID
+		return event.SourceID, event.CollectionID
 	}
 
 	names := map[domain.EntityID]string{}
@@ -270,11 +283,13 @@ func (p *Projector) projectAssertions(ctx context.Context, scope domain.Scope, e
 		// is not something to depend on.
 		subjectName := nameOf(assertion.SubjectID)
 		subjectType := domain.NormalizeEntityType(types[assertion.SubjectID])
-		source := sourceOf(assertion.SourceEventID)
+		source, collection := originOf(assertion.SourceEventID)
 
 		records = append(records, domain.ProjectedRecord{
 			Scope: domain.Scope{
-				WorkspaceID: assertion.WorkspaceID, GraphSpaceID: assertion.GraphSpaceID,
+				WorkspaceID:  assertion.WorkspaceID,
+				GraphSpaceID: assertion.GraphSpaceID,
+				CollectionID: collection,
 			},
 			Surface:        domain.SurfaceAssertion,
 			RecordID:       string(assertion.ID),
@@ -310,6 +325,7 @@ func (p *Projector) projectAssertions(ctx context.Context, scope domain.Scope, e
 				ValidTo:        assertion.Temporal.ValidTo,
 				Status:         assertion.Status,
 				SourceID:       source,
+				CollectionID:   collection,
 				ActiveUntil:    assertion.Temporal.ActiveUntil,
 				ExpiresAt:      assertion.Temporal.ExpiresAt,
 				Confidence:     assertion.Confidence,
