@@ -1015,6 +1015,17 @@ const (
 	// stays hidden until the table is large enough for it to matter, which is the worst
 	// possible time to find it.
 	PlanPreferIndexes
+	// PlanRequireIndexOrdering additionally disables sorting, leaving only plans where an
+	// index supplies the ordering itself.
+	//
+	// This is the precise question for an ordered index such as HNSW, and unlike the other
+	// two it does not depend on the planner's cost estimates at all. With sorting
+	// available the planner may reasonably prefer a scan and a sort on one machine and an
+	// index scan on another, at the same row count — so a test asserting which it picked
+	// is really asserting what hardware it ran on. With sorting disabled the question
+	// becomes structural: either the ORDER BY is something an index can serve, or it is
+	// not.
+	PlanRequireIndexOrdering
 )
 
 // ExplainLexicalSearch returns the query plan for a full-text or substring search.
@@ -1044,9 +1055,14 @@ func (s *Store) explain(ctx context.Context, op, sql string, args []any,
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	if preference == PlanPreferIndexes {
+	if preference == PlanPreferIndexes || preference == PlanRequireIndexOrdering {
 		if _, err := tx.Exec(ctx, "SET LOCAL enable_seqscan = off"); err != nil {
 			return "", mapError(err, op, "cannot ask the planner to prefer indexes")
+		}
+	}
+	if preference == PlanRequireIndexOrdering {
+		if _, err := tx.Exec(ctx, "SET LOCAL enable_sort = off"); err != nil {
+			return "", mapError(err, op, "cannot ask the planner to avoid sorting")
 		}
 	}
 

@@ -175,9 +175,15 @@ chose the scan. The cause is that pgvector stores vectors out of line, so the ma
 tiny to the planner — a 2,000-row scan is costed at about a hundred pages — and detoasting is
 not costed at all.
 
-That is why the guard below asserts what the query *can* do rather than what the planner picked
-on the day. The way this property breaks is not the planner changing its mind; it is a query
-the index cannot serve, and that is stable at every size.
+Disabling sequential scans is not enough either, which CI demonstrated by failing a first
+version of the guard that did exactly that: with a sort still available the planner can prefer
+a bitmap scan on the scope index and a sort, and whether it does depends on the machine.
+
+So the guard disables sorting too, which turns the question from a cost comparison into a
+structural one: with neither a sequential scan nor a sort available, the only plans left are
+those where an index supplies the ordering. Either the ORDER BY is something HNSW can serve,
+or it is not — and that does not depend on hardware or row count. The way this property breaks
+is not the planner changing its mind; it is a query the index cannot serve.
 
 ### What the guards actually assert
 
@@ -190,8 +196,9 @@ a fixture whose size is the real variable. Instead:
   whether an index path exists at all. A changed distance operator, a dropped index, or a
   generated column that stops matching its operator class all fail here.
 - `TestIntegrationScopedSemanticSearchUsesItsIndex` seeds two thousand vectors and asserts
-  that the retriever's own scoped query reaches HNSW. This is the one that would have caught
-  the tiebreak regression: reintroducing it fails this test with the reason and the plan.
+  that an index can supply the ordering for the retriever's own scoped query, with sequential
+  scans and sorting both disabled. This is the one that would have caught the tiebreak
+  regression: reintroducing it fails this test with the reason and the plan.
 
 ## What is not measured yet
 

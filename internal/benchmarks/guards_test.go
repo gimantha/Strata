@@ -227,12 +227,19 @@ func TestIntegrationProjectionIndexesAreUsable(t *testing.T) {
 // cause is that pgvector stores vectors out of line, so the main table looks tiny — a
 // 2,000-row scan is costed at about a hundred pages — and detoasting is not costed at all.
 //
-// What is stable at every size measured is whether the index *can* be used: with sequential
-// scans disabled the planner reaches for HNSW every time. That is also exactly the property
-// worth guarding, because the way this breaks is not the planner changing its mind. A
-// deterministic tiebreak added to the ORDER BY once made the index unusable at every size —
-// verified at two hundred thousand rows, still a sequential scan — and no test noticed,
-// because every fixture in the suite is small enough for a scan to be the right answer.
+// Disabling sequential scans is not enough either, which CI demonstrated by failing a version
+// of this test that did exactly that: with a sort still available the planner can prefer a
+// bitmap scan on the scope index and a sort, and whether it does depends on the machine.
+//
+// So the question is asked structurally instead. With both sequential scans and sorting
+// disabled, the only plans left are those where an index supplies the ordering — and that is
+// a property of the query, not of the hardware or the row count. Either the ORDER BY is
+// something HNSW can serve or it is not.
+//
+// The way this breaks is not the planner changing its mind. A deterministic tiebreak added to
+// the ORDER BY once made the index unusable at every size — verified at two hundred thousand
+// rows, still a sequential scan — and no test noticed, because every fixture in the suite is
+// small enough for a scan to be the right answer.
 func TestIntegrationScopedSemanticSearchUsesItsIndex(t *testing.T) {
 	f := pgtest.NewFixture(t)
 	ctx := t.Context()
@@ -269,18 +276,18 @@ func TestIntegrationScopedSemanticSearchUsesItsIndex(t *testing.T) {
 		Model:     "hashing-bow-v1",
 		Version:   1,
 		Limit:     20,
-	}, ledger.PlanPreferIndexes)
+	}, ledger.PlanRequireIndexOrdering)
 	if err != nil {
 		t.Fatalf("explain: %v", err)
 	}
 
 	if !strings.Contains(plan, "vector_records_embedding_idx") {
-		t.Fatalf("a scoped semantic search over %d vectors cannot use the HNSW index even "+
-			"with sequential scans disabled, so it cannot use it at any size "+
-			"(AGENTS.md section 39). The usual cause is an ORDER BY the index cannot "+
-			"satisfy: an HNSW scan matches the distance expression alone, so a second sort "+
-			"key there forces a full scan and a sort. Sort deterministically outside the "+
-			"limit instead.\n%s", vectors, summarize(plan))
+		t.Fatalf("no plan for a scoped semantic search over %d vectors lets an index supply "+
+			"the ordering, so the query must sort at any size (AGENTS.md section 39). The "+
+			"usual cause is an ORDER BY the index cannot satisfy: an HNSW scan matches the "+
+			"distance expression alone, so a second sort key there forces a full scan and a "+
+			"sort. Sort deterministically outside the limit instead.\n%s",
+			vectors, summarize(plan))
 	}
 }
 
