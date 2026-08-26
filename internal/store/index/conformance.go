@@ -30,6 +30,10 @@ type Fixture struct {
 	// must be genuinely distinct rather than two names for one.
 	Primary domain.Scope
 	Other   domain.Scope
+	// PrimaryAltSpace is a second graph space inside the Primary workspace, for checking
+	// that a projection follows the ledger rather than remembering where a record first
+	// appeared.
+	PrimaryAltSpace domain.Scope
 	// Embed turns text into a vector of the width the backend expects. Vector suites need
 	// real vectors; a backend with a different dimensionality supplies its own.
 	Embed func(tb testing.TB, text string) []float32
@@ -93,6 +97,49 @@ func RunVectorConformance(t *testing.T, name string, idx Vectors, f Fixture) {
 		}
 		if n := countRecord(hits, record.RecordID); n != 1 {
 			t.Fatalf("a record written three times appears %d times; replay does not converge", n)
+		}
+	})
+
+	t.Run(name+"/an upsert refreshes every derived field", func(t *testing.T) {
+		ctx := t.Context()
+		record := vectorRecord(t, f, f.Primary,
+			"a record that is later re-derived into another graph space")
+
+		if err := idx.Upsert(ctx, []domain.VectorRecord{record}); err != nil {
+			t.Fatalf("upsert: %v", err)
+		}
+
+		// Re-derived under the same identity — the key is workspace, surface, record,
+		// model and version, and none of those change — but into a different graph space.
+		// A projection reflects the ledger, so the new scope wins. A backend that kept the
+		// first value would answer a scoped query with a record the ledger says is
+		// elsewhere.
+		moved := record
+		moved.Scope = f.PrimaryAltSpace
+		if err := idx.Upsert(ctx, []domain.VectorRecord{moved}); err != nil {
+			t.Fatalf("re-upsert: %v", err)
+		}
+
+		hits, err := idx.Search(ctx, domain.VectorQuery{
+			Scope: f.PrimaryAltSpace, Embedding: record.Embedding, Limit: 10,
+			Model: f.Model, Version: f.Version,
+		})
+		if err != nil {
+			t.Fatalf("search the new graph space: %v", err)
+		}
+		if !containsRecord(hits, record.RecordID) {
+			t.Error("a re-derived record did not follow the ledger into its new graph space")
+		}
+
+		hits, err = idx.Search(ctx, domain.VectorQuery{
+			Scope: f.Primary, Embedding: record.Embedding, Limit: 10,
+			Model: f.Model, Version: f.Version,
+		})
+		if err != nil {
+			t.Fatalf("search the old graph space: %v", err)
+		}
+		if containsRecord(hits, record.RecordID) {
+			t.Error("a re-derived record is still answering queries in the graph space it left")
 		}
 	})
 

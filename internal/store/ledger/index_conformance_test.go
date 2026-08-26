@@ -21,10 +21,11 @@ func TestIntegrationPostgresMeetsTheIndexContracts(t *testing.T) {
 
 	embedder := hashing.New()
 	fixture := index.Fixture{
-		Primary: f.Primary.Scope(),
-		Other:   other.Scope(),
-		Model:   embedder.Model(),
-		Version: embedder.Version(),
+		Primary:         f.Primary.Scope(),
+		Other:           other.Scope(),
+		PrimaryAltSpace: f.NewGraphSpace(t, "conformance-alt").Scope(),
+		Model:           embedder.Model(),
+		Version:         embedder.Version(),
 		Embed: func(tb testing.TB, text string) []float32 {
 			tb.Helper()
 			vectors, err := embedder.Embed(tb.Context(), []string{text})

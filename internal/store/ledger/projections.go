@@ -35,7 +35,16 @@ func (s *Store) UpsertVectors(ctx context.Context, records []domain.VectorRecord
 			                            active_from, active_until, decay_starts_at, expires_at)
 			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23)
 			ON CONFLICT (workspace_id, surface, record_id, embedding_model, embedding_version)
+			-- Every derived column, including graph_space_id and source_event_id. A
+			-- projection reflects the ledger; a column left out of this list would keep
+			-- whatever the first write happened to say, which is a projection that
+			-- disagrees with the record it was derived from. It has not mattered in
+			-- practice — record ids are unique, so nothing moves between graph spaces —
+			-- but "cannot happen today" is a poor reason for a write path to be wrong,
+			-- and a second backend would not reproduce the quirk anyway.
 			DO UPDATE SET embedding = EXCLUDED.embedding,
+			              graph_space_id = EXCLUDED.graph_space_id,
+			              source_event_id = EXCLUDED.source_event_id,
 			              valid_from = EXCLUDED.valid_from,
 			              valid_to = EXCLUDED.valid_to,
 			              status = EXCLUDED.status,
@@ -231,6 +240,8 @@ func (s *Store) UpsertLexical(ctx context.Context, records []domain.ProjectedRec
 			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)
 			ON CONFLICT (workspace_id, surface, record_id)
 			DO UPDATE SET content = EXCLUDED.content,
+			              graph_space_id = EXCLUDED.graph_space_id,
+			              source_event_id = EXCLUDED.source_event_id,
 			              valid_from = EXCLUDED.valid_from,
 			              valid_to = EXCLUDED.valid_to,
 			              status = EXCLUDED.status,
@@ -415,6 +426,7 @@ func (s *Store) UpsertGraphEdges(ctx context.Context, edges []domain.GraphEdge) 
 			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
 			ON CONFLICT (assertion_id)
 			DO UPDATE SET status = EXCLUDED.status,
+			              graph_space_id = EXCLUDED.graph_space_id,
 			              valid_from = EXCLUDED.valid_from,
 			              valid_to = EXCLUDED.valid_to,
 			              confidence = EXCLUDED.confidence,
