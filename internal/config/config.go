@@ -83,6 +83,20 @@ type Config struct {
 	// is a load pattern proportional to fleet size rather than to work.
 	WorkerIdleBackoffMax time.Duration
 
+	// VectorBackend selects where the vector projection lives: postgres or qdrant.
+	//
+	// The other two projections stay on PostgreSQL. Only this one has a second
+	// implementation, and the measurements in docs/api/performance.md say PostgreSQL is
+	// not the bottleneck at the scales tested — so this exists because the port is real,
+	// not because the default is wrong.
+	VectorBackend string
+	// Qdrant settings, used when CG_VECTOR_BACKEND=qdrant. The port is the gRPC one.
+	QdrantHost       string
+	QdrantPort       int
+	QdrantAPIKey     string
+	QdrantUseTLS     bool
+	QdrantCollection string
+
 	// NATSURL enables push delivery through JetStream. Empty keeps the deployment on
 	// pure ledger polling, which is correct and simply slower to react.
 	//
@@ -185,6 +199,13 @@ func LoadFrom(getenv func(string) string) (Config, error) {
 		WorkerMaxEventsPerSecond: l.floatVal("WORKER_MAX_EVENTS_PER_SECOND", 0),
 		WorkerIdleBackoffMax:     l.duration("WORKER_IDLE_BACKOFF_MAX", 5*time.Second),
 
+		VectorBackend:    strings.ToLower(l.str("VECTOR_BACKEND", "postgres")),
+		QdrantHost:       l.str("QDRANT_HOST", "127.0.0.1"),
+		QdrantPort:       l.intVal("QDRANT_PORT", 6334),
+		QdrantAPIKey:     l.str("QDRANT_API_KEY", ""),
+		QdrantUseTLS:     l.boolVal("QDRANT_USE_TLS", false),
+		QdrantCollection: l.str("QDRANT_COLLECTION", "strata_vectors"),
+
 		NATSURL: l.str("NATS_URL", ""),
 		// The literal rather than natsbus.StreamName: configuration should not have to
 		// import a provider adapter to know its own default.
@@ -264,6 +285,14 @@ func (c Config) Validate() error {
 	// worker can renew them, turning healthy work into repeated redelivery.
 	if c.WorkerLease <= c.WorkerPollInterval {
 		problems = append(problems, "CG_WORKER_LEASE must exceed CG_WORKER_POLL_INTERVAL")
+	}
+	switch c.VectorBackend {
+	case "postgres", "qdrant":
+	default:
+		problems = append(problems, "CG_VECTOR_BACKEND must be postgres or qdrant")
+	}
+	if c.VectorBackend == "qdrant" && c.QdrantHost == "" {
+		problems = append(problems, "CG_QDRANT_HOST is required for the qdrant backend")
 	}
 	if c.WorkerMaxEventsPerSecond < 0 {
 		problems = append(problems, "CG_WORKER_MAX_EVENTS_PER_SECOND cannot be negative; use 0 for uncapped")

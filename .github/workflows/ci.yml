@@ -47,6 +47,11 @@ jobs:
       # And for the object store, so the S3 adapter is verified against a real
       # implementation rather than skipped.
       CG_REQUIRE_S3: "1"
+      TEST_QDRANT_HOST: 127.0.0.1
+      TEST_QDRANT_PORT: "6334"
+      # And the vector backend. A conformance suite the second implementation never runs
+      # proves nothing about the port, so a missing Qdrant fails the build.
+      CG_REQUIRE_QDRANT: "1"
 
     steps:
       - uses: actions/checkout@v4
@@ -92,6 +97,22 @@ jobs:
           done
           echo "MinIO never became reachable" >&2
           docker logs strata-ci-minio >&2
+          exit 1
+
+      # A service container would do here — Qdrant needs no command — but it is started
+      # the same way as the others so one pattern covers all three.
+      - name: Start Qdrant
+        run: |
+          docker run -d --name strata-ci-qdrant -p 6333:6333 -p 6334:6334 qdrant/qdrant:latest
+          for _ in $(seq 1 30); do
+            if (exec 3<>/dev/tcp/127.0.0.1/6334) 2>/dev/null; then
+              echo "Qdrant is accepting connections"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "Qdrant never became reachable" >&2
+          docker logs strata-ci-qdrant >&2
           exit 1
 
       - name: Check formatting

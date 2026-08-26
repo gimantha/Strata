@@ -38,6 +38,7 @@ import (
 	"github.com/gimantha/strata/internal/store/blob"
 	blobs3 "github.com/gimantha/strata/internal/store/blob/s3"
 	"github.com/gimantha/strata/internal/store/index"
+	qdrantindex "github.com/gimantha/strata/internal/store/index/qdrant"
 	"github.com/gimantha/strata/internal/store/ledger"
 )
 
@@ -56,7 +57,11 @@ type App struct {
 	// Indexes is the retrieval projections as configured, so an operator can be told which
 	// backend serves each and a recovery drill can iterate them rather than guessing at
 	// table names.
-	Indexes   index.Set
+	Indexes index.Set
+
+	// qdrant is held only so it can be closed. Everything else reaches it through the
+	// port, which is the point.
+	qdrant    *qdrantindex.Store
 	Retriever *retrieval.Retriever
 	Assembler *contextblock.Assembler
 	Ontology  *ontology.Service
@@ -206,8 +211,27 @@ func New(ctx context.Context, cfg config.Config) (*App, error) {
 	}
 	app.Embedder = embedder
 	// One index set, built from the ledger, shared by the writer and the reader. A
-	// deployment moving a projection elsewhere replaces an entry here and nothing else.
+	// deployment moving a projection elsewhere replaces an entry here and nothing else,
+	// which is what the ports were separated for.
 	app.Indexes = store.Indexes()
+	if cfg.VectorBackend == "qdrant" {
+		vectors, err := qdrantindex.Open(ctx, qdrantindex.Options{
+			Host:       cfg.QdrantHost,
+			Port:       cfg.QdrantPort,
+			APIKey:     cfg.QdrantAPIKey,
+			UseTLS:     cfg.QdrantUseTLS,
+			Collection: cfg.QdrantCollection,
+		})
+		if err != nil {
+			// Startup fails rather than falling back. A deployment that configured a
+			// vector store and silently got another would discover it as a retrieval
+			// quality problem, which is the hardest kind to trace.
+			app.closeLedger()
+			return nil, err
+		}
+		app.Indexes.Vectors = vectors
+		app.qdrant = vectors
+	}
 	app.Projector = projection.New(store, store, app.Indexes, embedder,
 		projection.Options{}, logger, telemetry.Tracer)
 	stageCfg.Projector = app.Projector
@@ -319,6 +343,12 @@ func newEmbedder(cfg config.Config) (embedding.Embedder, error) {
 
 // Close releases resources.
 func (a *App) Close(ctx context.Context) error {
+	if a.qdrant != nil {
+		if err := a.qdrant.Close(); err != nil && a.Logger != nil {
+			a.Logger.WarnContext(ctx, "could not close the Qdrant connection",
+				slog.String("error", err.Error()))
+		}
+	}
 	if a.NATS != nil {
 		if err := a.NATS.Close(); err != nil && a.Logger != nil {
 			a.Logger.WarnContext(ctx, "could not close the NATS connection",

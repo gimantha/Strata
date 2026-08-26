@@ -9,7 +9,7 @@ Which storage each concern uses, what can be swapped, and how a swap is proven s
 |---|---|---|---|
 | Canonical ledger | — | PostgreSQL 16 | not swappable; see below |
 | Raw archive | `blob.Store` | filesystem, S3-compatible | `CG_BLOB_BACKEND` |
-| Vector projection | `index.Vectors` | pgvector (HNSW) | `index.Set` |
+| Vector projection | `index.Vectors` | pgvector (HNSW), Qdrant | `CG_VECTOR_BACKEND` |
 | Lexical projection | `index.Lexical` | PostgreSQL `tsvector` + pg_trgm | `index.Set` |
 | Graph projection | `index.Graph` | PostgreSQL `graph_edges` | `index.Set` |
 
@@ -138,10 +138,36 @@ join used to provide. And an edge pointing at an entity the ledger no longer has
 during hydration, which PostgreSQL's foreign keys make impossible but an eventually-consistent
 backend does not.
 
+## Moving the vector projection
+
+```bash
+./scripts/dev-qdrant.sh start          # gRPC on 16334, REST on 16333
+CG_VECTOR_BACKEND=qdrant
+CG_QDRANT_HOST=127.0.0.1
+CG_QDRANT_PORT=16334
+CG_QDRANT_COLLECTION=strata_vectors
+```
+
+The lexical and graph projections stay in PostgreSQL; `index.Set` mixes backends freely and
+nothing above the ports knows which is which. `cgctl recovery drill` names the backend
+serving each projection and rebuilds through the ports, so it reaches Qdrant rather than
+reporting against an empty PostgreSQL table.
+
+Startup fails if a configured Qdrant is unreachable rather than falling back, because a
+deployment that asked for one store and silently got another would discover it as a
+retrieval-quality problem.
+
+Two things change when the vectors move
+([ADR 0022](../adr/0022-a-second-vector-backend-and-what-it-proved.md)). A second datastore
+enters the restore path — the projection is derived, so losing it costs a replay rather than
+data, but the drill is what keeps that honest. And referential integrity is lost on this leg:
+PostgreSQL has foreign keys where Qdrant has payload values, so a dangling reference becomes
+possible and retrieval drops what it cannot hydrate.
+
 ## What phase 15 has not built
 
-Backends behind the three ports other than PostgreSQL. The ports exist and the projections
-are rebuildable, so adding one is now possible without implementing the ledger; whether it is
-needed is the open question in [performance.md](performance.md) — the measured finding there
-is that the vector index is correctly built and simply not reached by scoped queries, which
-points at a query-shape fix rather than at a different database.
+Second implementations of `index.Lexical` and `index.Graph`. The ports exist and both are
+rebuildable, so adding one is possible without implementing the ledger. Whether either is
+needed is unanswered, and the evidence points away from it: [performance.md](performance.md)
+shows PostgreSQL meeting every section 39 target, and the vector backend was built to prove
+the port rather than to fix a measured problem.
