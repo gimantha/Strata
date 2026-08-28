@@ -62,7 +62,14 @@ func TestBuildPromptIsolatesSourceAsData(t *testing.T) {
 	if prompt.Request.SchemaName != extraction.SchemaName || len(prompt.Request.Schema) == 0 {
 		t.Fatal("extraction must be schema-constrained")
 	}
-	if prompt.Request.Temperature != 0 || prompt.Request.Seed == nil {
+	// Asserted as a pointer to zero, not as a zero: the field was a plain float64 once, and
+	// a request for greedy decoding was indistinguishable from saying nothing, so the
+	// adapter dropped it and extraction ran at the provider's default all the way to the
+	// wire. The struct looked right in exactly this assertion while the request was wrong.
+	if prompt.Request.Temperature == nil || *prompt.Request.Temperature != 0 {
+		t.Fatal("extraction must ask for temperature 0, not leave it unset")
+	}
+	if prompt.Request.Seed == nil {
 		t.Fatal("extraction must ask for deterministic sampling where the provider supports it")
 	}
 }

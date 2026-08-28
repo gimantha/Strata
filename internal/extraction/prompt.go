@@ -152,7 +152,7 @@ func BuildGuidedPrompt(units []SourceUnit, schema Schema) (Prompt, error) {
 				},
 				MaxTokens: 4096,
 				// Extraction wants reproducibility, not creativity.
-				Temperature: temperature,
+				Temperature: &temperature,
 				Seed:        &seed,
 			},
 			SchemaName: SchemaName,

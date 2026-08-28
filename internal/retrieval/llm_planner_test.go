@@ -53,7 +53,7 @@ func newPlanner(model llm.LLM) llmPlanner {
 func TestLLMPlannerReshapesTheQuestion(t *testing.T) {
 	model := &scriptedModel{raw: `{
 		"modes": ["lexical", "exact", "vector", "graph"],
-		"mode_reasons": {"exact": "episodes is a requirement, not a topic"},
+		"mode_reasons": [{"mode": "exact", "reason": "episodes is a requirement, not a topic"}],
 		"sub_queries": [
 			{"text": "ignored", "kind": "original", "reason": "as asked"},
 			{"text": "episodes", "kind": "decomposed", "reason": "the constraint alone"},

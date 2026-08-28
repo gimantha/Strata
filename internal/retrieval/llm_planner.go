@@ -43,6 +43,11 @@ type llmPlanner struct {
 	hasVector bool
 }
 
+// planningTemperature asks for greedy decoding. Two identical questions that produced two
+// different plans would produce two different result sets, which is not a property a
+// retrieval system can have.
+var planningTemperature = 0.0
+
 // planningSeed makes a provider's sampling reproducible where it supports one, for the
 // same reason extraction sets one.
 var planningSeed = 1
@@ -52,33 +57,46 @@ var planningSeed = 1
 // Deliberately small. Every field is either an enum the caller already knew about or a short
 // string that becomes a search term, and there is no field through which scope, policy or
 // limits could arrive.
+//
+// Shaped for strict structured output, on the same terms as extraction.ResultSchema: every
+// property appears in "required", additionalProperties is false on every object, and there
+// are no length or cardinality keywords. Strict mode rejects a schema that breaks those
+// rules, and a rejected schema here would not surface as a planning error — it would fall
+// back to the heuristic on every single query, which looks exactly like working software.
+// llm.RunStrictSchemaConformance holds this to the rule. Bounds live in decode() instead,
+// where they apply to what actually arrived rather than to what was requested.
 const planSchema = `{
   "type": "object",
   "additionalProperties": false,
-  "required": ["modes", "sub_queries"],
+  "required": ["modes", "mode_reasons", "sub_queries"],
   "properties": {
     "modes": {
       "type": "array",
-      "minItems": 1,
-      "maxItems": 5,
       "items": {"type": "string", "enum": ["lexical", "exact", "vector", "entity", "graph"]}
     },
     "mode_reasons": {
-      "type": "object",
-      "additionalProperties": {"type": "string", "maxLength": 200}
+      "type": "array",
+      "description": "Why each chosen retriever was chosen. One entry per mode.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["mode", "reason"],
+        "properties": {
+          "mode": {"type": "string", "enum": ["lexical", "exact", "vector", "entity", "graph"]},
+          "reason": {"type": "string"}
+        }
+      }
     },
     "sub_queries": {
       "type": "array",
-      "minItems": 1,
-      "maxItems": 4,
       "items": {
         "type": "object",
         "additionalProperties": false,
         "required": ["text", "kind", "reason"],
         "properties": {
-          "text": {"type": "string", "maxLength": 512},
+          "text": {"type": "string"},
           "kind": {"type": "string", "enum": ["original", "decomposed", "hypothetical"]},
-          "reason": {"type": "string", "maxLength": 200}
+          "reason": {"type": "string"}
         }
       }
     }
@@ -145,7 +163,7 @@ func (p llmPlanner) Plan(ctx context.Context, req domain.QueryRequest) domain.Re
 			},
 			// Planning should be stable: the same question asked twice should search the
 			// same way, or a cached result and a fresh one disagree for no reason.
-			Temperature: 0,
+			Temperature: &planningTemperature,
 			Seed:        &planningSeed,
 		},
 		SchemaName: "retrieval_plan",
@@ -185,8 +203,10 @@ func (p llmPlanner) degraded(ctx context.Context, req domain.QueryRequest,
 func (p llmPlanner) decode(ctx context.Context, req domain.QueryRequest,
 	raw json.RawMessage) (domain.RetrievalPlan, string) {
 	var answer struct {
-		Modes       []string          `json:"modes"`
-		ModeReasons map[string]string `json:"mode_reasons"`
+		Modes []string `json:"modes"`
+		// Held raw and decoded separately: reasons are commentary on the plan, so a model
+		// that malforms them should cost the commentary, not the plan.
+		ModeReasons json.RawMessage `json:"mode_reasons"`
 		SubQueries  []struct {
 			Text   string `json:"text"`
 			Kind   string `json:"kind"`
@@ -202,6 +222,16 @@ func (p llmPlanner) decode(ctx context.Context, req domain.QueryRequest,
 		Reasons:    map[domain.RetrievalMode]string{},
 		Skipped:    map[domain.RetrievalMode]string{},
 		Candidates: map[domain.RetrievalMode]int{},
+	}
+
+	var stated []struct {
+		Mode   string `json:"mode"`
+		Reason string `json:"reason"`
+	}
+	_ = json.Unmarshal(answer.ModeReasons, &stated)
+	reasons := make(map[string]string, len(stated))
+	for _, r := range stated {
+		reasons[r.Mode] = r.Reason
 	}
 
 	known := []domain.RetrievalMode{
@@ -223,7 +253,7 @@ func (p llmPlanner) decode(ctx context.Context, req domain.QueryRequest,
 			continue
 		}
 		plan.Modes = append(plan.Modes, mode)
-		reason := answer.ModeReasons[name]
+		reason := reasons[name]
 		if reason == "" {
 			reason = "chosen by the planning model"
 		}

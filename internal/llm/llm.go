@@ -31,9 +31,12 @@ type Message struct {
 
 // GenerateRequest asks a model for free text.
 type GenerateRequest struct {
-	Messages    []Message
-	MaxTokens   int
-	Temperature float64
+	Messages  []Message
+	MaxTokens int
+	// Temperature is a pointer because zero is a meaningful value and the most useful one:
+	// it asks for greedy decoding. A plain float64 cannot express the difference between
+	// "the caller wants 0" and "the caller said nothing", and conflating them sends neither.
+	Temperature *float64
 	// Seed makes a provider's sampling reproducible where it supports one. Extraction
 	// sets it so the same input tends to produce the same output.
 	Seed *int

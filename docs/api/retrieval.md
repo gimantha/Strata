@@ -82,6 +82,18 @@ substitute one.
 per-mode reasons and counts. A result that came back for a rewritten question is not evidence
 about the original unless someone can compare them.
 
+### The same question plans the same way
+
+Planning requests temperature 0 and a fixed seed, so a question asked twice does not produce
+two different retrieval plans and two different result sets. A provider that ignores the seed
+weakens this; one that ignores temperature 0 breaks it, and nothing here can detect that from
+the outside.
+
+Determinism is asserted where it can be — the request sent to the provider is checked to
+carry both. It once was not: temperature 0 shared a representation with "unset" and was
+dropped before the wire, which affected extraction too ([ADR
+0025](../adr/0025-two-model-bugs-that-degraded-instead-of-failing.md)).
+
 ### One combination is refused
 
 `CG_QUERY_PLANNER=llm` with `CG_REDACT_QUERY_TEXT=true` fails at startup. Redaction exists so

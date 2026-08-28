@@ -186,8 +186,10 @@ func (p *Provider) buildRequest(req llm.GenerateRequest, format *responseFormat)
 	}
 	// Only send a temperature when one was chosen: some models reject any value but their
 	// default.
-	if req.Temperature > 0 {
-		temperature := req.Temperature
+	// Sent when the caller asked for one, omitted when it did not: some models reject any
+	// temperature but their default, and zero is a request rather than an absence.
+	if req.Temperature != nil {
+		temperature := *req.Temperature
 		out.Temperature = &temperature
 	}
 	return out

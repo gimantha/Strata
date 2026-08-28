@@ -57,7 +57,7 @@ func TestIntegrationPlanningFindsWhatShapeAloneMisses(t *testing.T) {
 		retrieval.Options{
 			PlanningModel: planningModel{raw: `{
 				"modes": ["lexical", "vector"],
-				"mode_reasons": {"lexical": "the constraint is a literal word"},
+				"mode_reasons": [{"mode": "lexical", "reason": "the constraint is a literal word"}],
 				"sub_queries": [
 					{"text": "ignored", "kind": "original", "reason": "as asked"},
 					{"text": "episodes", "kind": "decomposed",

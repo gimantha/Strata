@@ -101,6 +101,36 @@ func TestGenerateStructuredSendsSchemaAndReturnsRawJSON(t *testing.T) {
 	}
 }
 
+func TestAnExplicitZeroTemperatureIsSent(t *testing.T) {
+	// Zero is the temperature a caller most often means on purpose: extraction and query
+	// planning both want greedy decoding. It once shared a representation with "unset" and
+	// was dropped, so both ran at the provider's default while their own tests, which only
+	// inspected the struct, went on passing.
+	var captured map[string]any
+	provider := stub(t, func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(body, &captured)
+		io.WriteString(w, okResponse(`{}`))
+	})
+
+	zero := 0.0
+	if _, err := provider.GenerateStructured(context.Background(), llm.StructuredRequest{
+		GenerateRequest: llm.GenerateRequest{
+			Messages:    []llm.Message{{Role: llm.RoleUser, Content: "hi"}},
+			Temperature: &zero,
+		},
+	}); err != nil {
+		t.Fatalf("call: %v", err)
+	}
+	temperature, present := captured["temperature"]
+	if !present {
+		t.Fatal("an explicit temperature of 0 was dropped; the request is not deterministic")
+	}
+	if temperature != float64(0) {
+		t.Errorf("temperature = %v, want 0", temperature)
+	}
+}
+
 func TestGenerateStructuredOmitsTemperatureWhenUnset(t *testing.T) {
 	// Some models reject any temperature but their default, so an unset value must not be
 	// sent as zero.
