@@ -152,6 +152,18 @@ type Config struct {
 	// what people asked is itself sensitive (AGENTS.md section 6.12).
 	RedactQueryText bool
 
+	// QueryPlanner selects how retrieval decides what to search for: heuristic or llm.
+	//
+	// The heuristic planner reads the query's shape — is it an identifier, is it short
+	// enough to be a name — and costs nothing. The llm planner reads its meaning, and can
+	// tell that "which support episodes" is a requirement rather than a topic, break a
+	// compound question apart, and sketch what an answer would look like for the vector
+	// leg to match against. It costs a model call per query and falls back to the
+	// heuristic whenever it cannot answer.
+	QueryPlanner string
+	// QueryPlannerTimeout bounds the planning call.
+	QueryPlannerTimeout time.Duration
+
 	// EmbeddingProvider selects the embedder for the vector projection: none, mock,
 	// hashing, or openai. Without one, lexical and graph retrieval still work.
 	//
@@ -249,11 +261,13 @@ func LoadFrom(getenv func(string) string) (Config, error) {
 		LLMTimeout:    l.duration("LLM_TIMEOUT", 60*time.Second),
 		LLMMaxRetries: l.intVal("LLM_MAX_RETRIES", 2),
 
-		RedactQueryText:   l.boolVal("REDACT_QUERY_TEXT", false),
-		EmbeddingProvider: strings.ToLower(l.str("EMBEDDING_PROVIDER", "none")),
-		EmbeddingBaseURL:  l.str("EMBEDDING_BASE_URL", ""),
-		EmbeddingModel:    l.str("EMBEDDING_MODEL", ""),
-		EmbeddingAPIKey:   l.str("EMBEDDING_API_KEY", ""),
+		RedactQueryText:     l.boolVal("REDACT_QUERY_TEXT", false),
+		QueryPlanner:        strings.ToLower(l.str("QUERY_PLANNER", "heuristic")),
+		QueryPlannerTimeout: l.duration("QUERY_PLANNER_TIMEOUT", 5*time.Second),
+		EmbeddingProvider:   strings.ToLower(l.str("EMBEDDING_PROVIDER", "none")),
+		EmbeddingBaseURL:    l.str("EMBEDDING_BASE_URL", ""),
+		EmbeddingModel:      l.str("EMBEDDING_MODEL", ""),
+		EmbeddingAPIKey:     l.str("EMBEDDING_API_KEY", ""),
 
 		PipelineVersion:    l.intVal("PIPELINE_VERSION", 1),
 		ChunkMaxTokens:     l.intVal("CHUNK_MAX_TOKENS", 320),
@@ -313,6 +327,26 @@ func (c Config) Validate() error {
 	// worker can renew them, turning healthy work into repeated redelivery.
 	if c.WorkerLease <= c.WorkerPollInterval {
 		problems = append(problems, "CG_WORKER_LEASE must exceed CG_WORKER_POLL_INTERVAL")
+	}
+	switch c.QueryPlanner {
+	case "heuristic":
+	case "llm":
+		if c.LLMProvider == "none" || c.LLMProvider == "" {
+			problems = append(problems,
+				"CG_QUERY_PLANNER=llm needs a model: set CG_LLM_PROVIDER")
+		}
+		// Redaction exists for deployments where the question itself is sensitive: the
+		// trace keeps a hash instead of the words. Sending that same question to a model
+		// would defeat it silently, so the combination is refused rather than warned
+		// about (AGENTS.md section 6.12).
+		if c.RedactQueryText {
+			problems = append(problems,
+				"CG_QUERY_PLANNER=llm cannot be combined with CG_REDACT_QUERY_TEXT: "+
+					"redaction keeps query text out of traces, and planning would send it "+
+					"to a model")
+		}
+	default:
+		problems = append(problems, "CG_QUERY_PLANNER must be heuristic or llm")
 	}
 	switch c.GraphBackend {
 	case "postgres", "neo4j":

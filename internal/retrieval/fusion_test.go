@@ -239,7 +239,7 @@ func TestPlannerRecognizesIdentifiers(t *testing.T) {
 }
 
 func TestPlannerSkipsVectorWithoutAnEmbedder(t *testing.T) {
-	plan := planner{hasEmbedder: false}.plan(domain.QueryRequest{Query: "anything at all"})
+	plan := heuristicPlanner{hasEmbedder: false}.Plan(t.Context(), domain.QueryRequest{Query: "anything at all"})
 	for _, mode := range plan.Modes {
 		if mode == domain.ModeVector {
 			t.Fatal("vector retrieval must not be planned without an embedder")
@@ -251,7 +251,7 @@ func TestPlannerSkipsVectorWithoutAnEmbedder(t *testing.T) {
 
 	// An explicitly requested mode list is honoured rather than second-guessed, except for
 	// a mode that cannot run.
-	plan = planner{hasEmbedder: false}.plan(domain.QueryRequest{
+	plan = heuristicPlanner{hasEmbedder: false}.Plan(t.Context(), domain.QueryRequest{
 		Query: "anything", Modes: []domain.RetrievalMode{domain.ModeLexical, domain.ModeVector},
 	})
 	if len(plan.Modes) != 1 || plan.Modes[0] != domain.ModeLexical {

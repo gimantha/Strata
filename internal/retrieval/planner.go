@@ -1,27 +1,46 @@
 package retrieval
 
 import (
+	"context"
 	"strings"
 	"unicode"
 
 	"github.com/gimantha/strata/internal/domain"
 )
 
-// planner decides which candidate generators to run for a query.
+// Planner decides which candidate generators to run, and what to search for.
 //
-// The decision is made from the query's shape rather than by asking a model, because
-// retrieval must work without an LLM at query time (AGENTS.md section 19.4) and because a
-// planner that costs a model call per query is a planner nobody can afford to run.
-type planner struct {
+// An interface with two implementations, because the two answer different questions. The
+// heuristic planner reads the query's shape; an LLM planner reads its meaning. The first is
+// the default and, whatever else is configured, the fallback: AGENTS.md section 19.4
+// requires retrieval to work without a model at query time.
+type Planner interface {
+	Plan(ctx context.Context, req domain.QueryRequest) domain.RetrievalPlan
+}
+
+// heuristicPlanner decides from the query's shape rather than by asking a model.
+//
+// Cheap, predictable, and always available. It cannot tell that "which support episodes" is
+// a requirement rather than a topic — that is what an LLM planner is for — but it never
+// costs a model call, never fails, and never sends the query anywhere.
+type heuristicPlanner struct {
 	hasEmbedder bool
 }
 
-// plan returns the modes to run and why, so a disappointing result can be explained.
-func (p planner) plan(req domain.QueryRequest) domain.RetrievalPlan {
+// Plan returns the modes to run and why, so a disappointing result can be explained.
+func (p heuristicPlanner) Plan(_ context.Context, req domain.QueryRequest) domain.RetrievalPlan {
 	out := domain.RetrievalPlan{
+		Planner:    "heuristic",
 		Reasons:    map[domain.RetrievalMode]string{},
 		Skipped:    map[domain.RetrievalMode]string{},
 		Candidates: map[domain.RetrievalMode]int{},
+		// The question as asked. A heuristic planner never reshapes it, and recording
+		// that explicitly means every plan says what was searched for rather than leaving
+		// the single-query case implied.
+		SubQueries: []domain.SubQuery{{
+			Text: req.Query, Kind: domain.SubQueryOriginal,
+			Reason: "the question as asked",
+		}},
 	}
 
 	// An explicit mode list is honoured as given: a caller narrowing retrieval usually

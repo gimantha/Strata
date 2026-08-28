@@ -25,6 +25,7 @@ type harness struct {
 	service   *knowledge.Service
 	projector *projection.Projector
 	retriever *retrieval.Retriever
+	embedder  *hashing.Embedder
 }
 
 func newHarness(t *testing.T) *harness {
@@ -52,6 +53,7 @@ func newHarness(t *testing.T) *harness {
 
 	return &harness{
 		fixture:   f,
+		embedder:  embedder,
 		gateway:   ingest.New(f.Store, blobs, ingest.Options{PipelineVersion: 1}, nil, nil, nil),
 		runner:    pipeline.NewRunner(f.Store, 1, stages, nil, nil, nil),
 		service:   service,
@@ -61,6 +63,28 @@ func newHarness(t *testing.T) *harness {
 }
 
 func (h *harness) scope() domain.Scope { return h.fixture.Primary.Scope() }
+
+// ingestOne puts one document in place and projects it, for tests that need a small corpus
+// rather than the evaluation fixture.
+func (h *harness) ingestOne(t *testing.T, key, text string) {
+	t.Helper()
+	ctx := context.Background()
+
+	receipt, err := h.gateway.Accept(ctx, ingest.Request{
+		Scope:          h.scope(),
+		Principal:      h.fixture.Primary.Principal.Ref(),
+		SourceID:       h.fixture.Primary.Source.ID,
+		MediaType:      normalize.MediaTypePlain,
+		Payload:        []byte(text),
+		IdempotencyKey: key,
+	})
+	if err != nil {
+		t.Fatalf("ingest %s: %v", key, err)
+	}
+	if _, err := h.runner.Process(ctx, h.scope().WorkspaceID, receipt.SourceEventID, false); err != nil {
+		t.Fatalf("process %s: %v", key, err)
+	}
+}
 
 // firstEvent returns the earliest ingested event, for tests that need something to attach a
 // claim to.

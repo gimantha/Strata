@@ -168,7 +168,55 @@ type RetrievalPlan struct {
 	Skipped    map[RetrievalMode]string
 	Candidates map[RetrievalMode]int
 	Elapsed    map[RetrievalMode]time.Duration
+
+	// Planner names what produced this plan, so a surprising result can be attributed to
+	// the thing that chose the strategy rather than to the retrievers that executed it.
+	Planner string
+	// SubQueries are the searches actually issued. Always at least one: a plan that
+	// searched for the question as asked records that rather than leaving it implied.
+	//
+	// More than one means the question was reshaped before retrieval, and a reader needs
+	// to see what was actually asked of the index — a result that came back for a
+	// rewritten question is not evidence about the original unless someone can compare
+	// them (AGENTS.md section 19.4, reranker output must be traceable).
+	SubQueries []SubQuery
+	// PlannerNote records why a planner did something unusual, most often why an LLM
+	// planner was not used after all.
+	PlannerNote string
 }
+
+// SubQuery is one search issued on behalf of a request.
+type SubQuery struct {
+	Text   string
+	Kind   SubQueryKind
+	Reason string
+}
+
+// SubQueryKind says how a search relates to the question that prompted it.
+type SubQueryKind string
+
+const (
+	// SubQueryOriginal is the question as the caller asked it. Always present: a rewrite
+	// that loses the original loses the one phrasing known to be what someone meant.
+	SubQueryOriginal SubQueryKind = "original"
+	// SubQueryDecomposed is one part of a question that asked for several things.
+	SubQueryDecomposed SubQueryKind = "decomposed"
+	// SubQueryHypothetical is a sketch of what an answer might look like, searched for
+	// instead of the question. A question and its answer are worded differently, so
+	// embedding the answer's shape often lands closer to the passage that contains it.
+	SubQueryHypothetical SubQueryKind = "hypothetical"
+)
+
+// MaxSubQueries bounds how far a question may be expanded.
+//
+// Each one is a full retrieval across every planned mode, so the cost is multiplied rather
+// than added to. Four is enough for a decomposition plus a hypothetical answer and little
+// enough that a planner cannot turn one question into a scan.
+const MaxSubQueries = 4
+
+// MaxSubQueryLength bounds a single rewritten search, so a planner cannot smuggle a
+// document into the index as a query.
+const MaxSubQueryLength = 512
 
 // QueryResult is what retrieval returns.
 type QueryResult struct {

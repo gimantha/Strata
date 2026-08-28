@@ -3,6 +3,7 @@ package retrieval
 import (
 	"context"
 	"log/slog"
+	"slices"
 	"sort"
 	"strconv"
 	"time"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/gimantha/strata/internal/domain"
 	"github.com/gimantha/strata/internal/embedding"
+	"github.com/gimantha/strata/internal/llm"
 	"github.com/gimantha/strata/internal/store/index"
 )
 
@@ -38,6 +40,7 @@ type Ledger interface {
 
 // Retriever runs the planned candidate generators and fuses their results.
 type Retriever struct {
+	planner  Planner
 	ledger   Ledger
 	indexes  index.Set
 	embedder embedding.Embedder
@@ -60,6 +63,14 @@ type Options struct {
 	// RedactQueryText stores the hash of a query without its words, for deployments where
 	// what people asked is itself sensitive (AGENTS.md section 6.12).
 	RedactQueryText bool
+
+	// PlanningModel turns on LLM query planning. Nil keeps the heuristic planner, which is
+	// also the fallback whenever a configured model cannot answer: retrieval must work
+	// without a model at query time (AGENTS.md section 19.4).
+	PlanningModel llm.LLM
+	// PlanningTimeout bounds the planning call. Short by default, because a planner that
+	// makes a query slower than the retrieval it was meant to improve is not worth having.
+	PlanningTimeout time.Duration
 }
 
 // New builds a retriever. The embedder may be nil, in which case the vector leg is skipped
@@ -73,7 +84,21 @@ func New(ledger Ledger, indexes index.Set, embedder embedding.Embedder, opts Opt
 	if tracer == nil {
 		tracer = tracenoop.NewTracerProvider().Tracer("retrieval")
 	}
+	heuristic := heuristicPlanner{hasEmbedder: embedder != nil}
+	var chosen Planner = heuristic
+	if opts.PlanningModel != nil {
+		timeout := opts.PlanningTimeout
+		if timeout <= 0 {
+			timeout = 5 * time.Second
+		}
+		chosen = llmPlanner{
+			model: opts.PlanningModel, fallback: heuristic, timeout: timeout,
+			logger: logger, hasVector: embedder != nil,
+		}
+	}
+
 	return &Retriever{
+		planner:  chosen,
 		ledger:   ledger,
 		indexes:  indexes,
 		embedder: embedder,
@@ -98,7 +123,7 @@ func (r *Retriever) Query(ctx context.Context, req domain.QueryRequest) (domain.
 		return domain.QueryResult{}, err
 	}
 
-	plan := planner{hasEmbedder: r.embedder != nil}.plan(req)
+	plan := r.planner.Plan(ctx, req)
 
 	queryStarted := r.now()
 
@@ -109,7 +134,81 @@ func (r *Retriever) Query(ctx context.Context, req domain.QueryRequest) (domain.
 		seeds []domain.EntityID
 	)
 
-	for _, mode := range plan.Modes {
+	// One retrieval per planned search. A heuristic plan issues exactly one — the question
+	// as asked — so this is the same single pass it always was. A planner that reshaped the
+	// question issues several, and fusion merges them: a record found by two searches earns
+	// two contributions and ranks above one found by either alone, which is the whole point
+	// of asking more than once.
+	//
+	// Graph is held back until every other search has run, because it expands from what the
+	// others found and seeds gathered from one sub-query are just as good a starting point
+	// for another (AGENTS.md section 19.5).
+	for _, sub := range plan.SubQueries {
+		searched := req
+		searched.Query = sub.Text
+
+		found, err := r.runModes(ctx, searched, &plan, seedingModes(plan.Modes), nil)
+		if err != nil {
+			return domain.QueryResult{}, err
+		}
+		for _, c := range found {
+			if c.hit.Surface == domain.SurfaceEntity {
+				seeds = append(seeds, domain.EntityID(c.hit.RecordID))
+			}
+		}
+		candidates = append(candidates, found...)
+	}
+
+	if slices.Contains(plan.Modes, domain.ModeGraph) {
+		found, err := r.runModes(ctx, req, &plan,
+			[]domain.RetrievalMode{domain.ModeGraph}, seeds)
+		if err != nil {
+			return domain.QueryResult{}, err
+		}
+		candidates = append(candidates, found...)
+	}
+
+	items := fuse(candidates, r.weights, req.Limit)
+	result := domain.QueryResult{Items: items, Total: countDistinct(candidates)}
+	if req.Explain {
+		result.Plan = &plan
+	}
+	result.TraceID = r.record(ctx, req, candidates, items, r.now().Sub(queryStarted))
+
+	span.SetAttributes(
+		attribute.Int("strata.results", len(items)),
+		attribute.Int("strata.candidates", result.Total),
+		attribute.Int("strata.sub_queries", len(plan.SubQueries)),
+		attribute.String("strata.planner", plan.Planner),
+	)
+	if r.logger != nil {
+		r.logger.DebugContext(ctx, "retrieval complete",
+			slog.Int("candidates", result.Total),
+			slog.Int("results", len(items)),
+			slog.Int("sub_queries", len(plan.SubQueries)),
+			slog.String("planner", plan.Planner))
+	}
+	return result, nil
+}
+
+// seedingModes is every mode except graph, in plan order.
+func seedingModes(modes []domain.RetrievalMode) []domain.RetrievalMode {
+	out := make([]domain.RetrievalMode, 0, len(modes))
+	for _, mode := range modes {
+		if mode != domain.ModeGraph {
+			out = append(out, mode)
+		}
+	}
+	return out
+}
+
+// runModes executes one search across the named retrievers.
+func (r *Retriever) runModes(ctx context.Context, req domain.QueryRequest,
+	plan *domain.RetrievalPlan, modes []domain.RetrievalMode,
+	seeds []domain.EntityID) ([]candidate, error) {
+	var candidates []candidate
+
+	for _, mode := range modes {
 		// A mode whose index is not configured is skipped rather than failed. The planner
 		// picks modes from the query's shape, not from the deployment's, so a deployment
 		// running without one projection would otherwise have every query fail instead of
@@ -137,40 +236,20 @@ func (r *Retriever) Query(ctx context.Context, req domain.QueryRequest) (domain.
 			found, err = r.graph(ctx, req, seeds)
 		}
 		if err != nil {
-			return domain.QueryResult{}, err
-		}
-
-		for _, c := range found {
-			if c.hit.Surface == domain.SurfaceEntity {
-				seeds = append(seeds, domain.EntityID(c.hit.RecordID))
-			}
+			return nil, err
 		}
 
 		candidates = append(candidates, found...)
-		plan.Candidates[mode] = len(found)
+		// Accumulated across sub-queries rather than replaced, so the count reports how
+		// much a retriever contributed to the whole answer.
+		plan.Candidates[mode] += len(found)
 		if plan.Elapsed == nil {
 			plan.Elapsed = map[domain.RetrievalMode]time.Duration{}
 		}
-		plan.Elapsed[mode] = r.now().Sub(started)
+		plan.Elapsed[mode] += r.now().Sub(started)
 	}
 
-	items := fuse(candidates, r.weights, req.Limit)
-	result := domain.QueryResult{Items: items, Total: countDistinct(candidates)}
-	if req.Explain {
-		result.Plan = &plan
-	}
-	result.TraceID = r.record(ctx, req, candidates, items, r.now().Sub(queryStarted))
-
-	span.SetAttributes(
-		attribute.Int("strata.candidates", result.Total),
-		attribute.Int("strata.results", len(items)),
-	)
-	if r.logger != nil {
-		r.logger.DebugContext(ctx, "retrieval complete",
-			slog.Int("candidates", result.Total),
-			slog.Int("results", len(items)))
-	}
-	return result, nil
+	return candidates, nil
 }
 
 // lexical runs full-text or substring search.

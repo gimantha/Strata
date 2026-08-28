@@ -277,7 +277,13 @@ func New(ctx context.Context, cfg config.Config) (*App, error) {
 	app.Memory = memory.New(store, app.Knowledge, app.Projector, memory.Options{}, logger, telemetry.Tracer)
 
 	app.Connector = cdc.New(app.Gateway, store, cdc.Options{}, logger, telemetry.Tracer)
+	var planningModel llm.LLM
+	if cfg.QueryPlanner == "llm" {
+		planningModel = provider
+	}
 	app.Retriever = retrieval.New(store, app.Indexes, embedder, retrieval.Options{
+		PlanningModel:   planningModel,
+		PlanningTimeout: cfg.QueryPlannerTimeout,
 		Traces:          store,
 		RedactQueryText: cfg.RedactQueryText,
 	}, logger, telemetry.Tracer)

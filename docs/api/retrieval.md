@@ -19,6 +19,75 @@ POST /v1/graph-spaces/{graph_space_id}/query
 
 Everything but `query` is optional. With no `modes` the planner picks them.
 
+
+## Query planning
+
+Something has to decide *how* to look before anything looks. That step is query planning, and
+Strata offers two.
+
+```bash
+CG_QUERY_PLANNER=heuristic     # default
+CG_QUERY_PLANNER=llm
+CG_QUERY_PLANNER_TIMEOUT=5s
+```
+
+**Heuristic** reads the query's *shape*. Is it short enough to be a name? Does it look like an
+identifier — `ERR_7731X`, `AF-2291-B` — which stemming and embeddings both destroy? Is an
+embedder configured? Then it fires the matching retrievers and fuses them. It costs nothing,
+never fails, and never sends the question anywhere.
+
+What it cannot do is read meaning. In *"which context graph implementation supports
+episodes?"*, the phrase `supports episodes` is a **requirement**, and the heuristic planner
+has no way to know that. Embeddings are weak here too: a document about context graphs that
+mentions episodes and one that does not sit close together in vector space.
+
+**LLM** reads meaning. It chooses retrievers with a stated reason, and may reshape the
+question into up to four searches:
+
+| Kind | What it is |
+|---|---|
+| `original` | The question as asked. Always present, always the real text. |
+| `decomposed` | One part of a question that asked for several things. |
+| `hypothetical` | A sentence that reads like the answer would, searched instead of the question — a question and its answer are worded differently, so the answer's shape often lands closer to the passage containing it. |
+
+Each search runs across every planned retriever, and the results all fuse together: a record
+found by two searches earns two contributions and outranks one found by either alone.
+
+### What it can and cannot do
+
+The planner may choose **which retrievers run** and **what strings they search for**. That is
+the whole of its output space. It cannot name a workspace, relax a policy, raise a limit, or
+reach a surface the caller could not already reach — those come from the request and the
+access decision and are never read back from the model.
+
+This is what makes it safe to let a model influence retrieval over text a stranger wrote. A
+question engineered to hijack the planner can, at worst, make it run every retriever — which
+is close to what the heuristic does anyway. The prompt also states that the question is data
+rather than instruction, the same defence extraction uses, but the type system is the part
+that actually holds.
+
+### It always falls back
+
+Any failure — timeout, provider outage, output that does not validate — returns the heuristic
+plan with a note saying why, and logs it. Section 19.4 requires retrieval to work without a
+model at query time, and a system that *usually* has one does not satisfy that.
+
+The model also never decides what you asked. Whatever it returns labelled `original` is
+replaced with the actual question, so a rewrite can add searches but never silently
+substitute one.
+
+### Reading what it did
+
+`Explain: true` returns the plan: which planner ran, every search issued and why, and the
+per-mode reasons and counts. A result that came back for a rewritten question is not evidence
+about the original unless someone can compare them.
+
+### One combination is refused
+
+`CG_QUERY_PLANNER=llm` with `CG_REDACT_QUERY_TEXT=true` fails at startup. Redaction exists so
+the words of a question stay out of traces; planning sends those same words to a provider.
+Accepting both would defeat a compliance control silently.
+
 ## The retrievers
 
 | Mode | Finds | Backed by |
