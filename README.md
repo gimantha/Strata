@@ -221,7 +221,7 @@ Most defaults are worth leaving alone. These change the shape of a deployment:
 | `CG_GRAPH_BACKEND` | `postgres` (recursive CTE) | `neo4j` |
 | `CG_EMBEDDING_PROVIDER` | `none` — no vector retrieval | a provider; the other four retrieval paths work without one |
 | `CG_LLM_PROVIDER` | `none` — CDC and explicit assertions only | a provider, which enables extraction and permits `CG_QUERY_PLANNER=llm` |
-| `CG_QUERY_PLANNER` | `heuristic` — planned from the query's shape | `llm`, which also falls back to the heuristic on any failure |
+| `CG_QUERY_PLANNER` | `heuristic` — planned from the query's shape | `llm`, which also falls back to the heuristic on any failure. Any OpenAI-compatible endpoint works, including a local one — `scripts/dev-ollama.sh` |
 
 The four storage backends are ports with conformance suites, and the PostgreSQL
 implementations are held to the same suites as the alternatives — see

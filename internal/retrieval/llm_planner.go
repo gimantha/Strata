@@ -276,6 +276,15 @@ func (p llmPlanner) decode(ctx context.Context, req domain.QueryRequest,
 		}
 	})
 
+	// Two sub-queries with the same text are one search. A real model returns duplicates
+	// more readily than a scripted one: qwen2.5:3b, asked to plan a prompt-injection
+	// attempt, labelled all four of its sub-queries "original", and since decode replaces
+	// the text of anything so labelled with the question as asked, that became four
+	// identical searches. Cost aside, sub-queries are fused rather than merged, so a
+	// duplicate is a second RRF contribution — three originals beside one decomposition
+	// would weight the original phrasing three times as heavily, on nothing but a model's
+	// formatting habit.
+	seen := map[string]bool{}
 	var sawOriginal bool
 	for _, sub := range answer.SubQueries {
 		text := strings.TrimSpace(sub.Text)
@@ -288,14 +297,26 @@ func (p llmPlanner) decode(ctx context.Context, req domain.QueryRequest,
 			// The model does not get to decide what the user asked. Whatever it returned
 			// under this label is replaced with the actual question.
 			text = req.Query
-			sawOriginal = true
 		case domain.SubQueryDecomposed, domain.SubQueryHypothetical:
+			// A rewrite that lands back on the question as asked is the question as
+			// asked, whatever the model called it. Labelling follows the text so that a
+			// plan reads truthfully and the entry is not counted twice.
+			if text == strings.TrimSpace(req.Query) {
+				text, kind = req.Query, domain.SubQueryOriginal
+			}
 		default:
+			continue
+		}
+		if kind == domain.SubQueryOriginal {
+			sawOriginal = true
+		}
+		if seen[text] {
 			continue
 		}
 		if len(plan.SubQueries) >= domain.MaxSubQueries {
 			break
 		}
+		seen[text] = true
 		plan.SubQueries = append(plan.SubQueries, domain.SubQuery{
 			Text: text, Kind: kind, Reason: sub.Reason,
 		})

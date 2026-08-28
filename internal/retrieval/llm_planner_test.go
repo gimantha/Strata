@@ -239,3 +239,57 @@ func TestRedactionAndPlanningAreRefusedTogether(t *testing.T) {
 	// provider, and nothing in a trace would show it.
 	t.Log("enforced by config.Validate; see CG_QUERY_PLANNER and CG_REDACT_QUERY_TEXT")
 }
+
+// qwen2.5:3b returned exactly this shape when handed a prompt-injection attempt: four
+// sub-queries, every one labelled "original". decode replaces the text of anything so
+// labelled with the question as asked, so without dedup the plan issued the same search
+// four times — four times the database work, and four RRF contributions for one search.
+func TestRepeatedSubQueriesBecomeOneSearch(t *testing.T) {
+	model := &scriptedModel{raw: `{
+		"modes": ["lexical"],
+		"mode_reasons": [],
+		"sub_queries": [
+			{"text": "a", "kind": "original", "reason": "1"},
+			{"text": "b", "kind": "original", "reason": "2"},
+			{"text": "c", "kind": "original", "reason": "3"},
+			{"text": "d", "kind": "original", "reason": "4"}
+		]
+	}`}
+
+	plan := newPlanner(model).Plan(context.Background(),
+		domain.QueryRequest{Query: "who confirmed the renewal"})
+
+	if len(plan.SubQueries) != 1 {
+		t.Fatalf("four copies of one question became %d searches: %+v",
+			len(plan.SubQueries), plan.SubQueries)
+	}
+	if plan.SubQueries[0].Text != "who confirmed the renewal" {
+		t.Errorf("searched %q", plan.SubQueries[0].Text)
+	}
+}
+
+// A duplicate need not be labelled to be a duplicate.
+func TestADistinctlyLabelledRepeatIsStillOneSearch(t *testing.T) {
+	model := &scriptedModel{raw: `{
+		"modes": ["lexical"],
+		"mode_reasons": [],
+		"sub_queries": [
+			{"text": "who confirmed the renewal", "kind": "decomposed", "reason": "1"},
+			{"text": "renewal confirmation", "kind": "decomposed", "reason": "2"},
+			{"text": "renewal confirmation", "kind": "hypothetical", "reason": "3"}
+		]
+	}`}
+
+	plan := newPlanner(model).Plan(context.Background(),
+		domain.QueryRequest{Query: "who confirmed the renewal"})
+
+	if len(plan.SubQueries) != 2 {
+		t.Fatalf("expected two distinct searches, got %d: %+v",
+			len(plan.SubQueries), plan.SubQueries)
+	}
+	// A rewrite that lands on the question as asked is the question as asked, and the plan
+	// should say so rather than reporting a decomposition that decomposed nothing.
+	if plan.SubQueries[0].Kind != domain.SubQueryOriginal {
+		t.Errorf("the question as asked is labelled %q", plan.SubQueries[0].Kind)
+	}
+}

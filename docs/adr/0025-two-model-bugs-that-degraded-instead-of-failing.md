@@ -44,6 +44,30 @@ keywords, an object without `additionalProperties: false`, and any property abse
 strict mode the way a provider does, driving `openai.Provider` rather than a scripted
 `llm.LLM`: the schema, the encoding, the retries, and every degradation path.
 
+## Addendum: what a real model then showed
+
+The above was written without a model to test against. An open-weights one — qwen2.5:3b
+under Ollama, behind the same OpenAI-compatible adapter — was pulled afterwards, and found a
+third defect within four questions.
+
+Handed a prompt-injection attempt, it returned four sub-queries and labelled every one
+`original`. Since decode replaces the text of anything so labelled with the question as
+asked, the plan became the same search four times. Sub-queries are fused rather than merged,
+so each duplicate was another RRF contribution: three originals beside one decomposition
+would have weighted the original phrasing three times as heavily, on nothing but a model's
+formatting habit. Sub-queries are now deduplicated by text, and a rewrite that lands back on
+the question as asked is relabelled `original` rather than counted as a second search.
+
+No scripted test had produced that shape, because no author thinks to write it. Two things
+the same run confirmed: Ollama honours temperature 0 and a fixed seed, so the same question
+plans the same way; and the schema, having been shaped for strict mode, was accepted.
+
+The live tests are opt-in — `CG_REQUIRE_OLLAMA=1` — rather than running whenever a server is
+up, which inverts the convention the storage harnesses use. What a model decides is not a
+property of this repository, and a gate that quietly came to depend on one would fail for
+reasons no change to the code caused. They therefore show as skipped in a bare `go test
+./...`, which is the honest report: they did not run.
+
 ## Consequences
 
 A schema that no provider would accept now fails a test rather than a request. An explicit
@@ -52,9 +76,12 @@ temperature reaches the wire. Extraction is deterministic for the first time.
 The limits are worth stating plainly. The conformance suite encodes strict-mode rules as we
 understand them; a provider that changes its rules will not tell us, and the suite is only as
 current as its list. The wire tests prove the planner can talk to a provider and survive
-everything a provider can do to it. They prove nothing about whether a given model plans
-*well* — that needs a key, a corpus, and judgment, and it is measurement rather than
-construction.
+everything a provider can do to it. The live tests prove a real model's output survives
+contact with decode. Neither proves a given model plans *well* on a particular corpus — that
+needs judgment and a corpus, and it is measurement rather than construction. What the live
+run did show is that qwen2.5:3b reaches for `exact` and `graph` on almost everything and
+never chose `entity`, including for *"who confirmed the renewal"*, where entity retrieval is
+the obvious first move.
 
 The general lesson is the one that keeps recurring in this project, seen from a new angle.
 ADR 0024 recorded that a filter existing in the domain and nowhere in the query path fails

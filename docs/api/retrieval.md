@@ -94,6 +94,24 @@ carry both. It once was not: temperature 0 shared a representation with "unset" 
 dropped before the wire, which affected extraction too ([ADR
 0025](../adr/0025-two-model-bugs-that-degraded-instead-of-failing.md)).
 
+### Trying it against a local model
+
+`scripts/dev-ollama.sh start` pulls a small open-weights model and serves it on an
+OpenAI-compatible endpoint; `scripts/dev-ollama.sh test` runs the planner against it. These
+tests assert the contract — the question as asked is always searched, retrievers are ones we
+know, the bounds hold — and log the model's judgment rather than asserting it, since which
+retrievers a model prefers is a property of that model.
+
+Worth doing before trusting a model in this role. qwen2.5:3b, for one, reaches for `exact`
+and `graph` on nearly every question and never chose `entity`, including where entity
+retrieval is the obvious first move.
+
+    export CG_LLM_PROVIDER=openai
+    export CG_LLM_BASE_URL=http://127.0.0.1:11434/v1
+    export CG_LLM_MODEL=qwen2.5:3b
+    export CG_LLM_API_KEY=ollama          # required by the shape, ignored by the server
+    export CG_QUERY_PLANNER=llm
+
 ### One combination is refused
 
 `CG_QUERY_PLANNER=llm` with `CG_REDACT_QUERY_TEXT=true` fails at startup. Redaction exists so
