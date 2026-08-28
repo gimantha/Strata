@@ -72,7 +72,10 @@ distributed production mode, and storage adapters behind stable ports.
 - Hybrid retrieval over all five paths, fused by weighted RRF and planned from the shape of
   the query, with the plan and per-retriever ranks reported rather than hidden. On the
   evaluation corpus hybrid beats every individual mode on both recall@5 and MRR — a measured
-  assertion in the test suite, not a claim
+  assertion in the test suite, not a claim. Planning is optionally handed to a model, which
+  can choose retrievers with reasons and reshape one question into several searches that
+  fuse together; it selects retrievers and search strings and nothing else, so a rewrite
+  cannot widen scope, relax policy, or raise a limit
 
 - Context assembly under a hard token budget: greedy selection with redundancy reduction,
   per-section shares, conflict annotation, and a citation for every rendered item — reserved
@@ -195,6 +198,42 @@ curl -s -X POST "localhost:8080/v1/graph-spaces/$GS/context" \
 ```
 
 See [docs/api/ingest.md](docs/api/ingest.md) for the full surface.
+
+## Configuration
+
+Every option is an environment variable prefixed `CG_`. [configs/dev.env](configs/dev.env)
+documents every one with the reasoning behind its default; it is the reference, and sourcing
+it is a working development configuration. `CG_DATABASE_URL` is the only setting with no
+usable default; choosing a non-default backend then makes that backend's own address
+mandatory too (`CG_S3_BUCKET`, `CG_QDRANT_HOST`, `CG_OPENSEARCH_URL`, `CG_NEO4J_URI`). An
+unrecognised `CG_` name is simply unread rather than rejected, so check spelling against
+dev.env if a setting seems to have no effect.
+
+Most defaults are worth leaving alone. These change the shape of a deployment:
+
+| Setting | Default | Alternative |
+| --- | --- | --- |
+| `CG_EMBEDDED_WORKER` | `false` — nothing is processed until `cmd/cgworker` runs | `true`, and the server drains its own queue; convenient for a single node |
+| `CG_NATS_URL` | unset — workers poll PostgreSQL | a JetStream URL for push delivery. Notice only: the claim still happens in PostgreSQL, so exactly-once does not depend on the broker |
+| `CG_BLOB_BACKEND` | `fs` — the raw archive on disk | `s3` for any S3-compatible object store |
+| `CG_VECTOR_BACKEND` | `postgres` (pgvector) | `qdrant` |
+| `CG_LEXICAL_BACKEND` | `postgres` (tsvector + pg_trgm) | `opensearch` |
+| `CG_GRAPH_BACKEND` | `postgres` (recursive CTE) | `neo4j` |
+| `CG_EMBEDDING_PROVIDER` | `none` — no vector retrieval | a provider; the other four retrieval paths work without one |
+| `CG_LLM_PROVIDER` | `none` — CDC and explicit assertions only | a provider, which enables extraction and permits `CG_QUERY_PLANNER=llm` |
+| `CG_QUERY_PLANNER` | `heuristic` — planned from the query's shape | `llm`, which also falls back to the heuristic on any failure |
+
+The four storage backends are ports with conformance suites, and the PostgreSQL
+implementations are held to the same suites as the alternatives — see
+[docs/api/storage.md](docs/api/storage.md). A single-node deployment needs none of them:
+PostgreSQL alone serves all five retrieval paths.
+
+Models are optional everywhere and never in the write path for provenance
+([docs/api/extraction.md](docs/api/extraction.md),
+[docs/api/retrieval.md](docs/api/retrieval.md)). Settings that contradict each other are
+refused at startup rather than warned about: `CG_QUERY_PLANNER=llm` with
+`CG_REDACT_QUERY_TEXT=true` will not boot, since redaction exists to keep query text out of
+traces and planning would send exactly that text to a provider.
 
 ## Development
 
