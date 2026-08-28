@@ -11,7 +11,7 @@ Which storage each concern uses, what can be swapped, and how a swap is proven s
 | Raw archive | `blob.Store` | filesystem, S3-compatible | `CG_BLOB_BACKEND` |
 | Vector projection | `index.Vectors` | pgvector (HNSW), Qdrant | `CG_VECTOR_BACKEND` |
 | Lexical projection | `index.Lexical` | PostgreSQL `tsvector` + pg_trgm, OpenSearch | `CG_LEXICAL_BACKEND` |
-| Graph projection | `index.Graph` | PostgreSQL `graph_edges` | `index.Set` |
+| Graph projection | `index.Graph` | PostgreSQL `graph_edges`, Neo4j | `CG_GRAPH_BACKEND` |
 
 The ledger is deliberately not swappable. Multi-temporal reconciliation, supersession, and
 the transactional outbox all depend on one database committing them together
@@ -186,10 +186,32 @@ Both adapters escape their own, and the conformance suite checks all four agains
 backend — a suite testing only the incumbent's alphabet would pass a backend that treated the
 other as a pattern, and an identifier search would quietly match its neighbours.
 
-## What phase 15 has not built
+## Moving the graph projection
 
-A second implementation of `index.Graph`. The port exists and the projection is rebuildable,
-so adding one is possible without implementing the ledger. Whether it is needed is
-unanswered, and the evidence points away: [performance.md](performance.md) shows PostgreSQL
-meeting every section 39 target, and both backends that exist were built to prove their
-ports rather than to fix a measured problem.
+```bash
+./scripts/dev-neo4j.sh start           # Bolt on 17687
+CG_GRAPH_BACKEND=neo4j
+CG_NEO4J_URI=bolt://127.0.0.1:17687
+CG_NEO4J_USER=neo4j
+CG_NEO4J_PASSWORD=...
+```
+
+The graph index writes edges and never entities: nodes are created as a side effect and carry
+only an identifier and a workspace. Names, types and everything else stay canonical, which is
+what makes a backend holding nothing but relationships possible at all
+([ADR 0024](../adr/0024-the-last-port-and-what-three-backends-showed.md)).
+
+## What is left on PostgreSQL whatever you configure
+
+The canonical ledger, and entity resolution. `FindEntitiesByName` joins `entities` to
+`entity_aliases` — both canonical — so a name-to-identity lookup is on `retrieval.Ledger`
+rather than on any index port. Four of the five retrieval modes are substitutable; that one
+is not, by construction.
+
+## Choosing to move anything
+
+Do not, without a measurement. [performance.md](performance.md) shows PostgreSQL meeting
+every section 39 target at the scales tested, and none of the three alternative backends was
+built to fix a bottleneck — they exist to prove the ports are real, and to make the option
+available when a deployment outgrows one leg. Moving a projection adds a datastore to the
+restore path and loses the referential integrity PostgreSQL enforces.

@@ -13,12 +13,12 @@ this file.
 
 ## Status
 
-Phases 0 through 14 of the contract are implemented: the architecture skeleton, the
+Phases 0 through 15 of the contract are implemented: the architecture skeleton, the
 canonical ingestion ledger, the assertion-first knowledge model, schema-constrained
 extraction, conservative entity resolution, multi-temporal reconciliation, rebuildable
 retrieval projections, hybrid retrieval and context assembly, ontology modes, change data
 capture, attribute-based policy, memory lifecycle, portable packages and MCP, and
-distributed production mode.
+distributed production mode, and storage adapters behind stable ports.
 
 **Working today**
 
@@ -116,8 +116,14 @@ distributed production mode.
   partition keys that keep successive versions of one upstream record in order, per-worker
   rate limiting, and monotonic projection checkpoints that name the worker that advanced them
 
-**Not built yet** (phase 15): dedicated graph, vector, lexical, and S3-compatible blob
-storage adapters behind the interfaces the earlier phases stabilized.
+- Storage that can move: the raw archive on a filesystem or any S3-compatible object store,
+  and each of the three retrieval projections behind its own port with a second
+  implementation — vectors in Qdrant, text in OpenSearch, the graph in Neo4j — held to the
+  same behaviour by the same conformance suites the PostgreSQL implementations run
+
+All sixteen phases of the contract are implemented. What remains is measurement rather than
+construction: [docs/api/performance.md](docs/api/performance.md) records what has been
+benchmarked and what has not.
 
 ## Quickstart
 

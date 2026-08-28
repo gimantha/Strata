@@ -55,6 +55,10 @@ jobs:
       TEST_OPENSEARCH_URL: http://127.0.0.1:9200
       # And the lexical backend, for the same reason.
       CG_REQUIRE_OPENSEARCH: "1"
+      TEST_NEO4J_URI: bolt://127.0.0.1:7687
+      TEST_NEO4J_PASSWORD: strata-secret
+      # And the graph backend, completing the set.
+      CG_REQUIRE_NEO4J: "1"
 
     steps:
       - uses: actions/checkout@v4
@@ -137,6 +141,24 @@ jobs:
           done
           echo "OpenSearch never became ready" >&2
           docker logs strata-ci-opensearch 2>&1 | tail -20 >&2
+          exit 1
+
+      - name: Start Neo4j
+        run: |
+          docker run -d --name strata-ci-neo4j -p 7687:7687 -p 7474:7474 \
+            -e NEO4J_AUTH=neo4j/strata-secret \
+            -e NEO4J_server_memory_heap_max__size=512m \
+            -e NEO4J_server_memory_pagecache_size=256m \
+            neo4j:5-community
+          for _ in $(seq 1 60); do
+            if curl -s -m 3 -o /dev/null http://127.0.0.1:7474/; then
+              echo "Neo4j is ready"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "Neo4j never became ready" >&2
+          docker logs strata-ci-neo4j 2>&1 | tail -20 >&2
           exit 1
 
       - name: Check formatting

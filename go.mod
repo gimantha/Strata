@@ -12,6 +12,7 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/jackc/pgx/v5 v5.10.0
 	github.com/nats-io/nats.go v1.53.1
+	github.com/neo4j/neo4j-go-driver/v5 v5.28.4
 	github.com/opensearch-project/opensearch-go/v4 v4.7.3
 	github.com/qdrant/go-client v1.19.0
 	go.opentelemetry.io/otel v1.45.0

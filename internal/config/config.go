@@ -83,6 +83,14 @@ type Config struct {
 	// is a load pattern proportional to fleet size rather than to work.
 	WorkerIdleBackoffMax time.Duration
 
+	// GraphBackend selects where the graph projection lives: postgres or neo4j.
+	GraphBackend string
+	// Neo4j settings, used when CG_GRAPH_BACKEND=neo4j. The URI is the Bolt endpoint.
+	Neo4jURI      string
+	Neo4jUser     string
+	Neo4jPassword string
+	Neo4jDatabase string
+
 	// LexicalBackend selects where the lexical projection lives: postgres or opensearch.
 	LexicalBackend string
 	// OpenSearch settings, used when CG_LEXICAL_BACKEND=opensearch.
@@ -207,6 +215,12 @@ func LoadFrom(getenv func(string) string) (Config, error) {
 		WorkerMaxEventsPerSecond: l.floatVal("WORKER_MAX_EVENTS_PER_SECOND", 0),
 		WorkerIdleBackoffMax:     l.duration("WORKER_IDLE_BACKOFF_MAX", 5*time.Second),
 
+		GraphBackend:  strings.ToLower(l.str("GRAPH_BACKEND", "postgres")),
+		Neo4jURI:      l.str("NEO4J_URI", "bolt://127.0.0.1:7687"),
+		Neo4jUser:     l.str("NEO4J_USER", "neo4j"),
+		Neo4jPassword: l.str("NEO4J_PASSWORD", ""),
+		Neo4jDatabase: l.str("NEO4J_DATABASE", ""),
+
 		LexicalBackend:     strings.ToLower(l.str("LEXICAL_BACKEND", "postgres")),
 		OpenSearchURL:      l.str("OPENSEARCH_URL", "http://127.0.0.1:9200"),
 		OpenSearchUser:     l.str("OPENSEARCH_USER", ""),
@@ -299,6 +313,14 @@ func (c Config) Validate() error {
 	// worker can renew them, turning healthy work into repeated redelivery.
 	if c.WorkerLease <= c.WorkerPollInterval {
 		problems = append(problems, "CG_WORKER_LEASE must exceed CG_WORKER_POLL_INTERVAL")
+	}
+	switch c.GraphBackend {
+	case "postgres", "neo4j":
+	default:
+		problems = append(problems, "CG_GRAPH_BACKEND must be postgres or neo4j")
+	}
+	if c.GraphBackend == "neo4j" && c.Neo4jURI == "" {
+		problems = append(problems, "CG_NEO4J_URI is required for the neo4j backend")
 	}
 	switch c.LexicalBackend {
 	case "postgres", "opensearch":

@@ -38,6 +38,7 @@ import (
 	"github.com/gimantha/strata/internal/store/blob"
 	blobs3 "github.com/gimantha/strata/internal/store/blob/s3"
 	"github.com/gimantha/strata/internal/store/index"
+	neo4jindex "github.com/gimantha/strata/internal/store/index/neo4j"
 	opensearchindex "github.com/gimantha/strata/internal/store/index/opensearch"
 	qdrantindex "github.com/gimantha/strata/internal/store/index/qdrant"
 	"github.com/gimantha/strata/internal/store/ledger"
@@ -63,6 +64,7 @@ type App struct {
 	// qdrant is held only so it can be closed. Everything else reaches it through the
 	// port, which is the point.
 	qdrant    *qdrantindex.Store
+	neo4j     *neo4jindex.Store
 	Retriever *retrieval.Retriever
 	Assembler *contextblock.Assembler
 	Ontology  *ontology.Service
@@ -215,6 +217,20 @@ func New(ctx context.Context, cfg config.Config) (*App, error) {
 	// deployment moving a projection elsewhere replaces an entry here and nothing else,
 	// which is what the ports were separated for.
 	app.Indexes = store.Indexes()
+	if cfg.GraphBackend == "neo4j" {
+		graph, err := neo4jindex.Open(ctx, neo4jindex.Options{
+			URI:      cfg.Neo4jURI,
+			Username: cfg.Neo4jUser,
+			Password: cfg.Neo4jPassword,
+			Database: cfg.Neo4jDatabase,
+		})
+		if err != nil {
+			app.closeLedger()
+			return nil, err
+		}
+		app.Indexes.Graph = graph
+		app.neo4j = graph
+	}
 	if cfg.LexicalBackend == "opensearch" {
 		lexical, err := opensearchindex.Open(ctx, opensearchindex.Options{
 			Addresses: []string{cfg.OpenSearchURL},
@@ -357,6 +373,12 @@ func newEmbedder(cfg config.Config) (embedding.Embedder, error) {
 
 // Close releases resources.
 func (a *App) Close(ctx context.Context) error {
+	if a.neo4j != nil {
+		if err := a.neo4j.Close(ctx); err != nil && a.Logger != nil {
+			a.Logger.WarnContext(ctx, "could not close the Neo4j connection",
+				slog.String("error", err.Error()))
+		}
+	}
 	if a.qdrant != nil {
 		if err := a.qdrant.Close(); err != nil && a.Logger != nil {
 			a.Logger.WarnContext(ctx, "could not close the Qdrant connection",
