@@ -300,6 +300,20 @@ func RunLexicalFilterConformance(t *testing.T, name string, idx Lexical, f Fixtu
 			want: without("collected"),
 		},
 		{
+			name: "full text requires every term, not any",
+			query: func() domain.LexicalQuery {
+				// The reference uses websearch_to_tsquery, whose default is conjunction.
+				// A backend defaulting to disjunction — which several search engines do —
+				// would answer almost every multi-word query with the whole corpus,
+				// because one common word would be enough. Every record here contains
+				// "quarterly", and none contains the second term.
+				q := base()
+				q.Text = "quarterly zqxjklmnprstv"
+				return q
+			},
+			want: nil,
+		},
+		{
 			name: "another workspace sees nothing",
 			query: func() domain.LexicalQuery {
 				q := base()
@@ -338,52 +352,105 @@ func RunLexicalFilterConformance(t *testing.T, name string, idx Lexical, f Fixtu
 
 	t.Run(name+"/exact matching is literal", func(t *testing.T) {
 		ctx := t.Context()
-		// The characters exact mode exists for. Both are LIKE wildcards, so a backend
-		// building a pattern from the caller's text finds the lookalike as well.
-		literal := domain.ProjectedRecord{
-			Scope: f.Primary, Surface: domain.SurfaceChunk,
-			RecordID: domain.NewUUIDString(), Content: "the build failed with ERR_7731X",
-			Status: string(domain.AssertionActive), Classification: domain.ClassificationInternal,
-			MemoryKind: domain.MemorySemantic,
-		}
-		lookalike := literal
-		lookalike.RecordID = domain.NewUUIDString()
-		lookalike.Content = "the build failed with ERRX7731X"
 
-		if err := idx.Upsert(ctx, []domain.ProjectedRecord{literal, lookalike}); err != nil {
-			t.Fatalf("upsert: %v", err)
+		// Every character that is a wildcard in some search engine, not just in the
+		// reference. PostgreSQL's LIKE reads % and _; Lucene's wildcard queries read * and
+		// ?; both read backslash as an escape. A suite that checked only the incumbent's
+		// alphabet would pass a backend that treated the other one as a pattern, and the
+		// bug would surface as an identifier search quietly matching its neighbours.
+		//
+		// Each case pairs a term containing the character with a document that a
+		// wildcard interpretation would wrongly match.
+		wildcards := []struct {
+			name      string
+			term      string
+			literal   string
+			lookalike string
+		}{
+			{
+				name:      "underscore",
+				term:      "ERR_7731X",
+				literal:   "the build failed with ERR_7731X",
+				lookalike: "the build failed with ERRX7731X",
+			},
+			{
+				name:      "question mark",
+				term:      "WHAT?NOW",
+				literal:   "ticket WHAT?NOW was raised",
+				lookalike: "ticket WHATXNOW was raised",
+			},
+			{
+				name:      "asterisk",
+				term:      "GRADE*A",
+				literal:   "stock marked GRADE*A on arrival",
+				lookalike: "stock marked GRADEXXA on arrival",
+			},
+			{
+				name:      "percent",
+				term:      "50%OFF",
+				literal:   "coupon 50%OFF applied",
+				lookalike: "coupon 50XOFF applied",
+			},
 		}
 
-		hits, err := idx.Search(ctx, domain.LexicalQuery{
-			Scope: f.Primary, Text: "ERR_7731X", Exact: true, Limit: 50,
-		})
-		if err != nil {
-			t.Fatalf("search: %v", err)
+		for _, tc := range wildcards {
+			t.Run(tc.name, func(t *testing.T) {
+				build := func(content string) domain.ProjectedRecord {
+					return domain.ProjectedRecord{
+						Scope: f.Primary, Surface: domain.SurfaceChunk,
+						RecordID: domain.NewUUIDString(), Content: content,
+						Status:         string(domain.AssertionActive),
+						Classification: domain.ClassificationInternal,
+						MemoryKind:     domain.MemorySemantic,
+					}
+				}
+				literal, lookalike := build(tc.literal), build(tc.lookalike)
+				if err := idx.Upsert(ctx, []domain.ProjectedRecord{literal, lookalike}); err != nil {
+					t.Fatalf("upsert: %v", err)
+				}
+
+				hits, err := idx.Search(ctx, domain.LexicalQuery{
+					Scope: f.Primary, Text: tc.term, Exact: true, Limit: 50,
+				})
+				if err != nil {
+					t.Fatalf("search: %v", err)
+				}
+
+				var sawLiteral, sawLookalike bool
+				for _, hit := range hits {
+					switch hit.RecordID {
+					case literal.RecordID:
+						sawLiteral = true
+					case lookalike.RecordID:
+						sawLookalike = true
+					}
+				}
+				if !sawLiteral {
+					t.Errorf("an exact search for %q did not find the text containing it", tc.term)
+				}
+				if sawLookalike {
+					t.Errorf("%q was treated as a pattern: it matched %q",
+						tc.term, tc.lookalike)
+				}
+			})
 		}
-		for _, hit := range hits {
-			if hit.RecordID == lookalike.RecordID {
-				t.Error("an underscore matched any character; exact mode is not literal")
+
+		// A term that is nothing but a wildcard character searches for that character. It
+		// finds the records containing it — the ones written just above — and not the rest
+		// of the workspace, which is what an unescaped pattern would return.
+		for _, term := range []string{"%", "*", "?"} {
+			hits, err := idx.Search(ctx, domain.LexicalQuery{
+				Scope: f.Primary, Text: term, Exact: true, Limit: 200,
+			})
+			if err != nil {
+				t.Fatalf("a search for %q errored: %v", term, err)
 			}
-		}
-		found := false
-		for _, hit := range hits {
-			if hit.RecordID == literal.RecordID {
-				found = true
+			for _, hit := range hits {
+				if !strings.Contains(hit.Content, term) {
+					t.Errorf("a search for %q matched text that does not contain it: %q",
+						term, hit.Content)
+				}
 			}
-		}
-		if !found {
-			t.Error("the identifier itself was not found by an exact search for it")
-		}
-
-		// A bare wildcard is a search for a wildcard, not for everything.
-		hits, err = idx.Search(ctx, domain.LexicalQuery{
-			Scope: f.Primary, Text: "%", Exact: true, Limit: 50,
-		})
-		if err != nil {
-			t.Fatalf("wildcard search: %v", err)
-		}
-		if len(hits) != 0 {
-			t.Errorf("a search for %%%% returned %d records; it matched everything", len(hits))
 		}
 	})
 

@@ -10,7 +10,7 @@ Which storage each concern uses, what can be swapped, and how a swap is proven s
 | Canonical ledger | — | PostgreSQL 16 | not swappable; see below |
 | Raw archive | `blob.Store` | filesystem, S3-compatible | `CG_BLOB_BACKEND` |
 | Vector projection | `index.Vectors` | pgvector (HNSW), Qdrant | `CG_VECTOR_BACKEND` |
-| Lexical projection | `index.Lexical` | PostgreSQL `tsvector` + pg_trgm | `index.Set` |
+| Lexical projection | `index.Lexical` | PostgreSQL `tsvector` + pg_trgm, OpenSearch | `CG_LEXICAL_BACKEND` |
 | Graph projection | `index.Graph` | PostgreSQL `graph_edges` | `index.Set` |
 
 The ledger is deliberately not swappable. Multi-temporal reconciliation, supersession, and
@@ -164,10 +164,32 @@ data, but the drill is what keeps that honest. And referential integrity is lost
 PostgreSQL has foreign keys where Qdrant has payload values, so a dangling reference becomes
 possible and retrieval drops what it cannot hydrate.
 
+## Moving the lexical projection
+
+```bash
+./scripts/dev-opensearch.sh start      # port 19200
+CG_LEXICAL_BACKEND=opensearch
+CG_OPENSEARCH_URL=http://127.0.0.1:19200
+CG_OPENSEARCH_INDEX=strata_lexical
+```
+
+The port has two search modes in one method, and that constrained the choice of engine. A
+prefix or typo-tolerant search engine serves the prose half well and cannot serve the other:
+`Exact` is literal substring matching for the identifiers and codes that stemming destroys.
+OpenSearch has both — an analyzed `content` field and a `content.exact` wildcard subfield —
+so one document is written and read either way. Weakening the contract to fit a lighter
+backend is what phase 15 says not to do.
+
+One thing worth knowing before moving it. The two engines read different wildcard alphabets:
+`%` and `_` are patterns to PostgreSQL and ordinary to OpenSearch, `*` and `?` the reverse.
+Both adapters escape their own, and the conformance suite checks all four against every
+backend — a suite testing only the incumbent's alphabet would pass a backend that treated the
+other as a pattern, and an identifier search would quietly match its neighbours.
+
 ## What phase 15 has not built
 
-Second implementations of `index.Lexical` and `index.Graph`. The ports exist and both are
-rebuildable, so adding one is possible without implementing the ledger. Whether either is
-needed is unanswered, and the evidence points away from it: [performance.md](performance.md)
-shows PostgreSQL meeting every section 39 target, and the vector backend was built to prove
-the port rather than to fix a measured problem.
+A second implementation of `index.Graph`. The port exists and the projection is rebuildable,
+so adding one is possible without implementing the ledger. Whether it is needed is
+unanswered, and the evidence points away: [performance.md](performance.md) shows PostgreSQL
+meeting every section 39 target, and both backends that exist were built to prove their
+ports rather than to fix a measured problem.

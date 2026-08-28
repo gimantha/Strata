@@ -83,6 +83,14 @@ type Config struct {
 	// is a load pattern proportional to fleet size rather than to work.
 	WorkerIdleBackoffMax time.Duration
 
+	// LexicalBackend selects where the lexical projection lives: postgres or opensearch.
+	LexicalBackend string
+	// OpenSearch settings, used when CG_LEXICAL_BACKEND=opensearch.
+	OpenSearchURL      string
+	OpenSearchUser     string
+	OpenSearchPassword string
+	OpenSearchIndex    string
+
 	// VectorBackend selects where the vector projection lives: postgres or qdrant.
 	//
 	// The other two projections stay on PostgreSQL. Only this one has a second
@@ -199,6 +207,12 @@ func LoadFrom(getenv func(string) string) (Config, error) {
 		WorkerMaxEventsPerSecond: l.floatVal("WORKER_MAX_EVENTS_PER_SECOND", 0),
 		WorkerIdleBackoffMax:     l.duration("WORKER_IDLE_BACKOFF_MAX", 5*time.Second),
 
+		LexicalBackend:     strings.ToLower(l.str("LEXICAL_BACKEND", "postgres")),
+		OpenSearchURL:      l.str("OPENSEARCH_URL", "http://127.0.0.1:9200"),
+		OpenSearchUser:     l.str("OPENSEARCH_USER", ""),
+		OpenSearchPassword: l.str("OPENSEARCH_PASSWORD", ""),
+		OpenSearchIndex:    l.str("OPENSEARCH_INDEX", "strata_lexical"),
+
 		VectorBackend:    strings.ToLower(l.str("VECTOR_BACKEND", "postgres")),
 		QdrantHost:       l.str("QDRANT_HOST", "127.0.0.1"),
 		QdrantPort:       l.intVal("QDRANT_PORT", 6334),
@@ -285,6 +299,14 @@ func (c Config) Validate() error {
 	// worker can renew them, turning healthy work into repeated redelivery.
 	if c.WorkerLease <= c.WorkerPollInterval {
 		problems = append(problems, "CG_WORKER_LEASE must exceed CG_WORKER_POLL_INTERVAL")
+	}
+	switch c.LexicalBackend {
+	case "postgres", "opensearch":
+	default:
+		problems = append(problems, "CG_LEXICAL_BACKEND must be postgres or opensearch")
+	}
+	if c.LexicalBackend == "opensearch" && c.OpenSearchURL == "" {
+		problems = append(problems, "CG_OPENSEARCH_URL is required for the opensearch backend")
 	}
 	switch c.VectorBackend {
 	case "postgres", "qdrant":

@@ -52,6 +52,9 @@ jobs:
       # And the vector backend. A conformance suite the second implementation never runs
       # proves nothing about the port, so a missing Qdrant fails the build.
       CG_REQUIRE_QDRANT: "1"
+      TEST_OPENSEARCH_URL: http://127.0.0.1:9200
+      # And the lexical backend, for the same reason.
+      CG_REQUIRE_OPENSEARCH: "1"
 
     steps:
       - uses: actions/checkout@v4
@@ -113,6 +116,27 @@ jobs:
           done
           echo "Qdrant never became reachable" >&2
           docker logs strata-ci-qdrant >&2
+          exit 1
+
+      # A JVM, so it gets a longer wait than the others and a small heap. Security plugin
+      # off because this is a test fixture reachable only from the runner.
+      - name: Start OpenSearch
+        run: |
+          docker run -d --name strata-ci-opensearch -p 9200:9200 \
+            -e discovery.type=single-node \
+            -e DISABLE_SECURITY_PLUGIN=true \
+            -e DISABLE_INSTALL_DEMO_CONFIG=true \
+            -e "OPENSEARCH_JAVA_OPTS=-Xms512m -Xmx512m" \
+            opensearchproject/opensearch:2
+          for _ in $(seq 1 60); do
+            if [ "$(curl -s -m 3 -o /dev/null -w '%{http_code}' http://127.0.0.1:9200/ || true)" = "200" ]; then
+              echo "OpenSearch is ready"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "OpenSearch never became ready" >&2
+          docker logs strata-ci-opensearch 2>&1 | tail -20 >&2
           exit 1
 
       - name: Check formatting

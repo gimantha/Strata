@@ -38,6 +38,7 @@ import (
 	"github.com/gimantha/strata/internal/store/blob"
 	blobs3 "github.com/gimantha/strata/internal/store/blob/s3"
 	"github.com/gimantha/strata/internal/store/index"
+	opensearchindex "github.com/gimantha/strata/internal/store/index/opensearch"
 	qdrantindex "github.com/gimantha/strata/internal/store/index/qdrant"
 	"github.com/gimantha/strata/internal/store/ledger"
 )
@@ -214,6 +215,19 @@ func New(ctx context.Context, cfg config.Config) (*App, error) {
 	// deployment moving a projection elsewhere replaces an entry here and nothing else,
 	// which is what the ports were separated for.
 	app.Indexes = store.Indexes()
+	if cfg.LexicalBackend == "opensearch" {
+		lexical, err := opensearchindex.Open(ctx, opensearchindex.Options{
+			Addresses: []string{cfg.OpenSearchURL},
+			Username:  cfg.OpenSearchUser,
+			Password:  cfg.OpenSearchPassword,
+			Index:     cfg.OpenSearchIndex,
+		})
+		if err != nil {
+			app.closeLedger()
+			return nil, err
+		}
+		app.Indexes.Lexical = lexical
+	}
 	if cfg.VectorBackend == "qdrant" {
 		vectors, err := qdrantindex.Open(ctx, qdrantindex.Options{
 			Host:       cfg.QdrantHost,

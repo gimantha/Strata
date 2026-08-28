@@ -209,5 +209,8 @@ Honest gaps, so nobody reads absence as a passing grade:
   still small-corpus numbers.
 - **Concurrent retrieval.** Ingest is measured under concurrency; queries are not.
 - **A hosted embedding model.** Every figure here uses the local hashing embedder.
+- **The alternative backends.** Every figure here is PostgreSQL. Qdrant and OpenSearch are
+  known to satisfy their ports; nothing has measured whether either is faster, and the port
+  split exists so that question can be answered later rather than assumed now.
 - **Sustained load.** These are short runs, so they say nothing about connection-pool
   exhaustion, index bloat, or autovacuum behaviour over days.
