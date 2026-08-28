@@ -49,6 +49,15 @@ type Fixture struct {
 	SourceB     domain.SourceID
 	CollectionA domain.CollectionID
 	CollectionB domain.CollectionID
+
+	// NewEntities and NewAssertions mint the identifiers a graph suite builds edges
+	// between. Supplied by the backend's harness rather than invented by the suite,
+	// because a graph index writes edges and cannot create the things they connect: the
+	// PostgreSQL implementation has foreign keys to entities and assertions, so those rows
+	// have to exist. A backend without referential integrity can return invented values,
+	// and that difference is itself worth seeing.
+	NewEntities   func(tb testing.TB, n int) []domain.EntityID
+	NewAssertions func(tb testing.TB, n int) []domain.AssertionID
 }
 
 // RunVectorConformance exercises the behaviour every vector backend must share.

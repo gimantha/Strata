@@ -78,7 +78,7 @@ func TestIntegrationPostgresMeetsTheVectorFilterContract(t *testing.T) {
 	}
 
 	embedder := hashing.New()
-	index.RunVectorFilterConformance(t, "postgres", f.Store.Indexes().Vectors, index.Fixture{
+	fixture := index.Fixture{
 		Primary: f.Primary.Scope(),
 		Other:   other.Scope(),
 		Model:   embedder.Model(),
@@ -91,10 +91,56 @@ func TestIntegrationPostgresMeetsTheVectorFilterContract(t *testing.T) {
 			}
 			return vectors[0]
 		},
-		SourceA:     source("filter-source-a"),
-		SourceB:     source("filter-source-b"),
-		CollectionA: collection("filter-collection-a"),
-		CollectionB: collection("filter-collection-b"),
+		SourceA:       source("filter-source-a"),
+		SourceB:       source("filter-source-b"),
+		CollectionA:   collection("filter-collection-a"),
+		CollectionB:   collection("filter-collection-b"),
+		NewEntities:   f.NewEntities,
+		NewAssertions: f.NewAssertions,
+	}
+
+	indexes := f.Store.Indexes()
+	index.RunVectorFilterConformance(t, "postgres", indexes.Vectors, fixture)
+	index.RunLexicalFilterConformance(t, "postgres", indexes.Lexical, fixture)
+}
+
+// TestIntegrationPostgresMeetsTheGraphContract runs the graph suite, which had no reference
+// run at all until now — the only one of the three ports with no contract.
+func TestIntegrationPostgresMeetsTheGraphContract(t *testing.T) {
+	f := pgtest.NewFixture(t)
+	other := f.NewTenant(t, "graph-other")
+	ctx := t.Context()
+
+	source, err := f.Store.CreateSource(ctx, domain.Source{
+		WorkspaceID: f.Primary.Workspace.ID, Kind: domain.SourceKindDocument,
+		Name: "graph-source", TrustLevel: domain.TrustStandard,
+	}, f.Primary.Principal.ID)
+	if err != nil {
+		t.Fatalf("create source: %v", err)
+	}
+	collectionA, err := f.Store.CreateCollection(ctx, domain.Collection{
+		WorkspaceID: f.Primary.Workspace.ID, GraphSpaceID: f.Primary.GraphSpace.ID,
+		Slug: "graph-a", Name: "graph-a",
+	}, f.Primary.Principal.ID)
+	if err != nil {
+		t.Fatalf("create collection a: %v", err)
+	}
+	collectionB, err := f.Store.CreateCollection(ctx, domain.Collection{
+		WorkspaceID: f.Primary.Workspace.ID, GraphSpaceID: f.Primary.GraphSpace.ID,
+		Slug: "graph-b", Name: "graph-b",
+	}, f.Primary.Principal.ID)
+	if err != nil {
+		t.Fatalf("create collection b: %v", err)
+	}
+
+	index.RunGraphConformance(t, "postgres", f.Store.Indexes().Graph, index.Fixture{
+		Primary:       f.Primary.Scope(),
+		Other:         other.Scope(),
+		SourceA:       source.ID,
+		CollectionA:   collectionA.ID,
+		CollectionB:   collectionB.ID,
+		NewEntities:   f.NewEntities,
+		NewAssertions: f.NewAssertions,
 	})
 }
 

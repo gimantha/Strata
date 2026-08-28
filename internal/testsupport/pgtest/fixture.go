@@ -2,6 +2,7 @@ package pgtest
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	"github.com/gimantha/strata/internal/domain"
@@ -104,4 +105,94 @@ func (f *Fixture) NewGraphSpace(t *testing.T, slug string) Tenant {
 	tenant := f.Primary
 	tenant.GraphSpace = gs
 	return tenant
+}
+
+// NewEntities creates n entities in the primary tenant and returns their identifiers.
+//
+// Exists for the graph conformance suite, which builds edges between things: a graph index
+// writes edges and cannot create the entities they connect, and graph_edges has foreign keys
+// to both entities and assertions. A backend without referential integrity can invent
+// identifiers; PostgreSQL needs rows.
+func (f *Fixture) NewEntities(tb testing.TB, n int) []domain.EntityID {
+	tb.Helper()
+	ctx := context.Background()
+
+	out := make([]domain.EntityID, 0, n)
+	for i := range n {
+		entity, err := f.Store.CreateEntity(ctx, domain.Entity{
+			WorkspaceID:   f.Primary.Workspace.ID,
+			GraphSpaceID:  f.Primary.GraphSpace.ID,
+			CanonicalName: fmt.Sprintf("Fixture Entity %d", i),
+			EntityType:    "organization",
+		})
+		if err != nil {
+			tb.Fatalf("create entity %d: %v", i, err)
+		}
+		out = append(out, entity.ID)
+	}
+	return out
+}
+
+// NewAssertions creates n minimal assertions and returns their identifiers.
+//
+// Written with SQL rather than through the knowledge service on purpose. The service is the
+// right path for testing what an assertion means; here an assertion is only the thing a
+// graph edge cites, and dragging ingestion, extraction and reconciliation into a graph
+// fixture would make a traversal test fail for reasons that have nothing to do with
+// traversal.
+func (f *Fixture) NewAssertions(tb testing.TB, n int) []domain.AssertionID {
+	tb.Helper()
+	ctx := context.Background()
+
+	artifact := domain.NewUUIDString()
+	if _, err := f.Store.Pool().Exec(ctx, `
+		INSERT INTO artifacts (id, workspace_id, content_hash, media_type, size_bytes,
+		                       blob_key, storage)
+		VALUES ($1, $2, 'fixture', 'text/plain', 0, 'fixture', 'fs')`,
+		artifact, f.Primary.Workspace.ID); err != nil {
+		tb.Fatalf("create fixture artifact: %v", err)
+	}
+
+	event := domain.NewUUIDString()
+	if _, err := f.Store.Pool().Exec(ctx, `
+		INSERT INTO source_events (id, workspace_id, graph_space_id, source_id, operation,
+		                           content_hash, idempotency_key, observed_at, recorded_at,
+		                           raw_artifact_id, status, classification, media_type)
+		VALUES ($1, $2, $3, $4, 'upsert', 'fixture', $6, now(), now(), $5, 'processed',
+		        'internal', 'text/plain')`,
+		event, f.Primary.Workspace.ID, f.Primary.GraphSpace.ID, f.Primary.Source.ID,
+		artifact, event); err != nil {
+		tb.Fatalf("create fixture source event: %v", err)
+	}
+
+	predicate := domain.NewUUIDString()
+	if _, err := f.Store.Pool().Exec(ctx, `
+		INSERT INTO predicates (id, workspace_id, name, version, temporal_policy,
+		                        conflict_policy, default_memory_kind, sensitivity, status)
+		VALUES ($1, $2, 'FIXTURE_LINK', 1, 'point_in_time', 'coexist', 'semantic',
+		        'internal', 'active')`,
+		predicate, f.Primary.Workspace.ID); err != nil {
+		tb.Fatalf("create fixture predicate: %v", err)
+	}
+
+	subject := f.NewEntities(tb, 1)[0]
+	out := make([]domain.AssertionID, 0, n)
+	for range n {
+		id := domain.NewUUIDString()
+		if _, err := f.Store.Pool().Exec(ctx, `
+			INSERT INTO assertions (id, workspace_id, graph_space_id, subject_id,
+			                        predicate_id, predicate_name, predicate_version,
+			                        object_kind, object_text, object_key, memory_kind,
+			                        observed_at, recorded_at, status, provenance_mode,
+			                        source_event_id, fingerprint, classification)
+			VALUES ($1, $2, $3, $4, $5, 'FIXTURE_LINK', 1, 'string', 'fixture', $7,
+			        'semantic', now(), now(), 'active', 'user_asserted', $6, $7,
+			        'internal')`,
+			id, f.Primary.Workspace.ID, f.Primary.GraphSpace.ID, subject, predicate,
+			event, id); err != nil {
+			tb.Fatalf("create fixture assertion: %v", err)
+		}
+		out = append(out, domain.AssertionID(id))
+	}
+	return out
 }

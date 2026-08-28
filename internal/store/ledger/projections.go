@@ -350,11 +350,24 @@ func buildLexicalSearch(op string, q domain.LexicalQuery) (string, []any, error)
 
 	args = append(args, q.Text)
 	term := len(args)
+
+	// Only in exact mode: a parameter the SQL never references has no inferable type, and
+	// PostgreSQL rejects the statement rather than ignoring it.
+	var pattern int
+	if q.Exact {
+		args = append(args, likePattern(q.Text))
+		pattern = len(args)
+	}
 	args = append(args, limit)
 
 	var sql string
 	if q.Exact {
-		where = append(where, fmt.Sprintf("l.content ILIKE '%%' || $%d || '%%'", term))
+		// A pattern built in Go rather than concatenated in SQL, because the wildcards in
+		// LIKE are exactly the characters identifiers contain. Interpolating the caller's
+		// text made "_" match any character and "%" match everything, so a search for
+		// ERR_7731X also found ERRX7731X and a search for "%" returned the workspace. That
+		// is the opposite of what exact mode is for.
+		where = append(where, fmt.Sprintf("l.content ILIKE $%d", pattern))
 		sql = `SELECT l.surface, l.record_id, l.content,
 		              similarity(l.content, $` + strconv.Itoa(term) + `) AS score,
 		              l.decay_starts_at
@@ -1158,4 +1171,19 @@ func (s *Store) RefreshVectorMetadata(ctx context.Context, model string, version
 		}
 		return nil
 	})
+}
+
+// likePattern renders a substring search that means what it says.
+//
+// LIKE treats % and _ as wildcards and backslash as an escape, and all three appear in the
+// identifiers and codes exact mode exists to find. Escaping them makes the search literal;
+// the surrounding wildcards are added here so the caller's text is never concatenated into
+// a pattern by the database.
+func likePattern(text string) string {
+	escaped := strings.NewReplacer(
+		"\\", "\\\\",
+		"%", "\\%",
+		"_", "\\_",
+	).Replace(text)
+	return "%" + escaped + "%"
 }
