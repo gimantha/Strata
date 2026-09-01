@@ -215,3 +215,62 @@ every section 39 target at the scales tested, and none of the three alternative 
 built to fix a bottleneck — they exist to prove the ports are real, and to make the option
 available when a deployment outgrows one leg. Moving a projection adds a datastore to the
 restore path and loses the referential integrity PostgreSQL enforces.
+
+## Retention
+
+Two kinds of table grow here, and only one of them may be pruned.
+
+**Records of what the system did.** A retrieval trace per query, an audit row per action, an
+outbox row per unit of work, a pipeline run per document. These grow with traffic rather
+than with what anybody knows, and before there was retention nothing ever deleted them.
+
+**Records of what the system knows, and how.** Assertions, source events, episodes, chunks,
+evidence, derivations, and the model runs those point at. These are never pruned by any
+setting. `model_runs` is the one worth naming: it looks like a call log and is not, because
+`evidence` and `derivations` reference it under `ON DELETE SET NULL` — deleting a run would
+not fail, it would quietly cut the link from a claim to the model interaction that proposed
+it.
+
+Every setting defaults to keeping records forever.
+
+| Setting | Bounds | Notes |
+| --- | --- | --- |
+| `CG_RETENTION_TRACES` | `retrieval_traces` | Usually the first worth setting. Partitioned by month, so expiry drops whole partitions |
+| `CG_RETENTION_OUTBOX` | succeeded and dead work items | Pending and claimed items are never deleted, however old. Age is not evidence that work is finished |
+| `CG_RETENTION_AUDIT` | `audit_events` | Off by default deliberately: an audit log is more often the subject of a retention requirement than a candidate for one |
+| `CG_RETENTION_PIPELINE_RUNS` | `pipeline_runs`, and stage rows by cascade | Diagnostics of how a document was processed, not provenance of what was learned |
+| `CG_RETENTION_INTERVAL` | how often a process sweeps | Default `1h` |
+
+Every process sweeps; an advisory lock means only one does the work, so there is no leader
+to elect. Partition maintenance runs whether or not any retention is configured, because a
+partitioned table needs partitions either way.
+
+### Why only traces are partitioned
+
+Range partitioning requires the partition key inside every unique constraint.
+`outbox_events` carries `UNIQUE (workspace_id, dedupe_key)`, the guard against enqueueing
+the same logical work twice; partitioning it by time would scope that guarantee to a
+partition, so the same work could enqueue once per month. A queue with retention stays small
+anyway. A trace table does not.
+
+### The default partition
+
+A trace whose timestamp falls outside every declared month lands in the default partition.
+That only happens when partition creation has fallen behind — a paused environment, a fleet
+scaled to zero — and it has two consequences worth knowing. A partition cannot later be
+created for a range the default already holds, and rows there are not removed by dropping
+partitions. Expired rows in the default are deleted individually instead, and a sweep that
+finds any logs a warning naming the count.
+
+## The ledger does not move
+
+The three retrieval projections are ports with second implementations. The ledger is not.
+One PostgreSQL holds the source of truth, the outbox, the work queue, the policy store and
+the checkpoints, and there is no sharding.
+
+This is deliberate. One transaction covering the assertion, its outbox row and the
+projection checkpoint is what makes the multi-temporal guarantees inexpensive; distributing
+it would mean giving up the transactional outbox or adopting consensus. But it is a ceiling:
+write throughput is bounded by that node, and so is write availability. Retention keeps the
+operational tables from growing without bound, and does nothing about the knowledge tables,
+which are unpartitioned and grow with the corpus.

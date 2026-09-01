@@ -34,6 +34,7 @@ import (
 	"github.com/gimantha/strata/internal/policy"
 	"github.com/gimantha/strata/internal/portable"
 	"github.com/gimantha/strata/internal/projection"
+	"github.com/gimantha/strata/internal/retention"
 	"github.com/gimantha/strata/internal/retrieval"
 	"github.com/gimantha/strata/internal/store/blob"
 	blobs3 "github.com/gimantha/strata/internal/store/blob/s3"
@@ -76,6 +77,10 @@ type App struct {
 	Embedder  embedding.Embedder
 	Bus       *eventbus.Outbox
 	Runner    *pipeline.Runner
+	// Retention bounds the operational tables and keeps the trace partitions ahead of the
+	// clock. It runs whatever the policy says, because a partitioned table needs partitions
+	// whether or not anything is being deleted from it.
+	Retention *retention.Sweeper
 
 	// NATS is the optional push path. Nil means the deployment polls the ledger, which
 	// is the same behavior with more latency (AGENTS.md section 27.5).
@@ -155,6 +160,16 @@ func New(ctx context.Context, cfg config.Config) (*App, error) {
 	app.Knowledge = knowledge.New(store, knowledge.Options{}, logger, telemetry.Tracer)
 
 	app.Bus = eventbus.NewOutbox(store, logger, telemetry.Metrics, telemetry.Tracer)
+	app.Retention = retention.New(store, retention.Options{
+		Policy: ledger.RetentionPolicy{
+			Traces:       cfg.RetentionTraces,
+			Outbox:       cfg.RetentionOutbox,
+			Audit:        cfg.RetentionAudit,
+			PipelineRuns: cfg.RetentionPipelineRuns,
+		},
+		Interval: cfg.RetentionInterval,
+		Logger:   logger,
+	})
 
 	if cfg.NATSURL != "" {
 		bus, err := natsbus.Connect(ctx, natsbus.Options{
@@ -436,6 +451,17 @@ func (a *App) Subscription() eventbus.SubscriptionSpec {
 // path to the same work — the claim stays in PostgreSQL, so exactly-once processing and
 // partition ordering hold whether or not the bus is there, and whether or not it is
 // healthy (AGENTS.md section 28.1).
+// RunRetention sweeps the operational tables until the context is cancelled.
+//
+// Safe in every process at once: the sweep takes an advisory lock and a process that cannot
+// get it does nothing that round.
+func (a *App) RunRetention(ctx context.Context) {
+	if a.Retention == nil {
+		return
+	}
+	a.Retention.Run(ctx)
+}
+
 func (a *App) RunWorker(ctx context.Context) error {
 	if a.NATS == nil {
 		return a.Bus.Subscribe(ctx, a.Subscription(), a.HandleWork)

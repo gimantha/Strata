@@ -223,10 +223,25 @@ Most defaults are worth leaving alone. These change the shape of a deployment:
 | `CG_LLM_PROVIDER` | `none` — CDC and explicit assertions only | a provider, which enables extraction and permits `CG_QUERY_PLANNER=llm` |
 | `CG_QUERY_PLANNER` | `heuristic` — planned from the query's shape | `llm`, which also falls back to the heuristic on any failure. Any OpenAI-compatible endpoint works, including a local one — `scripts/dev-ollama.sh` |
 
+| `CG_RETENTION_TRACES` | `0` — a trace per query, kept forever | a duration, after which whole monthly partitions are dropped |
+
 The four storage backends are ports with conformance suites, and the PostgreSQL
 implementations are held to the same suites as the alternatives — see
 [docs/api/storage.md](docs/api/storage.md). A single-node deployment needs none of them:
 PostgreSQL alone serves all five retrieval paths.
+
+**What does not move is the ledger.** The three retrieval projections are swappable; the
+ledger is one PostgreSQL and holds the source of truth, the outbox, the work queue and the
+policy store. Ingest is bounded by that node and so is availability for writes. This is a
+deliberate trade — one transaction covering the assertion, the outbox row and the checkpoint
+is what makes the temporal guarantees cheap — but it is a ceiling, and reading "storage that
+can move" as horizontal scalability would be reading it too broadly.
+
+The tables that grow with *traffic* rather than with knowledge can be bounded:
+`CG_RETENTION_TRACES` and its siblings in [configs/dev.env](configs/dev.env), all defaulting
+to keep-forever. What can never be pruned is provenance — assertions, evidence, derivations,
+and the model runs they point at
+([ADR 0026](docs/adr/0026-what-grows-forever-and-what-must-never-be-deleted.md)).
 
 Models are optional everywhere and never in the write path for provenance
 ([docs/api/extraction.md](docs/api/extraction.md),

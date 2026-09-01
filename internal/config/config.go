@@ -164,6 +164,21 @@ type Config struct {
 	// QueryPlannerTimeout bounds the planning call.
 	QueryPlannerTimeout time.Duration
 
+	// Retention bounds how long the operational tables keep their records. Every setting
+	// defaults to zero, meaning forever, because starting to delete an operator's records
+	// on their behalf is not a sensible default for a system whose subject is provenance.
+	//
+	// Only records of what the system did are covered. Assertions, source events, evidence,
+	// derivations and model runs are never pruned by any of these — that is the knowledge
+	// and its provenance, and it is the reason the system exists.
+	RetentionTraces       time.Duration
+	RetentionOutbox       time.Duration
+	RetentionAudit        time.Duration
+	RetentionPipelineRuns time.Duration
+	// RetentionInterval is how often a process sweeps. Every process sweeps; an advisory
+	// lock means only one does the work, so no leader election is needed.
+	RetentionInterval time.Duration
+
 	// EmbeddingProvider selects the embedder for the vector projection: none, mock,
 	// hashing, or openai. Without one, lexical and graph retrieval still work.
 	//
@@ -264,10 +279,16 @@ func LoadFrom(getenv func(string) string) (Config, error) {
 		RedactQueryText:     l.boolVal("REDACT_QUERY_TEXT", false),
 		QueryPlanner:        strings.ToLower(l.str("QUERY_PLANNER", "heuristic")),
 		QueryPlannerTimeout: l.duration("QUERY_PLANNER_TIMEOUT", 5*time.Second),
-		EmbeddingProvider:   strings.ToLower(l.str("EMBEDDING_PROVIDER", "none")),
-		EmbeddingBaseURL:    l.str("EMBEDDING_BASE_URL", ""),
-		EmbeddingModel:      l.str("EMBEDDING_MODEL", ""),
-		EmbeddingAPIKey:     l.str("EMBEDDING_API_KEY", ""),
+
+		RetentionTraces:       l.duration("RETENTION_TRACES", 0),
+		RetentionOutbox:       l.duration("RETENTION_OUTBOX", 0),
+		RetentionAudit:        l.duration("RETENTION_AUDIT", 0),
+		RetentionPipelineRuns: l.duration("RETENTION_PIPELINE_RUNS", 0),
+		RetentionInterval:     l.duration("RETENTION_INTERVAL", time.Hour),
+		EmbeddingProvider:     strings.ToLower(l.str("EMBEDDING_PROVIDER", "none")),
+		EmbeddingBaseURL:      l.str("EMBEDDING_BASE_URL", ""),
+		EmbeddingModel:        l.str("EMBEDDING_MODEL", ""),
+		EmbeddingAPIKey:       l.str("EMBEDDING_API_KEY", ""),
 
 		PipelineVersion:    l.intVal("PIPELINE_VERSION", 1),
 		ChunkMaxTokens:     l.intVal("CHUNK_MAX_TOKENS", 320),
@@ -328,6 +349,23 @@ func (c Config) Validate() error {
 	if c.WorkerLease <= c.WorkerPollInterval {
 		problems = append(problems, "CG_WORKER_LEASE must exceed CG_WORKER_POLL_INTERVAL")
 	}
+	for _, setting := range []struct {
+		name  string
+		value time.Duration
+	}{
+		{"CG_RETENTION_TRACES", c.RetentionTraces},
+		{"CG_RETENTION_OUTBOX", c.RetentionOutbox},
+		{"CG_RETENTION_AUDIT", c.RetentionAudit},
+		{"CG_RETENTION_PIPELINE_RUNS", c.RetentionPipelineRuns},
+	} {
+		if setting.value < 0 {
+			problems = append(problems, setting.name+" cannot be negative; 0 means keep forever")
+		}
+	}
+	if c.RetentionInterval <= 0 {
+		problems = append(problems, "CG_RETENTION_INTERVAL must be positive")
+	}
+
 	switch c.QueryPlanner {
 	case "heuristic":
 	case "llm":

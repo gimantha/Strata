@@ -59,9 +59,17 @@ func run() error {
 		slog.Any("config", cfg.Redacted()))
 
 	// Subscribe returns once the context is cancelled and in-flight work has drained.
+	// The worker sweeps too. Coordination is an advisory lock, not a designated process.
+	retentionDone := make(chan struct{})
+	go func() {
+		defer close(retentionDone)
+		application.RunRetention(ctx)
+	}()
+
 	if err := application.RunWorker(ctx); err != nil {
 		return err
 	}
+	<-retentionDone
 	application.Logger.Info("cgworker stopped cleanly")
 	return nil
 }

@@ -88,10 +88,19 @@ type TableClassification struct {
 func (s *Store) ClassifyTables(ctx context.Context) (TableClassification, error) {
 	const op = "ledger.ClassifyTables"
 
+	// Partitions are excluded because they are storage for a table that is classified, not
+	// tables anyone classifies separately: backing up retrieval_traces backs up its months,
+	// and a partition created next month must not make this list incomplete until somebody
+	// adds it by hand. The parent is listed by information_schema as a BASE TABLE and is
+	// classified normally.
 	rows, err := s.pool.Query(ctx, `
-		SELECT table_name FROM information_schema.tables
-		WHERE table_schema = 'public' AND table_type = 'BASE TABLE'
-		ORDER BY table_name`)
+		SELECT t.table_name FROM information_schema.tables t
+		JOIN pg_class c ON c.relname = t.table_name
+		JOIN pg_namespace n ON n.oid = c.relnamespace AND n.nspname = t.table_schema
+		WHERE t.table_schema = 'public'
+		  AND t.table_type = 'BASE TABLE'
+		  AND NOT c.relispartition
+		ORDER BY t.table_name`)
 	if err != nil {
 		return TableClassification{}, mapError(err, op, "cannot list tables")
 	}

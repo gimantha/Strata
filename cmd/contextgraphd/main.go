@@ -85,6 +85,15 @@ func run() error {
 		serveErr = server.ListenAndServe()
 	}()
 
+	// Every process sweeps; an advisory lock means only one does the work. Running it here
+	// rather than only in the worker matters for a deployment with no embedded worker: the
+	// trace partitions still need to stay ahead of the clock.
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		application.RunRetention(ctx)
+	}()
+
 	if cfg.EmbeddedWorker {
 		logger.InfoContext(ctx, "running embedded outbox worker",
 			slog.Int("concurrency", cfg.WorkerConcurrency))
