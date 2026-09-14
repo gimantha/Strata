@@ -38,13 +38,13 @@ func CanonicalTables() []string {
 		"pipeline_runs", "pipeline_stage_runs",
 
 		// Knowledge: claims, what supports them, and what they disagree about.
-		"entities", "entity_aliases", "entity_identifiers", "predicates", "assertions",
+		"entities", "entity_aliases", "entity_identifiers", "predicates", "predicate_aliases", "assertions",
 		"evidence", "derivations", "derivation_inputs", "conflict_sets",
 		"ontology_versions",
 
 		// Judgements and history that cannot be recomputed.
 		"model_runs", "resolution_candidates", "resolution_decisions",
-		"audit_events", "retrieval_traces",
+		"audit_events", "retrieval_traces", "knowledge_holds", "knowledge_purge_runs",
 
 		// Connector position. Losing it re-reads a stream from the beginning, which
 		// idempotency survives but an operator would rather not pay for.

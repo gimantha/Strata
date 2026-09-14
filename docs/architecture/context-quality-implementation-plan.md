@@ -35,10 +35,13 @@ retrieval, or answer generation.
    sequence, version, event time, and knowledge time into context and citations.
 9. **Deterministic cited proofs** — `11d2edd`. Compute exact typed deltas, surface decision
    derivations with every premise, and emit bounded absence proofs after canonical checks.
+10. **Regression quality and stable extraction** — `5c683cb`. Reuse canonical predicates
+    during open extraction, forward temporal filters through the adapter, and add a fixed
+    holdout cohort with a deterministic quality gate.
 
 ## Phase 10 — regression quality and stable extraction
 
-Status: complete in the Phase 10 commit containing this document.
+Status: complete in `5c683cb`.
 
 - Feed bounded canonical predicate names/aliases into open-mode extraction as advisory
   vocabulary while keeping the mode open.
@@ -53,28 +56,36 @@ Status: complete in the Phase 10 commit containing this document.
 
 ## Final follow-up — old-knowledge purge
 
-Status: pending and intentionally last.
+Status: complete in the final implementation commit containing this document.
 
 Implement an auditable, workspace-scoped purge that is distinct from supersession and
 privacy erasure:
 
-1. Add a migration for legal/operational holds and durable purge runs.
-2. Add a ledger plan operation that only selects complete old source-event provenance
+1. Added migration `0019` for legal/operational holds and durable purge runs.
+2. Added a ledger plan operation that only selects complete old source-event provenance
    units whose knowledge is inactive, expired, retracted, superseded, or quarantined.
    Protect held records and events that still contain active knowledge.
-3. Make dry-run the default and require cutoff, graph space, principal, and reason.
-4. Execute canonical deletion transactionally in dependency order, retain the purge audit
-   record, and return raw artifact blob keys for deletion.
-5. Remove/rebuild derived graph, vector, and lexical projections so purged content cannot
-   remain in external indexes. Persist partial failure for retry; hydrated reads must fail
-   closed when a stale projection points to deleted canonical data.
-6. Add admin HTTP/CLI entry points only if they fit existing wiring cleanly; otherwise land
-   the tested service and ledger port first and document invocation.
-7. Test dry-run, active-knowledge protection, holds, tenant isolation, dependency cleanup,
-   and idempotent repeat execution. Commit this separately after Phase 10.
+3. Dry-run is the HTTP default; cutoff, graph space, principal, reason, and a 30-day minimum
+   age are required.
+4. Canonical deletion executes transactionally in dependency order, retains the purge audit
+   record, and returns raw artifact blob keys for deletion.
+5. Derived graph, vector, and lexical projections are rebuilt workspace-wide so purged
+   content cannot remain in external indexes. Partial failure is durable and retryable;
+   hydrated reads fail closed when a stale projection points to deleted canonical data.
+6. Added admin HTTP and CLI plan/run/hold/release/retry entry points.
+7. Unit tests cover dry-run, safety age, external cleanup, durable failure, and retry. A real
+   PostgreSQL integration test covers active-knowledge protection, holds, tenant isolation,
+   retained supersession dependencies, deletion, blobs, and audit.
 
 ## Current verification state
 
-Phases 1–10 passed their focused package tests when committed. The purge still needs its
-implementation and final full-suite verification. Use `git status --short` before each commit and stage
-only intended source, migrations, docs, synthetic fixtures, and tests.
+Phases 1–10 passed their focused package tests when committed. Integration follow-up
+`650b8e2` enforces explicit retrieval-mode boundaries and compares fusion scores within each
+retriever/query stream; it closes the policy leak and restores decomposed-query retrieval.
+
+The final PostgreSQL-backed `go test ./...` suite passed with migration 0019 applied,
+including purge, recovery classification, graph-policy, and retrieval integration tests.
+The comparison harness passed all 18 unit tests with
+`(cd comparison && .venv/bin/python -m unittest test_comparison.py)`, and
+`scripts/check-domain-deps.sh` passed. The working tree should be clean after the final purge
+commit. No paid-provider benchmark rerun is required to verify these implementation changes.

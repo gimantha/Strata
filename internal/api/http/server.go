@@ -21,6 +21,7 @@ import (
 	"github.com/gimantha/strata/internal/ontology"
 	"github.com/gimantha/strata/internal/policy"
 	"github.com/gimantha/strata/internal/portable"
+	"github.com/gimantha/strata/internal/purge"
 	"github.com/gimantha/strata/internal/retrieval"
 	"github.com/gimantha/strata/internal/store/ledger"
 )
@@ -41,6 +42,7 @@ type Server struct {
 	connector *cdc.Runner
 	policy    *policy.Service
 	memory    *memory.Service
+	purge     *purge.Service
 	exporter  *portable.Exporter
 	importer  *portable.Importer
 	blobs     healthChecker
@@ -77,6 +79,7 @@ type Deps struct {
 	Connector *cdc.Runner
 	Policy    *policy.Service
 	Memory    *memory.Service
+	Purge     *purge.Service
 	Exporter  *portable.Exporter
 	Importer  *portable.Importer
 	Blobs     healthChecker
@@ -105,6 +108,7 @@ func NewServer(deps Deps) *Server {
 		connector: deps.Connector,
 		policy:    deps.Policy,
 		memory:    deps.Memory,
+		purge:     deps.Purge,
 		exporter:  deps.Exporter,
 		importer:  deps.Importer,
 		blobs:     deps.Blobs,
@@ -179,6 +183,10 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /v1/graph-spaces/{graph_space_id}/consolidate", s.authenticated(s.handleConsolidate))
 	mux.HandleFunc("POST /v1/assertions/{assertion_id}/forget", s.authenticated(s.handleForget))
 	mux.HandleFunc("POST /v1/assertions/{assertion_id}/reactivate", s.authenticated(s.handleReactivate))
+	mux.HandleFunc("POST /v1/graph-spaces/{graph_space_id}/knowledge-purge", s.authenticated(s.handleKnowledgePurge))
+	mux.HandleFunc("POST /v1/graph-spaces/{graph_space_id}/knowledge-purge/{purge_id}/retry", s.authenticated(s.handleRetryKnowledgePurge))
+	mux.HandleFunc("POST /v1/graph-spaces/{graph_space_id}/knowledge-holds", s.authenticated(s.handleCreateKnowledgeHold))
+	mux.HandleFunc("DELETE /v1/graph-spaces/{graph_space_id}/knowledge-holds/{hold_id}", s.authenticated(s.handleReleaseKnowledgeHold))
 
 	// Portable context packages: a self-contained artifact that rebuilds knowledge
 	// elsewhere, distinct from the row dump below.

@@ -34,6 +34,7 @@ import (
 	"github.com/gimantha/strata/internal/policy"
 	"github.com/gimantha/strata/internal/portable"
 	"github.com/gimantha/strata/internal/projection"
+	"github.com/gimantha/strata/internal/purge"
 	"github.com/gimantha/strata/internal/retention"
 	"github.com/gimantha/strata/internal/retrieval"
 	"github.com/gimantha/strata/internal/store/blob"
@@ -72,6 +73,7 @@ type App struct {
 	Connector *cdc.Runner
 	Policy    *policy.Service
 	Memory    *memory.Service
+	Purge     *purge.Service
 	Exporter  *portable.Exporter
 	Importer  *portable.Importer
 	Embedder  embedding.Embedder
@@ -290,6 +292,7 @@ func New(ctx context.Context, cfg config.Config) (*App, error) {
 	app.Policy = policy.New(store, policy.NewLedgerAuditor(store), policy.Options{}, logger)
 	app.Ontology = ontology.New(store, logger)
 	app.Memory = memory.New(store, app.Knowledge, app.Projector, memory.Options{}, logger, telemetry.Tracer)
+	app.Purge = purge.New(store, blobs, app.Projector, purge.Options{}, logger)
 
 	app.Connector = cdc.New(app.Gateway, store, cdc.Options{}, logger, telemetry.Tracer)
 	var planningModel llm.LLM

@@ -26,6 +26,7 @@ import (
 	"github.com/gimantha/strata/internal/normalize"
 	"github.com/gimantha/strata/internal/pipeline"
 	"github.com/gimantha/strata/internal/projection"
+	"github.com/gimantha/strata/internal/purge"
 	"github.com/gimantha/strata/internal/retrieval"
 	"github.com/gimantha/strata/internal/store/blob"
 	"github.com/gimantha/strata/internal/testsupport/pgtest"
@@ -125,6 +126,7 @@ func newAPIHarness(t *testing.T, keys ...keyEntry) *apiHarness {
 		Retriever: retriever,
 		Assembler: assembler,
 		Connector: connector,
+		Purge:     purge.New(f.Store, blobs, projector, purge.Options{}, nil),
 		Blobs:     blobs,
 	})
 

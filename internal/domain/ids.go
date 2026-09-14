@@ -45,6 +45,8 @@ type (
 	PolicySetID          string
 	ConflictSetID        string
 	ResolutionDecisionID string
+	KnowledgePurgeID     string
+	KnowledgeHoldID      string
 )
 
 // newID returns a UUIDv7: globally unique and lexicographically sortable by
@@ -73,9 +75,11 @@ func NewPredicateID() PredicateID     { return PredicateID(newID()) }
 func NewOntologyVersionID() OntologyVersionID {
 	return OntologyVersionID(newID())
 }
-func NewCDCStreamID() CDCStreamID     { return CDCStreamID(newID()) }
-func NewPolicySetID() PolicySetID     { return PolicySetID(newID()) }
-func NewConflictSetID() ConflictSetID { return ConflictSetID(newID()) }
+func NewCDCStreamID() CDCStreamID           { return CDCStreamID(newID()) }
+func NewPolicySetID() PolicySetID           { return PolicySetID(newID()) }
+func NewConflictSetID() ConflictSetID       { return ConflictSetID(newID()) }
+func NewKnowledgePurgeID() KnowledgePurgeID { return KnowledgePurgeID(newID()) }
+func NewKnowledgeHoldID() KnowledgeHoldID   { return KnowledgeHoldID(newID()) }
 
 // NewUUIDString returns a bare UUIDv7 string, for durable rows whose identifiers
 // are not part of the domain vocabulary (audit entries, for example).

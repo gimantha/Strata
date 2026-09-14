@@ -48,6 +48,8 @@ Commands:
   package verify           Check a package's integrity, no database needed
   consolidate              Derive stable facts from repeated observation
   forget|reactivate        Take a claim out of active context, or put it back
+  purge plan|run           Preview or execute old inactive knowledge removal
+  purge hold|release       Protect knowledge from removal, or release a hold
   policy define|ls         Manage attribute-based access policy
   policy explain|clearance What a principal may see, and their ceiling
   traces                   Recent retrieval traces
@@ -157,6 +159,11 @@ func run(args []string) error {
 		return withApp(rest, cmdForget)
 	case "reactivate":
 		return withApp(rest, cmdReactivate)
+	case "purge":
+		return withSubcommand(rest, map[string]appCommand{
+			"plan": cmdPurgePlan, "run": cmdPurgeRun,
+			"hold": cmdPurgeHold, "release": cmdPurgeRelease, "retry": cmdPurgeRetry,
+		})
 	case "policy":
 		return withSubcommand(rest, map[string]appCommand{
 			"define":    cmdPolicyDefine,
