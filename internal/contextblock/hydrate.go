@@ -29,6 +29,15 @@ type candidate struct {
 	temporal float64
 	// priority is the memory-kind weight.
 	priority float64
+	// focus measures exact agreement with strong identifiers recovered from the question.
+	// It prevents a semantically similar record about another identity from buying context.
+	focus float64
+	// required marks a premise or historical counterpart brought in to make the requested
+	// answer complete. It may not repeat the focal identifier in its rendered sentence.
+	required   bool
+	related    bool
+	assertion  *domain.Assertion
+	supportIDs []domain.AssertionID
 
 	// subjects and predicate drive coverage: a second claim about an entity already
 	// covered adds less than the first claim about a new one.
@@ -62,8 +71,10 @@ type hydrator struct {
 	req   domain.ContextRequest
 	now   time.Time
 
-	entities map[domain.EntityID]domain.Entity
-	dropped  []domain.DroppedItem
+	entities     map[domain.EntityID]domain.Entity
+	dropped      []domain.DroppedItem
+	focusTerms   []string
+	requirements []string
 }
 
 // EntityExpansionLimit bounds how many claims one matched identity contributes.
@@ -137,7 +148,84 @@ func (h *hydrator) hydrate(ctx context.Context, items []domain.RetrievedItem) ([
 				"surface "+string(item.Surface)+" has no citable form")
 		}
 	}
-	return out, nil
+	return h.expandRequirements(ctx, out, seen)
+}
+
+const RequirementExpansionLimit = 16
+
+func (h *hydrator) expandRequirements(ctx context.Context, candidates []candidate, seen map[string]bool) ([]candidate, error) {
+	needsHistory := hasRequirement(h.requirements, "history") || hasRequirement(h.requirements, "comparison_inputs") || hasRequirement(h.requirements, "absence_proof")
+	needsInputs := hasRequirement(h.requirements, "decision_trace")
+	if (!needsHistory && !needsInputs) || expansionPolicyUnsupported(h.req.Policy) {
+		return candidates, nil
+	}
+	base := append([]candidate(nil), candidates...)
+	added := 0
+	add := func(id domain.AssertionID, score float64) error {
+		if added >= RequirementExpansionLimit || seen[string(id)] {
+			return nil
+		}
+		item := domain.RetrievedItem{Surface: domain.SurfaceAssertion, RecordID: string(id), Score: score}
+		built, err := h.fromAssertion(ctx, item, id, score)
+		if err != nil {
+			return err
+		}
+		if built != nil {
+			built.required = true
+			seen[string(id)] = true
+			candidates = append(candidates, *built)
+			added++
+		}
+		return nil
+	}
+	for _, candidate := range base {
+		if candidate.assertion == nil || added >= RequirementExpansionLimit {
+			continue
+		}
+		if needsInputs {
+			for _, id := range candidate.supportIDs {
+				if err := add(id, candidate.relevance*.95); err != nil {
+					return nil, err
+				}
+			}
+		}
+		if needsHistory {
+			a := candidate.assertion
+			claims, err := h.store.QueryAssertions(ctx, domain.AssertionQuery{
+				Scope: h.req.Scope, SubjectIDs: []domain.EntityID{a.SubjectID},
+				Predicates: []string{a.Predicate.Name}, ScopeKey: a.ScopeKey,
+				KnownAt: h.req.Temporal.KnownAt, IncludeSuperseded: true,
+				MinConfidence:   h.req.Filters.MinConfidence,
+				Classifications: h.req.Policy.PermittedClassifications(),
+				SourceIDs:       h.req.Policy.AllowedSources,
+				MemoryKinds:     h.req.Policy.AllowedMemoryKinds,
+				Limit:           8,
+			})
+			if err != nil {
+				return nil, err
+			}
+			for _, claim := range claims {
+				if err := add(claim.ID, candidate.relevance*.90); err != nil {
+					return nil, err
+				}
+			}
+		}
+	}
+	return candidates, nil
+}
+
+func expansionPolicyUnsupported(policy domain.PolicyFilters) bool {
+	return len(policy.DeniedSources) > 0 || len(policy.AllowedCollections) > 0 ||
+		len(policy.DeniedCollections) > 0 || len(policy.DeniedMemoryKinds) > 0
+}
+
+func hasRequirement(requirements []string, want string) bool {
+	for _, requirement := range requirements {
+		if requirement == want {
+			return true
+		}
+	}
+	return false
 }
 
 func (h *hydrator) drop(item domain.RetrievedItem, section domain.ContextSection, reason domain.DropReason, detail string) {
@@ -165,16 +253,23 @@ func (h *hydrator) fromChunk(item domain.RetrievedItem, p domain.ChunkProvenance
 		evidence:   1,
 		temporal:   h.temporalFit(p.EventTime, nil),
 		priority:   1,
+		focus:      focusScore(text, h.focusTerms),
 
 		citation: domain.Citation{
-			Surface:       domain.SurfaceChunk,
-			ChunkID:       &chunkID,
-			EpisodeID:     &episodeID,
-			SourceEventID: p.SourceEventID,
-			SourceID:      p.SourceID,
-			SourceName:    p.SourceName,
-			Quote:         text,
-			Locator:       locatorText(p.Chunk.Locator),
+			Surface:          domain.SurfaceChunk,
+			ChunkID:          &chunkID,
+			EpisodeID:        &episodeID,
+			SourceEventID:    p.SourceEventID,
+			SourceExternalID: p.SourceExternalID,
+			IdempotencyKey:   p.IdempotencyKey,
+			SourceSequence:   p.SourceSequence,
+			SourceVersion:    p.SourceVersion,
+			EventTime:        p.SourceEventTime,
+			RecordedAt:       &p.RecordedAt,
+			SourceID:         p.SourceID,
+			SourceName:       p.SourceName,
+			Quote:            text,
+			Locator:          locatorText(p.Chunk.Locator),
 		},
 		terms: terms(text),
 	}
@@ -227,12 +322,18 @@ func (h *hydrator) fromAssertion(ctx context.Context, item domain.RetrievedItem,
 		evidence:   evidenceQuality(chain.Links),
 		temporal:   h.temporalFit(assertion.Temporal.ValidFrom, assertion.Temporal.ValidTo),
 		priority:   memoryPriority(assertion.MemoryKind),
+		focus:      focusScore(renderClaim(chain.Subject.CanonicalName, assertion, objectName), h.focusTerms),
+		related:    item.Path != nil,
+		assertion:  &assertion,
 
 		subjects:  []domain.EntityID{assertion.SubjectID},
 		predicate: assertion.Predicate.Name,
 		slot:      string(assertion.SubjectID) + "|" + assertion.Predicate.Name + "|" + assertion.ScopeKey,
 		objectKey: assertion.Object.Key(),
 		citation:  citationFor(assertion, chain),
+	}
+	for _, support := range chain.Supports {
+		built.supportIDs = append(built.supportIDs, support.ID)
 	}
 	if assertion.Object.Kind == domain.ObjectEntity {
 		built.subjects = append(built.subjects, assertion.Object.EntityID)
@@ -406,6 +507,13 @@ func citationFor(a domain.Assertion, chain domain.ProvenanceChain) domain.Citati
 			citation.SourceID = link.Source.ID
 			citation.SourceName = link.Source.Name
 			citation.Locator = locatorText(link.Episode.Locator)
+			citation.SourceExternalID = link.SourceEvent.ExternalID
+			citation.IdempotencyKey = link.SourceEvent.IdempotencyKey
+			citation.SourceSequence = link.SourceEvent.SourceSequence
+			citation.SourceVersion = link.SourceEvent.SourceVersion
+			citation.EventTime = link.SourceEvent.EventTime
+			recorded := link.SourceEvent.RecordedAt
+			citation.RecordedAt = &recorded
 		}
 	}
 	if citation.SourceName == "" && len(chain.Links) > 0 {
@@ -586,6 +694,23 @@ func terms(text string) map[string]struct{} {
 	return out
 }
 
+// focusScore reports how completely an item contains the exact anchors recovered from the
+// question. Anchors are deliberately few and precise; broad query vocabulary belongs in
+// relevance scoring, not in this gate.
+func focusScore(text string, anchors []string) float64 {
+	if len(anchors) == 0 {
+		return 0
+	}
+	haystack := strings.ToLower(text)
+	matched := 0
+	for _, anchor := range anchors {
+		if strings.Contains(haystack, strings.ToLower(anchor)) {
+			matched++
+		}
+	}
+	return float64(matched) / float64(len(anchors))
+}
+
 // redundancy scores how much one candidate repeats another, in [0,1].
 //
 // Lexical overlap is the general case, with one structural exception: two claims about the
@@ -597,7 +722,23 @@ func redundancy(a, b candidate) float64 {
 	if a.slot != "" && a.slot == b.slot && a.objectKey != b.objectKey {
 		return 0
 	}
+	// Assertions about different identities are coverage, not repetition, even when a
+	// source template makes their sentences nearly identical.
+	if len(a.subjects) > 0 && len(b.subjects) > 0 && !sharedSubject(a.subjects, b.subjects) {
+		return 0
+	}
 	return similarity(a.terms, b.terms)
+}
+
+func sharedSubject(a, b []domain.EntityID) bool {
+	for _, left := range a {
+		for _, right := range b {
+			if left == right {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // similarity is Jaccard overlap between two term sets, in [0,1].

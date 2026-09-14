@@ -114,7 +114,10 @@ func (a *Assembler) Assemble(ctx context.Context, req domain.ContextRequest) (do
 		return domain.ContextBlock{}, err
 	}
 
-	hydrator := &hydrator{store: a.store, req: req, now: a.opts.Clock()}
+	hydrator := &hydrator{
+		store: a.store, req: req, now: a.opts.Clock(), focusTerms: intent.FocusTerms,
+		requirements: intent.Requirements,
+	}
 	candidates, err := hydrator.hydrate(ctx, result.Items)
 	if err != nil {
 		return domain.ContextBlock{}, err
@@ -130,7 +133,7 @@ func (a *Assembler) Assemble(ctx context.Context, req domain.ContextRequest) (do
 	}
 
 	selector := &selector{
-		weights: a.opts.Weights, estimator: a.opts.Estimator, req: req,
+		weights: weightsForRequirements(a.opts.Weights, intent.Requirements), estimator: a.opts.Estimator, req: req,
 		cost: a.renderedCost,
 	}
 	chosen := orderForRendering(selector.choose(candidates, contentBudget))
@@ -158,6 +161,26 @@ func (a *Assembler) Assemble(ctx context.Context, req domain.ContextRequest) (do
 		slog.Int("candidates", len(candidates)))
 
 	return block, nil
+}
+
+func weightsForRequirements(weights Weights, requirements []string) Weights {
+	weights.SectionShare = cloneSectionShares(weights.SectionShare)
+	if hasRequirement(requirements, "history") || hasRequirement(requirements, "comparison_inputs") || hasRequirement(requirements, "absence_proof") {
+		weights.SectionShare[domain.SectionHistory] = 0.30
+		weights.SectionShare[domain.SectionExcerpts] = 0.15
+	}
+	if hasRequirement(requirements, "decision_trace") {
+		weights.SectionShare[domain.SectionGraph] = 0.25
+	}
+	return weights
+}
+
+func cloneSectionShares(in map[domain.ContextSection]float64) map[domain.ContextSection]float64 {
+	out := make(map[domain.ContextSection]float64, len(in))
+	for key, value := range in {
+		out[key] = value
+	}
+	return out
 }
 
 // renderedCost is what one candidate will spend: its own text and its reference line.

@@ -233,6 +233,64 @@ func TestAssembledBlockNeverExceedsItsBudget(t *testing.T) {
 	}
 }
 
+func TestIdentifierFocusDropsOtherRecords(t *testing.T) {
+	c := newCorpus()
+	wanted := c.entity("CASE-42")
+	other := c.entity("CASE-99")
+	c.claim(wanted, "STATUS", "approved after review", claimOptions{score: .08})
+	c.claim(other, "STATUS", "approved after review", claimOptions{score: .20})
+
+	req := c.request(800)
+	req.Query = "Why did CASE-42 become approved?"
+	req.Explain = true
+	block, err := c.assembler(Options{}).Assemble(t.Context(), req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(block.Text, "CASE-42") || strings.Contains(block.Text, "CASE-99") {
+		t.Fatalf("context was not scoped to the identifier:\n%s", block.Text)
+	}
+	foundDrop := false
+	for _, dropped := range block.Dropped {
+		foundDrop = foundDrop || dropped.Reason == domain.DropFocusMismatch
+	}
+	if !foundDrop {
+		t.Fatal("the focus exclusion was not explained")
+	}
+}
+
+func TestDecisionTraceExpandsSupportingAssertions(t *testing.T) {
+	c := newCorpus()
+	caseID := c.entity("CASE-42")
+	supportID := c.claim(caseID, "RISK_SCORE", "91", claimOptions{score: .01})
+	decisionID := c.claim(caseID, "DECISION", "manual review", claimOptions{score: .20})
+	c.store.chains[decisionID] = domain.ProvenanceChain{
+		Assertion: c.store.assertions[decisionID], Subject: c.store.entities[caseID],
+		Links:    c.store.chains[decisionID].Links,
+		Supports: []domain.Assertion{c.store.assertions[supportID]},
+	}
+	// Simulate retrieval finding only the decision. Assembly must obtain its premise from
+	// the derivation chain rather than hope the same search happened to return it.
+	c.retriever.items = c.retriever.items[1:]
+	req := c.request(1000)
+	req.Query = "Why was the decision taken for CASE-42?"
+	req.Explain = true
+	block, err := c.assembler(Options{}).Assemble(t.Context(), req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(block.Text, "risk score 91") || !strings.Contains(block.Text, "decision manual review") {
+		t.Fatalf("decision and complete support were not assembled:\n%s", block.Text)
+	}
+	foundRequired := false
+	for _, item := range block.Items {
+		foundRequired = foundRequired || item.Signals["required_premise"] == 1
+	}
+	if !foundRequired {
+		t.Fatal("supporting premise was not identified in the selection trace")
+	}
+}
+
 func TestBudgetHoldsUnderRandomCorpora(t *testing.T) {
 	// The property matters more than any single case: content length, count, and budget
 	// all interact, and the failure this guards against is a block that fits every hand

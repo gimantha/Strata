@@ -208,6 +208,14 @@ type Citation struct {
 	SourceEventID SourceEventID
 	SourceID      SourceID
 	SourceName    string
+	// SourceExternalID and IdempotencyKey are the upstream identities people can use to
+	// verify a citation. SourceEventID is Strata's internal immutable identifier.
+	SourceExternalID string
+	IdempotencyKey   string
+	SourceSequence   string
+	SourceVersion    string
+	EventTime        *time.Time
+	RecordedAt       *time.Time
 
 	// Quote is the evidence text an assertion rests on, or the excerpt itself.
 	Quote   string
@@ -257,6 +265,9 @@ const (
 	DropSectionExcluded DropReason = "section_excluded"
 	// DropItemLimit means MaxItems was reached.
 	DropItemLimit DropReason = "item_limit"
+	// DropFocusMismatch means a strong entity/identifier anchor was found and the item was
+	// about another identity. Recording this separately makes focus failures measurable.
+	DropFocusMismatch DropReason = "focus_mismatch"
 )
 
 // DroppedItem records one omission.

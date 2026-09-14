@@ -20,6 +20,9 @@ type Weights struct {
 	Evidence   float64
 	Temporal   float64
 	Priority   float64
+	// Focus rewards exact agreement with identifiers or quoted names in the query.
+	Focus       float64
+	Requirement float64
 
 	// Diversity is the MMR trade-off: 0 ranks purely by relevance, 1 purely by novelty.
 	Diversity float64
@@ -51,8 +54,10 @@ func DefaultWeights() Weights {
 		Evidence:   0.5,
 		Temporal:   0.7,
 		Priority:   0.3,
+		Focus:      1.5,
 
-		Diversity:        0.35,
+		Requirement:      1.2,
+		Diversity:        0.20,
 		RedundancyCutoff: 0.5,
 		CoverageBonus:    0.25,
 		DisputedPenalty:  0.15,
@@ -91,6 +96,12 @@ func (w Weights) withDefaults() Weights {
 	if w.Priority <= 0 {
 		w.Priority = defaults.Priority
 	}
+	if w.Focus <= 0 {
+		w.Focus = defaults.Focus
+	}
+	if w.Requirement <= 0 {
+		w.Requirement = defaults.Requirement
+	}
 	if w.Diversity <= 0 {
 		w.Diversity = defaults.Diversity
 	}
@@ -117,6 +128,10 @@ func (w Weights) merit(c candidate) float64 {
 		w.Evidence*c.evidence +
 		w.Temporal*c.temporal +
 		w.Priority*c.priority
+	score += w.Focus * c.focus
+	if c.required {
+		score += w.Requirement
+	}
 	if c.conflict != nil {
 		score *= 1 - w.DisputedPenalty
 	}
@@ -163,11 +178,23 @@ func (s *selector) choose(candidates []candidate, budget int) []selection {
 	s.rescaleRelevance(candidates)
 
 	remaining := make([]candidate, 0, len(candidates))
+	hasFocused := false
+	for _, c := range candidates {
+		hasFocused = hasFocused || c.focus > 0
+	}
 	for _, c := range candidates {
 		if !s.req.Wants(c.section) {
 			s.dropped = append(s.dropped, domain.DroppedItem{
 				Surface: c.surface, RecordID: c.recordID, Section: c.section,
 				Reason: domain.DropSectionExcluded, Relevance: c.relevance,
+			})
+			continue
+		}
+		if hasFocused && c.focus == 0 && !c.required && !c.related {
+			s.dropped = append(s.dropped, domain.DroppedItem{
+				Surface: c.surface, RecordID: c.recordID, Section: c.section,
+				Reason: domain.DropFocusMismatch, Relevance: c.relevance,
+				Detail: "item does not match a strong entity or record anchor from the query",
 			})
 			continue
 		}
@@ -375,16 +402,21 @@ func (s *selector) signalsFor(c candidate, redundancy float64) map[string]float6
 	if !s.req.Explain {
 		return nil
 	}
-	return map[string]float64{
+	signals := map[string]float64{
 		"relevance":  c.relevance,
 		"confidence": c.confidence,
 		"evidence":   c.evidence,
 		"temporal":   c.temporal,
 		"priority":   c.priority,
+		"focus":      c.focus,
 		"novelty":    s.novelty(c),
 		"redundancy": redundancy,
 		"merit":      s.weights.merit(c),
 	}
+	if c.required {
+		signals["required_premise"] = 1
+	}
+	return signals
 }
 
 func removeAt(items []candidate, index int) []candidate {
