@@ -1,0 +1,4 @@
+cognee==1.5.4
+fastembed<=0.8.0
+httpx>=0.28,<1
+python-dotenv>=1,<2

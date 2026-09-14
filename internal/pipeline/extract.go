@@ -40,7 +40,7 @@ func (ExtractStage) Name() string { return "extract" }
 
 // Version is part of the durable stage key. Bump it when the prompt, schema, or mapping
 // changes in a way that should re-extract events already processed.
-func (ExtractStage) Version() int { return 1 }
+func (ExtractStage) Version() int { return 2 }
 
 func (s ExtractStage) Execute(ctx context.Context, in Input) (Output, error) {
 	const op = "pipeline.ExtractStage"
@@ -58,6 +58,36 @@ func (s ExtractStage) Execute(ctx context.Context, in Input) (Output, error) {
 			EntityTypes: binding.Version.EntityTypeNames(),
 			Predicates:  binding.Version.PredicateNames(),
 			Version:     binding.Version.Version,
+		}
+	} else {
+		// Open mode remains open, but showing the registry prevents semantically
+		// identical predicates from fragmenting across spelling and orientation choices.
+		// The bound keeps prompts stable as a workspace vocabulary grows.
+		predicates, err := s.store.ListPredicates(ctx, in.Event.WorkspaceID)
+		if err != nil {
+			return Output{}, err
+		}
+		const maxPreferredPredicates = 128
+		seen := make(map[string]struct{}, maxPreferredPredicates)
+		for _, predicate := range predicates {
+			for _, name := range append([]string{predicate.Name}, predicate.Aliases...) {
+				name = strings.TrimSpace(name)
+				key := domain.NormalizeAlias(name)
+				if name == "" || key == "" {
+					continue
+				}
+				if _, exists := seen[key]; exists {
+					continue
+				}
+				seen[key] = struct{}{}
+				schema.PreferredPredicates = append(schema.PreferredPredicates, name)
+				if len(schema.PreferredPredicates) == maxPreferredPredicates {
+					break
+				}
+			}
+			if len(schema.PreferredPredicates) == maxPreferredPredicates {
+				break
+			}
 		}
 	}
 
@@ -160,15 +190,16 @@ func (s ExtractStage) Execute(ctx context.Context, in Input) (Output, error) {
 
 	_ = op
 	return Output{Summary: map[string]any{
-		"episodes_examined": len(episodes),
-		"model_requests":    requested,
-		"assertions":        committed,
-		"duplicates":        duplicates,
-		"rejected":          rejected,
-		"conflicts":         conflicts,
-		"quarantined":       quarantined,
-		"schema_guided":     schema.Guided(),
-		"model_runs":        modelRuns,
+		"episodes_examined":    len(episodes),
+		"model_requests":       requested,
+		"assertions":           committed,
+		"duplicates":           duplicates,
+		"rejected":             rejected,
+		"conflicts":            conflicts,
+		"quarantined":          quarantined,
+		"schema_guided":        schema.Guided(),
+		"preferred_predicates": len(schema.PreferredPredicates),
+		"model_runs":           modelRuns,
 	}}, nil
 }
 

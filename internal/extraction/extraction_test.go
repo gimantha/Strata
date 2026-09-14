@@ -96,6 +96,29 @@ func TestBuildPromptRejectsEmptyInput(t *testing.T) {
 	}
 }
 
+func TestBuildPromptReusesVocabularyWithoutClosingOpenMode(t *testing.T) {
+	prompt, err := extraction.BuildGuidedPrompt(
+		[]extraction.SourceUnit{{Content: sampleSource}},
+		extraction.Schema{PreferredPredicates: []string{"current_role", "works_at"}},
+	)
+	if err != nil {
+		t.Fatalf("build prompt: %v", err)
+	}
+	if (extraction.Schema{PreferredPredicates: []string{"current_role"}}).Guided() {
+		t.Fatal("preferred predicates must not turn open extraction into a closed schema")
+	}
+	user := prompt.Request.Messages[1].Content
+	system := prompt.Request.Messages[0].Content
+	for _, want := range []string{"current_role", "works_at", "introduce a new predicate"} {
+		if !strings.Contains(user, want) {
+			t.Fatalf("open-mode vocabulary guidance is missing %q: %s", want, user)
+		}
+	}
+	if strings.Contains(system, "This extraction is schema-guided") {
+		t.Fatal("open-mode vocabulary must not receive the closed-schema addendum")
+	}
+}
+
 func TestValidateAcceptsWellFormedOutput(t *testing.T) {
 	raw := `{
 	  "entities": [

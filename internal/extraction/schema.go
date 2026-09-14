@@ -17,7 +17,7 @@ const SchemaName = "strata_extraction_result"
 
 // PromptVersion is recorded on every model run, so a change in prompting can be correlated
 // with a change in extraction quality.
-const PromptVersion = 1
+const PromptVersion = 2
 
 // PromptTemplate names the prompt in model-run records.
 const PromptTemplate = "extract_candidates"

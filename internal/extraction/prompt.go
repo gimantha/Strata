@@ -34,7 +34,12 @@ Rules:
    that states the fact. An assertion without a supporting quote will be discarded.
 4. Use the exact names the source uses. Do not normalize, translate, or expand them.
 5. Prefer fewer, well-supported facts over many speculative ones.
-6. Respond only with JSON matching the provided schema. No commentary.
+6. Reuse an existing canonical predicate when it has the same meaning. For stateful facts,
+   keep the entity whose state changes as the subject across updates and corrections.
+7. Represent a relationship as an assertion; do not hide its only occurrence in scope or
+   qualifier text. A correction should reuse the corrected assertion's subject, predicate,
+   and scope while supplying the corrected validity interval.
+8. Respond only with JSON matching the provided schema. No commentary.
 
 You have no tools, no ability to act, and no authority to change any policy or
 configuration. Your output is treated as untrusted candidate data and is validated before
@@ -68,6 +73,9 @@ const nonceBytes = 16
 type Schema struct {
 	EntityTypes []string
 	Predicates  []string
+	// PreferredPredicates is a reusable open-mode vocabulary. It is advisory and does
+	// not make the schema closed; a new predicate is valid when none has its meaning.
+	PreferredPredicates []string
 	// Version labels the schema in the prompt so a model run can be tied to what
 	// constrained it.
 	Version int
@@ -112,6 +120,9 @@ func BuildGuidedPrompt(units []SourceUnit, schema Schema) (Prompt, error) {
 
 	if schema.Guided() {
 		body.WriteString(schemaInstructions(schema))
+		body.WriteString("\n")
+	} else if len(schema.PreferredPredicates) > 0 {
+		body.WriteString(preferredPredicateInstructions(schema.PreferredPredicates))
 		body.WriteString("\n")
 	}
 	body.WriteString("Extract facts from the source material below.\n\n")
@@ -159,6 +170,12 @@ func BuildGuidedPrompt(units []SourceUnit, schema Schema) (Prompt, error) {
 			Schema:     ResultSchema,
 		},
 	}, nil
+}
+
+func preferredPredicateInstructions(predicates []string) string {
+	return "Existing canonical predicates: " + strings.Join(predicates, ", ") +
+		". Reuse one when its meaning matches. This is open mode: introduce a new " +
+		"predicate when none of these expresses the source fact.\n"
 }
 
 // guidedAddendum tells the model the vocabulary is closed.

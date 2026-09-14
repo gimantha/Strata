@@ -17,6 +17,7 @@ type LedgerStore interface {
 	InsertChunks(ctx context.Context, chunks []domain.Chunk) ([]domain.Chunk, error)
 	ListChunks(ctx context.Context, ws domain.WorkspaceID, eventID domain.SourceEventID) ([]domain.Chunk, error)
 	GraphSpaceBinding(ctx context.Context, ws domain.WorkspaceID, id domain.GraphSpaceID) (domain.OntologyBinding, error)
+	ListPredicates(ctx context.Context, ws domain.WorkspaceID) ([]domain.PredicateDefinition, error)
 }
 
 // BlobReader reads archived source bytes.
