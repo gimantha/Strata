@@ -150,6 +150,9 @@ type Claim struct {
 
 	MemoryKind domain.MemoryKind
 	ScopeKey   string
+	// Qualifiers provide named roles for an n-ary relation. They are encoded into the
+	// immutable scope slot so reconciliation, export, and existing stores keep one model.
+	Qualifiers map[string]string
 
 	EventTime     *time.Time
 	ValidFrom     *time.Time
@@ -508,6 +511,17 @@ func (s *Service) buildAssertion(ctx context.Context, req AssertRequest, claim C
 	if err != nil {
 		return domain.Assertion{}, nil, domain.PredicateDefinition{}, err
 	}
+	if claim.ScopeKey != "" && len(claim.Qualifiers) > 0 {
+		return domain.Assertion{}, nil, domain.PredicateDefinition{}, domain.Errorf(
+			domain.CodeInvalidArgument, op, "use either scope_key or qualifiers, not both")
+	}
+	scopeKey := claim.ScopeKey
+	if len(claim.Qualifiers) > 0 {
+		scopeKey, err = domain.EncodeContextQualifiers(claim.Qualifiers)
+		if err != nil {
+			return domain.Assertion{}, nil, domain.PredicateDefinition{}, err
+		}
+	}
 
 	memoryKind := claim.MemoryKind
 	if memoryKind == "" {
@@ -531,7 +545,7 @@ func (s *Service) buildAssertion(ctx context.Context, req AssertRequest, claim C
 		Predicate:    predicate.Ref(),
 		Object:       object,
 		MemoryKind:   memoryKind,
-		ScopeKey:     claim.ScopeKey,
+		ScopeKey:     scopeKey,
 		Temporal: domain.TemporalCoordinates{
 			EventTime:     firstTime(claim.EventTime, event.EventTime),
 			ValidFrom:     claim.ValidFrom,

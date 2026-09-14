@@ -293,7 +293,7 @@ func (p *Projector) projectAssertions(ctx context.Context, scope domain.Scope, e
 			},
 			Surface:        domain.SurfaceAssertion,
 			RecordID:       string(assertion.ID),
-			Content:        renderClaim(subjectName, assertion.Predicate.Name, object),
+			Content:        renderClaim(subjectName, assertion.Predicate.Name, object, assertion.ScopeKey),
 			ValidFrom:      assertion.Temporal.ValidFrom,
 			ValidTo:        assertion.Temporal.ValidTo,
 			Status:         string(assertion.Status),
@@ -628,7 +628,11 @@ func (p *Projector) saveCheckpoints(ctx context.Context, ws domain.WorkspaceID, 
 }
 
 // renderClaim turns a claim into a searchable sentence.
-func renderClaim(subject, predicate, object string) string {
+func renderClaim(subject, predicate, object, scopeKey string) string {
 	readable := strings.ToLower(strings.ReplaceAll(predicate, "_", " "))
-	return strings.TrimSpace(subject + " " + readable + " " + object)
+	claim := strings.TrimSpace(subject + " " + readable + " " + object)
+	if context := domain.DisplayContextQualifiers(scopeKey); context != "" {
+		claim += " in context " + context
+	}
+	return claim
 }

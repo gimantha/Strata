@@ -549,7 +549,7 @@ func renderClaim(subject string, a domain.Assertion, object string) string {
 	b.WriteString(strings.TrimSpace(object))
 	if a.ScopeKey != "" {
 		b.WriteString(" (")
-		b.WriteString(a.ScopeKey)
+		b.WriteString(domain.DisplayContextQualifiers(a.ScopeKey))
 		b.WriteString(")")
 	}
 	if qualifier := validityQualifier(a.Temporal); qualifier != "" {

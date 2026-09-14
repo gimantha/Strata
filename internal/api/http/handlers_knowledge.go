@@ -117,8 +117,9 @@ type claimRequest struct {
 	Object       *objectRequest    `json:"object,omitempty"`
 	ObjectEntity *entityRefRequest `json:"object_entity,omitempty"`
 
-	MemoryKind string `json:"memory_kind,omitempty"`
-	ScopeKey   string `json:"scope_key,omitempty"`
+	MemoryKind string            `json:"memory_kind,omitempty"`
+	ScopeKey   string            `json:"scope_key,omitempty"`
+	Qualifiers map[string]string `json:"qualifiers,omitempty"`
 
 	EventTime     *time.Time `json:"event_time,omitempty"`
 	ValidFrom     *time.Time `json:"valid_from,omitempty"`
@@ -237,6 +238,7 @@ func toClaim(item claimRequest) (knowledge.Claim, error) {
 		Subject:       item.Subject.toRef(),
 		Predicate:     item.Predicate,
 		ScopeKey:      item.ScopeKey,
+		Qualifiers:    item.Qualifiers,
 		EventTime:     item.EventTime,
 		ValidFrom:     item.ValidFrom,
 		ValidTo:       item.ValidTo,
@@ -625,6 +627,7 @@ type assertionResponse struct {
 	Object           domain.AssertionObject `json:"object"`
 	MemoryKind       string                 `json:"memory_kind"`
 	ScopeKey         string                 `json:"scope_key,omitempty"`
+	Qualifiers       map[string]string      `json:"qualifiers,omitempty"`
 	Temporal         temporalResponse       `json:"temporal"`
 	Confidence       float64                `json:"confidence"`
 	Status           string                 `json:"status"`
@@ -665,6 +668,7 @@ func toAssertionResponse(a domain.Assertion) assertionResponse {
 		Object:           a.Object,
 		MemoryKind:       string(a.MemoryKind),
 		ScopeKey:         a.ScopeKey,
+		Qualifiers:       domain.ContextQualifiers(a.ScopeKey),
 		Confidence:       a.Confidence,
 		Status:           string(a.Status),
 		ProvenanceMode:   string(a.ProvenanceMode),
