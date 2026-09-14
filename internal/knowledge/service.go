@@ -35,6 +35,7 @@ type Store interface {
 	GetAssertion(ctx context.Context, ws domain.WorkspaceID, id domain.AssertionID) (domain.Assertion, error)
 	QueryAssertions(ctx context.Context, q domain.AssertionQuery) ([]domain.Assertion, error)
 	FindOverlappingClaims(ctx context.Context, a domain.Assertion) ([]domain.Assertion, error)
+	FindClaimsInSlot(ctx context.Context, a domain.Assertion) ([]domain.Assertion, error)
 	SourceAuthority(ctx context.Context, ws domain.WorkspaceID, eventID domain.SourceEventID) (domain.TrustLevel, error)
 	SupersedeAssertions(ctx context.Context, ws domain.WorkspaceID, ids []domain.AssertionID, at time.Time) ([]domain.AssertionID, error)
 	SupersedeWithLink(ctx context.Context, ws domain.WorkspaceID, superseding domain.AssertionID, superseded []domain.AssertionID, at time.Time) ([]domain.AssertionID, error)
@@ -394,7 +395,7 @@ func (s *Service) Assert(ctx context.Context, req AssertRequest) (AssertResult, 
 		}
 
 		outcome, err := s.reconciler.Reconcile(ctx, assertion.WithSourceID(event.SourceID),
-			predicate, now)
+			predicate, event.Operation, now)
 		if err != nil {
 			return AssertResult{}, err
 		}

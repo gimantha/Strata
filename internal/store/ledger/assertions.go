@@ -540,6 +540,35 @@ func (s *Store) FindOverlappingClaims(ctx context.Context, a domain.Assertion) (
 	return out, mapError(rows.Err(), op, "cannot find overlapping claims")
 }
 
+// FindClaimsInSlot returns current claims with the same canonical subject, predicate, and
+// context regardless of world interval. Explicit corrections use it because a correction
+// may replace the interval itself, in which case overlap is precisely what cannot be
+// assumed. Source identity is hydrated for safe same-source reconciliation.
+func (s *Store) FindClaimsInSlot(ctx context.Context, a domain.Assertion) ([]domain.Assertion, error) {
+	const op = "ledger.FindClaimsInSlot"
+	rows, err := s.pool.Query(ctx, `SELECT `+prefixColumns("a", assertionColumns)+`, se.source_id
+		FROM assertions a
+		JOIN source_events se ON se.id = a.source_event_id
+		WHERE a.workspace_id = $1 AND a.graph_space_id = $2
+		  AND a.subject_id = $3 AND a.predicate_name = $4 AND a.scope_key = $5
+		  AND a.status IN ('active', 'disputed') AND a.id <> $6
+		ORDER BY a.recorded_at, a.id`, a.WorkspaceID, a.GraphSpaceID, a.SubjectID,
+		a.Predicate.Name, a.ScopeKey, a.ID)
+	if err != nil {
+		return nil, mapError(err, op, "cannot find claims in canonical slot")
+	}
+	defer rows.Close()
+	var out []domain.Assertion
+	for rows.Next() {
+		claim, sourceID, err := scanAssertionWithSource(rowAdapter{rows}, op)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, claim.WithSourceID(sourceID))
+	}
+	return out, mapError(rows.Err(), op, "cannot find claims in canonical slot")
+}
+
 func idStrings[T ~string](ids []T) []string {
 	out := make([]string, len(ids))
 	for i, id := range ids {

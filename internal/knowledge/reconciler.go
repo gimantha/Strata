@@ -41,16 +41,47 @@ type Outcome struct {
 }
 
 // Reconcile compares a committed claim against the believable claims it might contradict.
-func (r *Reconciler) Reconcile(ctx context.Context, assertion domain.Assertion, predicate domain.PredicateDefinition, now time.Time) (Outcome, error) {
+func (r *Reconciler) Reconcile(ctx context.Context, assertion domain.Assertion, predicate domain.PredicateDefinition, operation domain.SourceOperation, now time.Time) (Outcome, error) {
 	// A quarantined claim is not believed, so it cannot contradict anything. Letting it
 	// dispute good knowledge would hand untrusted material a veto.
 	if assertion.Status == domain.AssertionQuarantined {
 		return Outcome{Reason: "quarantined claims do not participate in reconciliation"}, nil
 	}
+	// A correction is an explicit statement about prior knowledge, not an inference from
+	// predicate cardinality. It therefore works in open mode too. Only older claims in the
+	// same canonical slot and from the same source are retired; facts from other sources
+	// remain independent corroboration or disagreement.
+	var explicitlyCorrected []domain.AssertionID
+	if operation == domain.SourceOpCorrection {
+		inSlot, err := r.store.FindClaimsInSlot(ctx, assertion)
+		if err != nil {
+			return Outcome{}, err
+		}
+		prior := make([]domain.Assertion, 0, len(inSlot))
+		for _, other := range inSlot {
+			if other.SourceEventID == assertion.SourceEventID || other.SourceID() != assertion.SourceID() {
+				continue
+			}
+			prior = append(prior, other)
+		}
+		if stale, superseder := r.isStale(assertion, prior); stale {
+			return Outcome{SupersededSelf: true,
+				Reason: "the correction predates source position " + sourceMarker(superseder)}, nil
+		}
+		if len(prior) > 0 {
+			outcome, err := r.supersede(ctx, assertion, prior, now,
+				"the source explicitly corrected this canonical slot")
+			if err != nil {
+				return Outcome{}, err
+			}
+			explicitlyCorrected = outcome.Superseded
+		}
+	}
 	// A predicate whose values may coexist has nothing to reconcile: liking tea does not
 	// stop someone liking coffee.
 	if predicate.AllowsMultipleValues() {
-		return Outcome{Reason: "predicate permits simultaneous values"}, nil
+		return Outcome{Superseded: explicitlyCorrected,
+			Reason: "explicit source corrections were applied; predicate otherwise permits simultaneous values"}, nil
 	}
 
 	overlapping, err := r.store.FindOverlappingClaims(ctx, assertion)
@@ -131,7 +162,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, assertion domain.Assertion, 
 	if err != nil {
 		return Outcome{}, err
 	}
-	outcome.Superseded = append(selfCorrected, outcome.Superseded...)
+	outcome.Superseded = append(explicitlyCorrected, append(selfCorrected, outcome.Superseded...)...)
 	return outcome, nil
 }
 

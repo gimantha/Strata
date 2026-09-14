@@ -54,6 +54,53 @@ func (h *harness) ingestSequenced(t *testing.T, content, key, sequence string, s
 	return receipt.SourceEventID, episodes[0].ID
 }
 
+func TestIntegrationExplicitCorrectionWorksInOpenMode(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+
+	ingestOne := func(content, key string, operation domain.SourceOperation) (domain.SourceEventID, domain.EpisodeID) {
+		receipt, err := h.gateway.Accept(ctx, ingest.Request{
+			Scope: h.scope(), Principal: h.principal(), SourceID: h.fixture.Primary.Source.ID,
+			ExternalID: "customer-42", Operation: operation, MediaType: normalize.MediaTypePlain,
+			Payload: []byte(content), IdempotencyKey: key,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := h.runner.Process(ctx, h.scope().WorkspaceID, receipt.SourceEventID, false); err != nil {
+			t.Fatal(err)
+		}
+		episodes, err := h.fixture.Store.ListEpisodes(ctx, h.scope().WorkspaceID, receipt.SourceEventID)
+		if err != nil || len(episodes) == 0 {
+			t.Fatalf("episodes: %v", err)
+		}
+		return receipt.SourceEventID, episodes[0].ID
+	}
+	assert := func(event domain.SourceEventID, episode domain.EpisodeID, value string) knowledge.AssertResult {
+		result, err := h.service.Assert(ctx, knowledge.AssertRequest{Scope: h.scope(), Principal: h.principal(), SourceEventID: event,
+			Claims: []knowledge.Claim{{Subject: knowledge.EntityRef{Name: "Acme", Type: "organization"},
+				Predicate: "REVIEW_STATUS", Object: domain.ObjectOfSymbol(value), ScopeKey: "case-42",
+				Evidence: []knowledge.EvidenceInput{{EpisodeID: episode}}}}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return result
+	}
+
+	firstEvent, firstEpisode := ingestOne("Acme review status is pending.", "correction-open-1", domain.SourceOpUpsert)
+	first := assert(firstEvent, firstEpisode, "PENDING")
+	secondEvent, secondEpisode := ingestOne("Correction: Acme review status is approved.", "correction-open-2", domain.SourceOpCorrection)
+	second := assert(secondEvent, secondEpisode, "APPROVED")
+
+	if len(second.Superseded) != 1 || second.Superseded[0] != first.Assertions[0].ID {
+		t.Fatalf("explicit correction did not retire the prior open-mode claim: %+v", second)
+	}
+	current := h.query(t, domain.AssertionQuery{Predicates: []string{"REVIEW_STATUS"}, ScopeKey: "case-42"})
+	if len(current) != 1 || current[0].Object.Display() != "APPROVED" {
+		t.Fatalf("current corrected state = %v", objectsOf(current))
+	}
+}
+
 // Scenario B from AGENTS.md section 37: source sequence 102 arrives before 101. The system
 // must preserve source order semantics and converge correctly once 101 arrives.
 func TestIntegrationScenarioBOutOfOrderEvents(t *testing.T) {
