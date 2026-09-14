@@ -173,7 +173,7 @@ func (r *Retriever) Query(ctx context.Context, req domain.QueryRequest) (domain.
 	if req.Explain {
 		result.Plan = &plan
 	}
-	result.TraceID = r.record(ctx, req, candidates, items, r.now().Sub(queryStarted))
+	result.TraceID = r.record(ctx, req, plan, candidates, items, r.now().Sub(queryStarted))
 
 	span.SetAttributes(
 		attribute.Int("strata.results", len(items)),
@@ -495,7 +495,7 @@ func Explain(plan domain.RetrievalPlan) []string {
 // Best effort: a query that answered correctly must not fail because its trace could not be
 // written. The failure is logged rather than returned, because losing explainability is a
 // problem for later and losing the answer is a problem now.
-func (r *Retriever) record(ctx context.Context, req domain.QueryRequest, candidates []candidate, items []domain.RetrievedItem, latency time.Duration) domain.TraceID {
+func (r *Retriever) record(ctx context.Context, req domain.QueryRequest, plan domain.RetrievalPlan, candidates []candidate, items []domain.RetrievedItem, latency time.Duration) domain.TraceID {
 	if r.traces == nil {
 		return ""
 	}
@@ -510,6 +510,7 @@ func (r *Retriever) record(ctx context.Context, req domain.QueryRequest, candida
 		Action:        domain.ActionRead,
 		PolicyFilters: req.Policy,
 		Filters:       req.Filters,
+		Plan:          plan,
 		Latency:       latency,
 		QueryTime:     r.now(),
 	}
@@ -523,11 +524,16 @@ func (r *Retriever) record(ctx context.Context, req domain.QueryRequest, candida
 		seen[key] = struct{}{}
 		trace.CandidateRefs = append(trace.CandidateRefs, domain.ScoredRef{
 			Surface: c.hit.Surface, RecordID: c.hit.RecordID, Score: c.score,
+			FoundBy: []domain.RetrievalMode{c.mode},
+			Ranks:   map[domain.RetrievalMode]int{c.mode: c.rank},
+			Signals: map[string]float64{"raw_score": c.score}, Path: c.path,
 		})
 	}
 	for _, item := range items {
 		trace.SelectedRefs = append(trace.SelectedRefs, domain.ScoredRef{
 			Surface: item.Surface, RecordID: item.RecordID, Score: item.Score,
+			FoundBy: append([]domain.RetrievalMode(nil), item.FoundBy...),
+			Ranks:   cloneRanks(item.Ranks), Signals: cloneSignals(item.Signals), Path: item.Path,
 		})
 	}
 
@@ -540,6 +546,28 @@ func (r *Retriever) record(ctx context.Context, req domain.QueryRequest, candida
 		return ""
 	}
 	return recorded.ID
+}
+
+func cloneRanks(in map[domain.RetrievalMode]int) map[domain.RetrievalMode]int {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(map[domain.RetrievalMode]int, len(in))
+	for key, value := range in {
+		out[key] = value
+	}
+	return out
+}
+
+func cloneSignals(in map[string]float64) map[string]float64 {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(map[string]float64, len(in))
+	for key, value := range in {
+		out[key] = value
+	}
+	return out
 }
 
 // available reports whether the index a mode needs is configured.

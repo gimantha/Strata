@@ -183,6 +183,17 @@ type RetrievalPlan struct {
 	// PlannerNote records why a planner did something unusual, most often why an LLM
 	// planner was not used after all.
 	PlannerNote string
+
+	// FocusTerms are exact identifiers or quoted names recovered from the question. They
+	// are recorded because a long natural-language question may be searched several ways,
+	// while these anchors must remain visible in every explanation of the plan.
+	FocusTerms []string
+	// Temporal is the effective temporal intent after deterministic inference and explicit
+	// caller filters have been combined. Explicit filters always win.
+	Temporal TemporalQuery
+	// Requirements names the evidence sets an answer needs, such as history, provenance,
+	// comparison inputs, or an absence proof. It is advisory to retrieval and auditable.
+	Requirements []string
 }
 
 // SubQuery is one search issued on behalf of a request.
@@ -231,9 +242,13 @@ type QueryResult struct {
 
 // ScoredRef is one record a trace names, with the score it had.
 type ScoredRef struct {
-	Surface  Surface `json:"surface"`
-	RecordID string  `json:"record_id"`
-	Score    float64 `json:"score,omitempty"`
+	Surface  Surface               `json:"surface"`
+	RecordID string                `json:"record_id"`
+	Score    float64               `json:"score,omitempty"`
+	FoundBy  []RetrievalMode       `json:"found_by,omitempty"`
+	Ranks    map[RetrievalMode]int `json:"ranks,omitempty"`
+	Signals  map[string]float64    `json:"signals,omitempty"`
+	Path     *GraphPath            `json:"path,omitempty"`
 }
 
 // RetrievalTrace is query-time explainability made durable (AGENTS.md section 6.12).
@@ -261,6 +276,7 @@ type RetrievalTrace struct {
 	PolicyFilters PolicyFilters
 
 	Filters       QueryFilters
+	Plan          RetrievalPlan
 	CandidateRefs []ScoredRef
 	SelectedRefs  []ScoredRef
 

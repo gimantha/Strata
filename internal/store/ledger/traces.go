@@ -48,6 +48,11 @@ func (s *Store) RecordTrace(ctx context.Context, trace domain.RetrievalTrace) (d
 		return domain.RetrievalTrace{}, domain.Wrap(err, domain.CodeInternal, op,
 			"cannot encode query filters")
 	}
+	plan, err := json.Marshal(trace.Plan)
+	if err != nil {
+		return domain.RetrievalTrace{}, domain.Wrap(err, domain.CodeInternal, op,
+			"cannot encode retrieval plan")
+	}
 	candidates, err := json.Marshal(orEmptyRefs(trace.CandidateRefs))
 	if err != nil {
 		return domain.RetrievalTrace{}, domain.Wrap(err, domain.CodeInternal, op,
@@ -63,12 +68,12 @@ func (s *Store) RecordTrace(ctx context.Context, trace domain.RetrievalTrace) (d
 		INSERT INTO retrieval_traces
 		    (id, workspace_id, graph_space_id, query_hash, query_text, redacted,
 		     principal_id, principal_kind, purpose, action, policy_version, policy_rule,
-		     policy_filters, filters, candidate_refs, selected_refs, latency_ms, query_time)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)`,
+		     policy_filters, filters, plan, candidate_refs, selected_refs, latency_ms, query_time)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)`,
 		trace.ID, trace.WorkspaceID, trace.GraphSpaceID, trace.QueryHash, text, trace.Redacted,
 		string(trace.Principal.ID), string(trace.Principal.Kind), trace.Purpose,
 		string(trace.Action), trace.PolicyVersion, trace.PolicyRule,
-		policyFilters, filters, candidates, selected,
+		policyFilters, filters, plan, candidates, selected,
 		trace.Latency.Milliseconds(), trace.QueryTime.UTC())
 	if err != nil {
 		return domain.RetrievalTrace{}, mapError(err, op, "cannot record the trace")
@@ -86,7 +91,7 @@ func (s *Store) GetTrace(ctx context.Context, ws domain.WorkspaceID, id domain.T
 	row := s.pool.QueryRow(ctx, `
 		SELECT id, workspace_id, graph_space_id, query_hash, query_text, redacted,
 		       principal_id, principal_kind, purpose, action, policy_version, policy_rule,
-		       policy_filters, filters, candidate_refs, selected_refs, latency_ms, query_time
+		       policy_filters, filters, plan, candidate_refs, selected_refs, latency_ms, query_time
 		FROM retrieval_traces WHERE workspace_id = $1 AND id = $2`, ws, id)
 
 	trace, err := scanTrace(row)
@@ -109,7 +114,7 @@ func (s *Store) ListTraces(ctx context.Context, scope domain.Scope, limit int) (
 	rows, err := s.pool.Query(ctx, `
 		SELECT id, workspace_id, graph_space_id, query_hash, query_text, redacted,
 		       principal_id, principal_kind, purpose, action, policy_version, policy_rule,
-		       policy_filters, filters, candidate_refs, selected_refs, latency_ms, query_time
+		       policy_filters, filters, plan, candidate_refs, selected_refs, latency_ms, query_time
 		FROM retrieval_traces
 		WHERE workspace_id = $1 AND ($2::uuid IS NULL OR graph_space_id = $2)
 		ORDER BY query_time DESC LIMIT $3`,
@@ -132,14 +137,14 @@ func (s *Store) ListTraces(ctx context.Context, scope domain.Scope, limit int) (
 
 func scanTrace(row scanner) (domain.RetrievalTrace, error) {
 	var (
-		trace                                        domain.RetrievalTrace
-		policyFilters, filters, candidates, selected []byte
-		latencyMillis                                int64
+		trace                                              domain.RetrievalTrace
+		policyFilters, filters, plan, candidates, selected []byte
+		latencyMillis                                      int64
 	)
 	if err := row.Scan(&trace.ID, &trace.WorkspaceID, &trace.GraphSpaceID, &trace.QueryHash,
 		&trace.QueryText, &trace.Redacted, &trace.Principal.ID, &trace.Principal.Kind,
 		&trace.Purpose, &trace.Action, &trace.PolicyVersion, &trace.PolicyRule,
-		&policyFilters, &filters, &candidates, &selected, &latencyMillis,
+		&policyFilters, &filters, &plan, &candidates, &selected, &latencyMillis,
 		&trace.QueryTime); err != nil {
 		return domain.RetrievalTrace{}, err
 	}
@@ -149,6 +154,9 @@ func scanTrace(row scanner) (domain.RetrievalTrace, error) {
 		return domain.RetrievalTrace{}, err
 	}
 	if err := json.Unmarshal(filters, &trace.Filters); err != nil {
+		return domain.RetrievalTrace{}, err
+	}
+	if err := json.Unmarshal(plan, &trace.Plan); err != nil {
 		return domain.RetrievalTrace{}, err
 	}
 	if err := json.Unmarshal(candidates, &trace.CandidateRefs); err != nil {
