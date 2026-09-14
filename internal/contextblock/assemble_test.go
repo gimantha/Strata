@@ -373,6 +373,29 @@ func TestEveryFactualItemCarriesAnAssertionAndEvidence(t *testing.T) {
 	}
 }
 
+func TestRenderedFactIncludesEvidenceAndUpstreamOrigin(t *testing.T) {
+	c := newCorpus()
+	acme := c.entity("Acme Corporation")
+	id := c.claim(acme, "CHOSE", "regional failover", claimOptions{score: .2})
+	chain := c.store.chains[id]
+	chain.Links[0].Evidence.ExtractedText = "The review chose regional failover because recovery time was lower."
+	chain.Links[0].SourceEvent = domain.SourceEvent{
+		ID: domain.SourceEventID("source-event-1"), ExternalID: "review-42",
+		IdempotencyKey: "EV-0042", SourceSequence: "17", SourceVersion: "v3",
+	}
+	c.store.chains[id] = chain
+
+	block, err := c.assembler(Options{}).Assemble(t.Context(), c.request(1000))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"supporting evidence:", "recovery time was lower", "upstream event review-42", "idempotency key EV-0042", "sequence 17", "version v3"} {
+		if !strings.Contains(block.Text, want) {
+			t.Fatalf("missing %q from provenance block:\n%s", want, block.Text)
+		}
+	}
+}
+
 func TestClaimsWithoutEvidenceAreDroppedRatherThanRenderedUnsupported(t *testing.T) {
 	c := newCorpus()
 	acme := c.entity("Acme Corporation")

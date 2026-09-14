@@ -138,7 +138,8 @@ func (s *Store) ProvenanceChain(ctx context.Context, ws domain.WorkspaceID, id d
 			ar.id, ar.content_hash, ar.media_type, ar.size_bytes, ar.blob_key, ar.storage,
 
 			se.id, se.external_id, se.event_type, se.operation, se.content_hash, se.idempotency_key,
-			se.event_time, se.observed_at, se.recorded_at, se.status, se.classification,
+				se.event_time, se.observed_at, se.recorded_at, se.source_sequence,
+				se.source_version, se.status, se.classification,
 
 			sr.id, sr.kind, sr.name, sr.uri, sr.trust_level, sr.classification
 		FROM evidence ev
@@ -189,6 +190,7 @@ func (s *Store) ProvenanceChain(ctx context.Context, ws domain.WorkspaceID, id d
 			&link.SourceEvent.ID, &link.SourceEvent.ExternalID, &link.SourceEvent.EventType,
 			&link.SourceEvent.Operation, &link.SourceEvent.ContentHash, &link.SourceEvent.IdempotencyKey,
 			&link.SourceEvent.EventTime, &link.SourceEvent.ObservedAt, &link.SourceEvent.RecordedAt,
+			&link.SourceEvent.SourceSequence, &link.SourceEvent.SourceVersion,
 			&link.SourceEvent.Status, &link.SourceEvent.Classification,
 
 			&link.Source.ID, &link.Source.Kind, &link.Source.Name, &link.Source.URI,
@@ -475,7 +477,8 @@ func (s *Store) ChunkProvenance(ctx context.Context, ws domain.WorkspaceID, ids 
 		SELECT c.id, c.episode_id, c.source_event_id, c.sequence, c.content, c.token_count,
 		       c.char_start, c.char_end, c.locator, c.classification,
 		       ep.sequence, ep.event_time, ep.observed_at, ep.locator,
-		       se.id, se.event_time, se.recorded_at,
+		       se.id, se.external_id, se.idempotency_key, se.source_sequence,
+		       se.source_version, se.event_time, se.recorded_at,
 		       sr.id, sr.name, sr.kind, sr.trust_level
 		FROM chunks c
 		JOIN episodes ep      ON ep.id = c.episode_id
@@ -494,7 +497,8 @@ func (s *Store) ChunkProvenance(ctx context.Context, ws domain.WorkspaceID, ids 
 			&p.Chunk.Content, &p.Chunk.TokenCount, &p.Chunk.CharStart, &p.Chunk.CharEnd,
 			&p.Chunk.Locator, &p.Chunk.Classification,
 			&p.EpisodeSequence, &p.EventTime, &p.ObservedAt, &p.EpisodeLocator,
-			&p.SourceEventID, &p.SourceEventTime, &p.RecordedAt,
+			&p.SourceEventID, &p.SourceExternalID, &p.IdempotencyKey, &p.SourceSequence,
+			&p.SourceVersion, &p.SourceEventTime, &p.RecordedAt,
 			&p.SourceID, &p.SourceName, &p.SourceKind, &p.TrustLevel,
 		); err != nil {
 			return nil, mapError(err, op, "cannot scan chunk provenance")

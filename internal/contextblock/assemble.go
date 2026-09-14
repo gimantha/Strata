@@ -15,6 +15,7 @@ package contextblock
 import (
 	"context"
 	"log/slog"
+	"strings"
 	"time"
 
 	"go.opentelemetry.io/otel/attribute"
@@ -187,7 +188,12 @@ func cloneSectionShares(in map[domain.ContextSection]float64) map[domain.Context
 func (a *Assembler) renderedCost(c candidate) int {
 	citation := c.citation
 	citation.Marker = 1 // one digit; the difference against a three-digit marker is noise
-	return a.opts.Estimator.Estimate(c.text) + a.opts.Estimator.Estimate(referenceLine(citation))
+	cost := a.opts.Estimator.Estimate(c.text) + a.opts.Estimator.Estimate(referenceLine(citation))
+	if c.surface != domain.SurfaceChunk && strings.TrimSpace(citation.Quote) != "" {
+		cost += a.opts.Estimator.Estimate("supporting evidence " + citation.Quote)
+		cost += a.opts.Estimator.Estimate("<<SOURCE:0000000000000000>>\n<<SOURCE:0000000000000000>>\n")
+	}
+	return cost
 }
 
 // render writes the block, dropping anything that no longer fits.

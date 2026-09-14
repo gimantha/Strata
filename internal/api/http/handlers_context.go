@@ -186,6 +186,30 @@ func citationsJSON(citations []domain.Citation) []map[string]any {
 		if citation.EpisodeID != nil {
 			entry["episode_id"] = string(*citation.EpisodeID)
 		}
+		if citation.SourceEventID != "" {
+			entry["source_event_id"] = string(citation.SourceEventID)
+		}
+		if citation.SourceID != "" {
+			entry["source_id"] = string(citation.SourceID)
+		}
+		if citation.SourceExternalID != "" {
+			entry["source_external_id"] = citation.SourceExternalID
+		}
+		if citation.IdempotencyKey != "" {
+			entry["idempotency_key"] = citation.IdempotencyKey
+		}
+		if citation.SourceSequence != "" {
+			entry["source_sequence"] = citation.SourceSequence
+		}
+		if citation.SourceVersion != "" {
+			entry["source_version"] = citation.SourceVersion
+		}
+		if citation.EventTime != nil {
+			entry["event_time"] = citation.EventTime
+		}
+		if citation.RecordedAt != nil {
+			entry["recorded_at"] = citation.RecordedAt
+		}
 		if citation.SourceName != "" {
 			entry["source_name"] = citation.SourceName
 		}
@@ -200,6 +224,9 @@ func citationsJSON(citations []domain.Citation) []map[string]any {
 		}
 		if citation.ValidTo != nil {
 			entry["valid_to"] = citation.ValidTo
+		}
+		if citation.KnownAt != nil {
+			entry["known_at"] = citation.KnownAt
 		}
 		if citation.Status != "" {
 			entry["status"] = string(citation.Status)

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/gimantha/strata/internal/domain"
 )
@@ -130,6 +131,15 @@ func (r *renderer) writeItem(marker int, sel selection, citation domain.Citation
 	} else {
 		b.WriteString(collapse(c.text))
 		b.WriteString("\n")
+		if strings.TrimSpace(citation.Quote) != "" {
+			b.WriteString("    supporting evidence:\n")
+			b.WriteString(r.fenceName())
+			b.WriteString("\n")
+			b.WriteString(collapse(citation.Quote))
+			b.WriteString("\n")
+			b.WriteString(r.fenceName())
+			b.WriteString("\n")
+		}
 	}
 
 	if c.conflict != nil && len(c.conflict.Others) > 0 {
@@ -210,6 +220,33 @@ func referenceLine(c domain.Citation) string {
 	if c.SourceName != "" {
 		b.WriteString(", source ")
 		b.WriteString(c.SourceName)
+	}
+	if c.SourceExternalID != "" {
+		b.WriteString(", upstream event ")
+		b.WriteString(c.SourceExternalID)
+	} else if c.SourceEventID != "" {
+		b.WriteString(", source event ")
+		b.WriteString(string(c.SourceEventID))
+	}
+	if c.IdempotencyKey != "" {
+		b.WriteString(", idempotency key ")
+		b.WriteString(c.IdempotencyKey)
+	}
+	if c.SourceSequence != "" {
+		b.WriteString(", sequence ")
+		b.WriteString(c.SourceSequence)
+	}
+	if c.SourceVersion != "" {
+		b.WriteString(", version ")
+		b.WriteString(c.SourceVersion)
+	}
+	if c.EventTime != nil {
+		b.WriteString(", event time ")
+		b.WriteString(c.EventTime.UTC().Format(time.RFC3339Nano))
+	}
+	if c.RecordedAt != nil {
+		b.WriteString(", recorded ")
+		b.WriteString(c.RecordedAt.UTC().Format(time.RFC3339Nano))
 	}
 	if c.Locator != "" {
 		b.WriteString(" (")
