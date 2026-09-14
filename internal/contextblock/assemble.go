@@ -22,6 +22,7 @@ import (
 	tracenoop "go.opentelemetry.io/otel/trace/noop"
 
 	"github.com/gimantha/strata/internal/domain"
+	"github.com/gimantha/strata/internal/retrieval"
 )
 
 // Retriever is the retrieval surface assembly consumes, declared by its consumer.
@@ -85,6 +86,8 @@ func New(retriever Retriever, store Store, opts Options, logger *slog.Logger, tr
 // Assemble retrieves, selects, and renders one context block.
 func (a *Assembler) Assemble(ctx context.Context, req domain.ContextRequest) (domain.ContextBlock, error) {
 	req = req.Normalize()
+	intent := retrieval.Interpret(req.Query)
+	req.Temporal = retrieval.MergeTemporal(req.Temporal, intent.Temporal)
 	if err := req.Validate(); err != nil {
 		return domain.ContextBlock{}, err
 	}

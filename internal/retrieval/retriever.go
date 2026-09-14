@@ -6,6 +6,7 @@ import (
 	"slices"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
 
 	"go.opentelemetry.io/otel/attribute"
@@ -123,7 +124,9 @@ func (r *Retriever) Query(ctx context.Context, req domain.QueryRequest) (domain.
 		return domain.QueryResult{}, err
 	}
 
-	plan := r.planner.Plan(ctx, req)
+	intent := Interpret(req.Query)
+	req.Temporal = MergeTemporal(req.Temporal, intent.Temporal)
+	plan := enrichPlan(r.planner.Plan(ctx, req), req, intent)
 
 	queryStarted := r.now()
 
@@ -319,6 +322,52 @@ func (r *Retriever) vector(ctx context.Context, req domain.QueryRequest) ([]cand
 	return toCandidates(domain.ModeVector, hits), nil
 }
 
+// enrichPlan restores deterministic anchors even when an LLM planned the semantic part of
+// a query. A planner must never lose an identifier or explicit timestamp the user supplied.
+func enrichPlan(plan domain.RetrievalPlan, req domain.QueryRequest, intent Intent) domain.RetrievalPlan {
+	plan.FocusTerms = append([]string(nil), intent.FocusTerms...)
+	plan.Temporal = req.Temporal
+	plan.Requirements = append([]string(nil), intent.Requirements...)
+	if plan.Reasons == nil {
+		plan.Reasons = map[domain.RetrievalMode]string{}
+	}
+	for _, focus := range intent.FocusTerms {
+		found := false
+		for _, sub := range plan.SubQueries {
+			if strings.EqualFold(strings.TrimSpace(sub.Text), focus) {
+				found = true
+				break
+			}
+		}
+		if !found && len(plan.SubQueries) < domain.MaxSubQueries {
+			plan.SubQueries = append(plan.SubQueries, domain.SubQuery{
+				Text: focus, Kind: domain.SubQueryDecomposed,
+				Reason: "deterministic identifier anchor",
+			})
+		}
+	}
+	if len(intent.FocusTerms) > 0 {
+		if !slices.Contains(plan.Modes, domain.ModeExact) {
+			plan.Modes = append(plan.Modes, domain.ModeExact)
+			plan.Reasons[domain.ModeExact] = "an exact identifier occurs inside the question"
+		}
+		if !slices.Contains(plan.Modes, domain.ModeEntity) {
+			plan.Modes = append(plan.Modes, domain.ModeEntity)
+			plan.Reasons[domain.ModeEntity] = "resolve identifier anchors to graph entities"
+		}
+		slices.SortStableFunc(plan.Modes, func(a, b domain.RetrievalMode) int {
+			if a == domain.ModeGraph && b != domain.ModeGraph {
+				return 1
+			}
+			if b == domain.ModeGraph && a != domain.ModeGraph {
+				return -1
+			}
+			return 0
+		})
+	}
+	return plan
+}
+
 // entity resolves the query as a name.
 func (r *Retriever) entity(ctx context.Context, req domain.QueryRequest) ([]candidate, error) {
 	entities, err := r.ledger.FindEntitiesByName(ctx, req.Scope, req.Query)
@@ -462,6 +511,21 @@ func countDistinct(candidates []candidate) int {
 // Explain renders a plan as readable lines, for the CLI and for debugging.
 func Explain(plan domain.RetrievalPlan) []string {
 	var out []string
+	if len(plan.FocusTerms) > 0 {
+		out = append(out, "focus: "+strings.Join(plan.FocusTerms, ", "))
+	}
+	if len(plan.Requirements) > 0 {
+		out = append(out, "answer requires: "+strings.Join(plan.Requirements, ", "))
+	}
+	if plan.Temporal.ValidAt != nil {
+		out = append(out, "world time: "+plan.Temporal.ValidAt.UTC().Format(time.RFC3339Nano))
+	}
+	if plan.Temporal.KnownAt != nil {
+		out = append(out, "knowledge time: "+plan.Temporal.KnownAt.UTC().Format(time.RFC3339Nano))
+	}
+	if plan.Temporal.ActiveAt != nil {
+		out = append(out, "context time: "+plan.Temporal.ActiveAt.UTC().Format(time.RFC3339Nano))
+	}
 	for _, mode := range plan.Modes {
 		line := string(mode) + ": " + plan.Reasons[mode]
 		if count, ok := plan.Candidates[mode]; ok {

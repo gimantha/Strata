@@ -144,10 +144,19 @@ func (s *Server) handleQuery(w http.ResponseWriter, r *http.Request) {
 	}
 	if result.Plan != nil {
 		body["plan"] = map[string]any{
-			"modes":       modeStrings(result.Plan.Modes),
-			"reasons":     reasonStrings(result.Plan.Reasons),
-			"skipped":     reasonStrings(result.Plan.Skipped),
-			"candidates":  candidateCounts(result.Plan.Candidates),
+			"modes":        modeStrings(result.Plan.Modes),
+			"reasons":      reasonStrings(result.Plan.Reasons),
+			"skipped":      reasonStrings(result.Plan.Skipped),
+			"candidates":   candidateCounts(result.Plan.Candidates),
+			"planner":      result.Plan.Planner,
+			"sub_queries":  result.Plan.SubQueries,
+			"focus_terms":  result.Plan.FocusTerms,
+			"requirements": result.Plan.Requirements,
+			"temporal": map[string]any{
+				"valid_at":  result.Plan.Temporal.ValidAt,
+				"known_at":  result.Plan.Temporal.KnownAt,
+				"active_at": result.Plan.Temporal.ActiveAt,
+			},
 			"explanation": retrieval.Explain(*result.Plan),
 		}
 	}

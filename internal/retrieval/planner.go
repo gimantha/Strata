@@ -3,7 +3,6 @@ package retrieval
 import (
 	"context"
 	"strings"
-	"unicode"
 
 	"github.com/gimantha/strata/internal/domain"
 )
@@ -29,6 +28,7 @@ type heuristicPlanner struct {
 
 // Plan returns the modes to run and why, so a disappointing result can be explained.
 func (p heuristicPlanner) Plan(_ context.Context, req domain.QueryRequest) domain.RetrievalPlan {
+	intent := Interpret(req.Query)
 	out := domain.RetrievalPlan{
 		Planner:    "heuristic",
 		Reasons:    map[domain.RetrievalMode]string{},
@@ -41,6 +41,21 @@ func (p heuristicPlanner) Plan(_ context.Context, req domain.QueryRequest) domai
 			Text: req.Query, Kind: domain.SubQueryOriginal,
 			Reason: "the question as asked",
 		}},
+		FocusTerms:   append([]string(nil), intent.FocusTerms...),
+		Temporal:     MergeTemporal(req.Temporal, intent.Temporal),
+		Requirements: append([]string(nil), intent.Requirements...),
+	}
+	for _, focus := range intent.FocusTerms {
+		if len(out.SubQueries) >= domain.MaxSubQueries {
+			break
+		}
+		if strings.EqualFold(strings.TrimSpace(req.Query), focus) {
+			continue
+		}
+		out.SubQueries = append(out.SubQueries, domain.SubQuery{
+			Text: focus, Kind: domain.SubQueryDecomposed,
+			Reason: "exact entity or record identifier recovered from the question",
+		})
 	}
 
 	// An explicit mode list is honoured as given: a caller narrowing retrieval usually
@@ -63,7 +78,7 @@ func (p heuristicPlanner) Plan(_ context.Context, req domain.QueryRequest) domai
 	out.Modes = append(out.Modes, domain.ModeLexical)
 	out.Reasons[domain.ModeLexical] = "always runs: matches the words as written"
 
-	if looksLikeIdentifier(req.Query) {
+	if len(intent.FocusTerms) > 0 || looksLikeIdentifier(req.Query) {
 		out.Modes = append(out.Modes, domain.ModeExact)
 		out.Reasons[domain.ModeExact] =
 			"the query looks like an identifier, which stemming and embeddings both mangle"
@@ -77,7 +92,7 @@ func (p heuristicPlanner) Plan(_ context.Context, req domain.QueryRequest) domai
 	}
 
 	// Entity lookup is worth running on anything short enough to be a name.
-	if looksLikeName(req.Query) {
+	if len(intent.FocusTerms) > 0 || looksLikeName(req.Query) {
 		out.Modes = append(out.Modes, domain.ModeEntity)
 		out.Reasons[domain.ModeEntity] = "short query, so it may name an entity directly"
 	}
@@ -97,52 +112,7 @@ func (p heuristicPlanner) Plan(_ context.Context, req domain.QueryRequest) domai
 // These are exactly the queries that stemming destroys and embeddings have no useful
 // neighbourhood for, so recognizing them is what makes exact matching fire when it matters.
 func looksLikeIdentifier(query string) bool {
-	trimmed := strings.TrimSpace(query)
-	if trimmed == "" || len(trimmed) > 64 {
-		return false
-	}
-
-	fields := strings.Fields(trimmed)
-	if len(fields) > 3 {
-		return false
-	}
-
-	for _, field := range fields {
-		var hasDigit, hasLetter, hasSeparator, hasUpper bool
-		digits := 0
-		for _, r := range field {
-			if unicode.IsDigit(r) {
-				digits++
-			}
-			switch {
-			case unicode.IsDigit(r):
-				hasDigit = true
-			case unicode.IsUpper(r):
-				hasLetter, hasUpper = true, true
-			case unicode.IsLetter(r):
-				hasLetter = true
-			case r == '-' || r == '_' || r == '.' || r == '/' || r == ':':
-				hasSeparator = true
-			}
-		}
-		// A token mixing letters with digits, or carrying an internal separator alongside
-		// capitals, is far more likely a code than a word.
-		if hasDigit && (hasLetter || hasSeparator) {
-			return true
-		}
-		if hasUpper && hasSeparator {
-			return true
-		}
-		// A bare run of digits is how invoice, ticket, and part numbers are usually typed.
-		// Four is the threshold because shorter numbers are ordinary prose - "30 days",
-		// "top 10" - while longer ones are almost always something being looked up. A
-		// false positive here costs one extra query; a false negative means an identifier
-		// gets stemmed and lost.
-		if digits >= 4 && !hasLetter {
-			return true
-		}
-	}
-	return false
+	return len(ExtractIdentifiers(query)) > 0
 }
 
 // looksLikeName reports whether a query is short enough to plausibly be an entity name.
