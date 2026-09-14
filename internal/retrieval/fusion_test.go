@@ -47,6 +47,25 @@ func TestFuseRewardsAgreementBetweenRetrievers(t *testing.T) {
 	}
 }
 
+func TestFuseAggregatesRepeatedFindsFromOneRetriever(t *testing.T) {
+	first := hit(domain.ModeLexical, 2, 0.7, domain.SurfaceChunk, "same")
+	first.stream = 1
+	second := hit(domain.ModeLexical, 1, 0.5, domain.SurfaceChunk, "same")
+	second.stream = 2
+
+	items := fuse([]candidate{first, second}, DefaultWeights(), 10)
+	if len(items) != 1 || len(items[0].FoundBy) != 1 {
+		t.Fatalf("FoundBy must name retrievers once, got %+v", items)
+	}
+	if items[0].Ranks[domain.ModeLexical] != 1 {
+		t.Fatalf("expected best rank across query streams, got %d", items[0].Ranks[domain.ModeLexical])
+	}
+	if items[0].Signals["lexical_rrf"] != items[0].Score {
+		t.Fatalf("reported RRF contribution %v does not equal score %v",
+			items[0].Signals["lexical_rrf"], items[0].Score)
+	}
+}
+
 func TestFuseWeightsModesDifferently(t *testing.T) {
 	// An exact identifier match outranks a lexical match at the same position, because an
 	// identifier query has one right answer and prose does not.
@@ -100,6 +119,18 @@ func TestFuseDropsEachRetrieversWeakTail(t *testing.T) {
 	}, weights, 10)
 	if _, ok := find(items, "small-but-best"); !ok {
 		t.Fatal("scores must be compared within a retriever, not across retrievers")
+	}
+
+	// Rewritten queries from the same retriever are separate result streams too. Text
+	// rank for a one-word requirement is not calibrated against text rank for the full
+	// question, so the best hit from either search must survive its own weak-tail check.
+	original := hit(domain.ModeLexical, 1, 1.0, domain.SurfaceChunk, "original-query")
+	original.stream = 1
+	decomposed := hit(domain.ModeLexical, 1, 0.05, domain.SurfaceChunk, "decomposed-query")
+	decomposed.stream = 2
+	items = fuse([]candidate{original, decomposed}, weights, 10)
+	if _, ok := find(items, "decomposed-query"); !ok {
+		t.Fatal("the best result from an independent rewritten query was dropped")
 	}
 }
 

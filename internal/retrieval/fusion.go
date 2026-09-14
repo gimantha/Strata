@@ -152,15 +152,20 @@ func scoreQuality(candidates []candidate, weight float64) func(candidate) float6
 		return func(candidate) float64 { return 1 }
 	}
 
-	best := map[domain.RetrievalMode]float64{}
+	type streamKey struct {
+		mode   domain.RetrievalMode
+		stream int
+	}
+	best := map[streamKey]float64{}
 	for _, c := range candidates {
-		if c.score > best[c.mode] {
-			best[c.mode] = c.score
+		key := streamKey{mode: c.mode, stream: c.stream}
+		if c.score > best[key] {
+			best[key] = c.score
 		}
 	}
 
 	return func(c candidate) float64 {
-		top := best[c.mode]
+		top := best[streamKey{mode: c.mode, stream: c.stream}]
 		if top <= 0 {
 			// No usable magnitude information, so rank alone decides and every candidate
 			// from this retriever is treated equally.
@@ -188,23 +193,29 @@ func dropWeakTails(candidates []candidate, floor float64) []candidate {
 		return candidates
 	}
 
-	best := map[domain.RetrievalMode]float64{}
+	type streamKey struct {
+		mode   domain.RetrievalMode
+		stream int
+	}
+	best := map[streamKey]float64{}
 	for _, c := range candidates {
-		if c.score > best[c.mode] {
-			best[c.mode] = c.score
+		key := streamKey{mode: c.mode, stream: c.stream}
+		if c.score > best[key] {
+			best[key] = c.score
 		}
 	}
 
 	kept := make([]candidate, 0, len(candidates))
-	nextRank := map[domain.RetrievalMode]int{}
+	nextRank := map[streamKey]int{}
 	for _, c := range candidates {
+		key := streamKey{mode: c.mode, stream: c.stream}
 		// A retriever whose scores are all zero or negative carries no magnitude
 		// information, so everything it found is kept and rank alone decides.
-		if top := best[c.mode]; top > 0 && c.score < top*floor {
+		if top := best[key]; top > 0 && c.score < top*floor {
 			continue
 		}
-		nextRank[c.mode]++
-		c.rank = nextRank[c.mode]
+		nextRank[key]++
+		c.rank = nextRank[key]
 		kept = append(kept, c)
 	}
 	return kept
@@ -212,11 +223,15 @@ func dropWeakTails(candidates []candidate, floor float64) []candidate {
 
 // candidate is one retriever's view of a record before fusion.
 type candidate struct {
-	mode  domain.RetrievalMode
-	rank  int
-	score float64
-	hit   domain.Hit
-	path  *domain.GraphPath
+	mode domain.RetrievalMode
+	// stream identifies one retriever invocation. PostgreSQL text rank and vector
+	// similarity are meaningful within a query, but a score for one rewritten query is
+	// not calibrated against a score for another.
+	stream int
+	rank   int
+	score  float64
+	hit    domain.Hit
+	path   *domain.GraphPath
 }
 
 // fuse combines ranked candidate lists using weighted Reciprocal Rank Fusion.
@@ -273,10 +288,20 @@ func fuse(candidates []candidate, weights Weights, limit int) []domain.Retrieved
 		}
 
 		entry.item.Score += contribution
-		entry.item.Signals[string(c.mode)+"_rrf"] = contribution
-		entry.item.Signals[string(c.mode)+"_score"] = c.score
-		entry.item.Ranks[c.mode] = c.rank
-		entry.item.FoundBy = append(entry.item.FoundBy, c.mode)
+		// A retriever may find the same record through several rewritten queries. Its RRF
+		// signal is the sum that actually contributed to Score, while FoundBy remains the
+		// documented set of retrievers rather than a list of invocations.
+		rrfKey, scoreKey := string(c.mode)+"_rrf", string(c.mode)+"_score"
+		entry.item.Signals[rrfKey] += contribution
+		if c.score > entry.item.Signals[scoreKey] {
+			entry.item.Signals[scoreKey] = c.score
+		}
+		if prior, seen := entry.item.Ranks[c.mode]; !seen {
+			entry.item.Ranks[c.mode] = c.rank
+			entry.item.FoundBy = append(entry.item.FoundBy, c.mode)
+		} else if c.rank < prior {
+			entry.item.Ranks[c.mode] = c.rank
+		}
 
 		if c.path != nil && entry.item.Path == nil {
 			entry.item.Path = c.path

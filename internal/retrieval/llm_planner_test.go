@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -191,6 +192,22 @@ func TestLLMPlannerHonoursAnExplicitModeList(t *testing.T) {
 	}
 	if model.saw != "" {
 		t.Error("the model was called even though the caller had already chosen")
+	}
+}
+
+func TestEnrichPlanDoesNotExpandExplicitModes(t *testing.T) {
+	req := domain.QueryRequest{
+		Query: "show Acme ERR_7731X",
+		Modes: []domain.RetrievalMode{domain.ModeEntity},
+	}
+	plan := domain.RetrievalPlan{
+		Modes:   []domain.RetrievalMode{domain.ModeEntity},
+		Reasons: map[domain.RetrievalMode]string{domain.ModeEntity: "requested by caller"},
+	}
+
+	got := enrichPlan(plan, req, Interpret(req.Query))
+	if !slices.Equal(got.Modes, []domain.RetrievalMode{domain.ModeEntity}) {
+		t.Fatalf("explicit retrieval modes were expanded: %v", got.Modes)
 	}
 }
 

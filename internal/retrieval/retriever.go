@@ -146,7 +146,7 @@ func (r *Retriever) Query(ctx context.Context, req domain.QueryRequest) (domain.
 	// Graph is held back until every other search has run, because it expands from what the
 	// others found and seeds gathered from one sub-query are just as good a starting point
 	// for another (AGENTS.md section 19.5).
-	for _, sub := range plan.SubQueries {
+	for subIndex, sub := range plan.SubQueries {
 		searched := req
 		searched.Query = sub.Text
 
@@ -154,7 +154,12 @@ func (r *Retriever) Query(ctx context.Context, req domain.QueryRequest) (domain.
 		if err != nil {
 			return domain.QueryResult{}, err
 		}
-		for _, c := range found {
+		for i := range found {
+			// Scores and ranks are comparable within one retriever invocation, not across
+			// rewritten queries. Preserve the invocation so fusion can trim each result
+			// stream against its own best hit.
+			found[i].stream = subIndex + 1
+			c := found[i]
 			if c.hit.Surface == domain.SurfaceEntity {
 				seeds = append(seeds, domain.EntityID(c.hit.RecordID))
 			}
@@ -167,6 +172,9 @@ func (r *Retriever) Query(ctx context.Context, req domain.QueryRequest) (domain.
 			[]domain.RetrievalMode{domain.ModeGraph}, seeds)
 		if err != nil {
 			return domain.QueryResult{}, err
+		}
+		for i := range found {
+			found[i].stream = len(plan.SubQueries) + 1
 		}
 		candidates = append(candidates, found...)
 	}
@@ -361,7 +369,11 @@ func enrichPlan(plan domain.RetrievalPlan, req domain.QueryRequest, intent Inten
 			})
 		}
 	}
-	if len(intent.FocusTerms) > 0 || len(intent.EntityTerms) > 0 {
+	// An explicit mode list is a hard boundary. It is used both for callers that know
+	// which index is appropriate and for policy/evaluation paths that must prove one
+	// retriever in isolation. Anchors may refine what that retriever searches, but they
+	// must not silently enable another data-access path.
+	if len(req.Modes) == 0 && (len(intent.FocusTerms) > 0 || len(intent.EntityTerms) > 0) {
 		if !slices.Contains(plan.Modes, domain.ModeExact) {
 			plan.Modes = append(plan.Modes, domain.ModeExact)
 			plan.Reasons[domain.ModeExact] = "an exact identifier occurs inside the question"
