@@ -321,6 +321,13 @@ func (t *Tools) getContext(ctx context.Context, raw json.RawMessage) (callResult
 			}
 			entry["evidence_ids"] = ids
 		}
+		if len(citation.SupportAssertionIDs) > 0 {
+			ids := make([]string, 0, len(citation.SupportAssertionIDs))
+			for _, id := range citation.SupportAssertionIDs {
+				ids = append(ids, string(id))
+			}
+			entry["support_assertion_ids"] = ids
+		}
 		if citation.ValidFrom != nil {
 			entry["valid_from"] = citation.ValidFrom
 		}

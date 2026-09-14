@@ -14,9 +14,12 @@ const (
 	SurfaceEpisode   Surface = "episode"
 	SurfaceEntity    Surface = "entity"
 	SurfaceAssertion Surface = "assertion"
+	// SurfaceProof is a query-time deterministic conclusion over canonical assertions. It
+	// is never projected or persisted as observed knowledge.
+	SurfaceProof Surface = "proof"
 )
 
-var surfaces = []Surface{SurfaceChunk, SurfaceEpisode, SurfaceEntity, SurfaceAssertion}
+var surfaces = []Surface{SurfaceChunk, SurfaceEpisode, SurfaceEntity, SurfaceAssertion, SurfaceProof}
 
 func ParseSurface(s string) (Surface, error) { return parseEnum("surface", s, surfaces) }
 

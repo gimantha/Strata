@@ -54,12 +54,46 @@ func (f *fakeStore) ConflictMembers(_ context.Context, _ domain.WorkspaceID, id 
 func (f *fakeStore) QueryAssertions(_ context.Context, q domain.AssertionQuery) ([]domain.Assertion, error) {
 	var out []domain.Assertion
 	for _, subject := range q.SubjectIDs {
-		out = append(out, f.bySubject[subject]...)
+		for _, assertion := range f.bySubject[subject] {
+			if len(q.Predicates) > 0 && !stringIn(q.Predicates, assertion.Predicate.Name) {
+				continue
+			}
+			if q.ScopeKey != "" && q.ScopeKey != assertion.ScopeKey {
+				continue
+			}
+			if len(q.Statuses) > 0 && !statusIn(q.Statuses, assertion.Status) {
+				continue
+			}
+			if !q.IncludeSuperseded && len(q.Statuses) == 0 && q.KnownAt == nil && assertion.Status == domain.AssertionSuperseded {
+				continue
+			}
+			if q.ValidAt != nil && !assertion.ValidAt(*q.ValidAt) {
+				continue
+			}
+			out = append(out, assertion)
+		}
 	}
 	if q.Limit > 0 && len(out) > q.Limit {
 		out = out[:q.Limit]
 	}
 	return out, nil
+}
+
+func stringIn(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
+}
+func statusIn(values []domain.AssertionStatus, want domain.AssertionStatus) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
 }
 
 func (f *fakeStore) GetEntity(_ context.Context, _ domain.WorkspaceID, id domain.EntityID) (domain.Entity, error) {
@@ -288,6 +322,49 @@ func TestDecisionTraceExpandsSupportingAssertions(t *testing.T) {
 	}
 	if !foundRequired {
 		t.Fatal("supporting premise was not identified in the selection trace")
+	}
+}
+
+func TestTypedComparisonProducesExactCitedDelta(t *testing.T) {
+	c := newCorpus()
+	project := c.entity("Project-001")
+	oldID := c.claim(project, "BUDGET", "100", claimOptions{score: .08, status: domain.AssertionSuperseded})
+	newID := c.claim(project, "BUDGET", "125", claimOptions{score: .09})
+	old := c.store.assertions[oldID]
+	old.Object = domain.ObjectOfInteger(100)
+	old.Temporal.RecordedAt = time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	newer := c.store.assertions[newID]
+	newer.Object = domain.ObjectOfInteger(125)
+	newer.Temporal.RecordedAt = time.Date(2026, 2, 1, 0, 0, 0, 0, time.UTC)
+	c.store.assertions[oldID], c.store.assertions[newID] = old, newer
+	c.store.chains[oldID] = domain.ProvenanceChain{Assertion: old, Subject: c.store.entities[project], Links: c.store.chains[oldID].Links}
+	c.store.chains[newID] = domain.ProvenanceChain{Assertion: newer, Subject: c.store.entities[project], Links: c.store.chains[newID].Links}
+	c.store.bySubject[project] = []domain.Assertion{old, newer}
+
+	req := c.request(1400)
+	req.Query = "What was the budget increase for Project-001?"
+	block, err := c.assembler(Options{}).Assemble(t.Context(), req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(block.Text, "exact delta 25") || !strings.Contains(block.Text, "proof over assertions") {
+		t.Fatalf("typed comparison proof missing:\n%s", block.Text)
+	}
+}
+
+func TestAbsenceProofStatesItsBoundedCheck(t *testing.T) {
+	c := newCorpus()
+	caseID := c.entity("CASE-42")
+	past := time.Date(2026, 2, 1, 0, 0, 0, 0, time.UTC)
+	c.claim(caseID, "OWNER", "Alice", claimOptions{score: .2, validTo: &past})
+	req := c.request(1200)
+	req.Query = "Is there no successor for CASE-42 after expiry?"
+	block, err := c.assembler(Options{}).Assemble(t.Context(), req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(block.Text, "No active owner assertion was found") || !strings.Contains(block.Text, "the check inspected 1 historical assertion") {
+		t.Fatalf("bounded absence proof missing:\n%s", block.Text)
 	}
 }
 

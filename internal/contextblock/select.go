@@ -70,6 +70,7 @@ func DefaultWeights() Weights {
 			domain.SectionGraph:     0.12,
 			domain.SectionHistory:   0.08,
 			domain.SectionConflicts: 0.15,
+			domain.SectionProofs:    0.20,
 		},
 	}
 }

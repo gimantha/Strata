@@ -180,6 +180,13 @@ func citationsJSON(citations []domain.Citation) []map[string]any {
 			}
 			entry["evidence_ids"] = evidence
 		}
+		if len(citation.SupportAssertionIDs) > 0 {
+			supports := make([]string, 0, len(citation.SupportAssertionIDs))
+			for _, id := range citation.SupportAssertionIDs {
+				supports = append(supports, string(id))
+			}
+			entry["support_assertion_ids"] = supports
+		}
 		if citation.ChunkID != nil {
 			entry["chunk_id"] = string(*citation.ChunkID)
 		}

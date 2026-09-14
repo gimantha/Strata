@@ -22,10 +22,12 @@ const (
 	SectionExcerpts ContextSection = "excerpts"
 	// SectionConflicts holds contradictions the ledger recorded rather than resolved.
 	SectionConflicts ContextSection = "conflicts"
+	// SectionProofs contains deterministic conclusions whose complete inputs are cited.
+	SectionProofs ContextSection = "proofs"
 )
 
 var contextSections = []ContextSection{
-	SectionFacts, SectionHistory, SectionGraph, SectionExcerpts, SectionConflicts,
+	SectionFacts, SectionHistory, SectionGraph, SectionExcerpts, SectionConflicts, SectionProofs,
 }
 
 func ParseContextSection(s string) (ContextSection, error) {
@@ -202,8 +204,10 @@ type Citation struct {
 
 	AssertionID *AssertionID
 	EvidenceIDs []EvidenceID
-	ChunkID     *ChunkID
-	EpisodeID   *EpisodeID
+	// SupportAssertionIDs are the complete canonical inputs to a query-time proof.
+	SupportAssertionIDs []AssertionID
+	ChunkID             *ChunkID
+	EpisodeID           *EpisodeID
 
 	SourceEventID SourceEventID
 	SourceID      SourceID
@@ -233,7 +237,7 @@ type Citation struct {
 // Excerpts are quoted source, cited to their chunk and episode; everything else is a claim
 // and must name the assertion and the evidence under it. Phase 8's acceptance criterion is
 // exactly this distinction.
-func (c Citation) Factual() bool { return c.Surface != SurfaceChunk }
+func (c Citation) Factual() bool { return c.Surface == SurfaceAssertion }
 
 // BudgetReport accounts for every token in the block.
 type BudgetReport struct {

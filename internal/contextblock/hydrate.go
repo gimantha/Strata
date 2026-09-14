@@ -38,6 +38,7 @@ type candidate struct {
 	related    bool
 	assertion  *domain.Assertion
 	supportIDs []domain.AssertionID
+	derivation *domain.Derivation
 
 	// subjects and predicate drive coverage: a second claim about an entity already
 	// covered adds less than the first claim about a new one.
@@ -148,7 +149,11 @@ func (h *hydrator) hydrate(ctx context.Context, items []domain.RetrievedItem) ([
 				"surface "+string(item.Surface)+" has no citable form")
 		}
 	}
-	return h.expandRequirements(ctx, out, seen)
+	expanded, err := h.expandRequirements(ctx, out, seen)
+	if err != nil {
+		return nil, err
+	}
+	return h.deriveProofs(ctx, expanded)
 }
 
 const RequirementExpansionLimit = 16
@@ -325,6 +330,7 @@ func (h *hydrator) fromAssertion(ctx context.Context, item domain.RetrievedItem,
 		focus:      focusScore(renderClaim(chain.Subject.CanonicalName, assertion, objectName), h.focusTerms),
 		related:    item.Path != nil,
 		assertion:  &assertion,
+		derivation: chain.Derivation,
 
 		subjects:  []domain.EntityID{assertion.SubjectID},
 		predicate: assertion.Predicate.Name,
