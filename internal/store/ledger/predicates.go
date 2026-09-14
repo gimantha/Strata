@@ -2,6 +2,7 @@ package ledger
 
 import (
 	"context"
+	"strings"
 
 	"github.com/jackc/pgx/v5"
 
@@ -67,9 +68,21 @@ func (s *Store) EnsurePredicate(ctx context.Context, ws domain.WorkspaceID, name
 func (s *Store) GetPredicateByName(ctx context.Context, ws domain.WorkspaceID, name string) (domain.PredicateDefinition, error) {
 	const op = "ledger.GetPredicateByName"
 
+	normalized := domain.NormalizePredicateName(name)
 	row := s.pool.QueryRow(ctx, `SELECT `+predicateColumns+` FROM predicates
-		WHERE workspace_id = $1 AND name = $2`, ws, domain.NormalizePredicateName(name))
-	return scanPredicate(row, op)
+		WHERE workspace_id = $1 AND name = $2`, ws, normalized)
+	def, err := scanPredicate(row, op)
+	if err != nil && domain.IsCode(err, domain.CodeNotFound) {
+		row = s.pool.QueryRow(ctx, `SELECT `+prefixedPredicateColumns("p")+`
+			FROM predicate_aliases pa JOIN predicates p ON p.id = pa.predicate_id
+			WHERE pa.workspace_id = $1 AND pa.normalized = $2`, ws, normalized)
+		def, err = scanPredicate(row, op)
+	}
+	if err != nil {
+		return domain.PredicateDefinition{}, err
+	}
+	def.Aliases, err = s.listPredicateAliases(ctx, ws, def.ID)
+	return def, err
 }
 
 // GetPredicate loads a registry entry by identifier.
@@ -78,7 +91,12 @@ func (s *Store) GetPredicate(ctx context.Context, ws domain.WorkspaceID, id doma
 
 	row := s.pool.QueryRow(ctx, `SELECT `+predicateColumns+` FROM predicates
 		WHERE workspace_id = $1 AND id = $2`, ws, id)
-	return scanPredicate(row, op)
+	def, err := scanPredicate(row, op)
+	if err != nil {
+		return domain.PredicateDefinition{}, err
+	}
+	def.Aliases, err = s.listPredicateAliases(ctx, ws, def.ID)
+	return def, err
 }
 
 // DefinePredicate creates or updates a predicate's semantics.
@@ -159,6 +177,28 @@ func (s *Store) DefinePredicate(ctx context.Context, def domain.PredicateDefinit
 		if err != nil {
 			return err
 		}
+		for _, alias := range def.Aliases {
+			normalized := domain.NormalizePredicateName(alias)
+			if normalized == "" || normalized == stored.Name {
+				continue
+			}
+			var owner domain.PredicateID
+			err := tx.QueryRow(ctx, `
+					INSERT INTO predicate_aliases
+					    (id, workspace_id, predicate_id, alias, normalized, confidence, created_by)
+					VALUES ($1,$2,$3,$4,$5,1,$6)
+					ON CONFLICT (workspace_id, normalized) DO UPDATE SET alias = EXCLUDED.alias
+					WHERE predicate_aliases.predicate_id = EXCLUDED.predicate_id
+					RETURNING predicate_id`, domain.NewUUIDString(), def.WorkspaceID, stored.ID,
+				alias, normalized, actor).Scan(&owner)
+			if err != nil {
+				if isNoRows(err) {
+					return domain.Errorf(domain.CodeConflict, op,
+						"predicate alias %q already belongs to another predicate", alias)
+				}
+				return mapError(err, op, "cannot define predicate alias")
+			}
+		}
 		return s.appendAudit(ctx, tx, AuditEntry{
 			WorkspaceID: def.WorkspaceID,
 			PrincipalID: actor,
@@ -176,6 +216,10 @@ func (s *Store) DefinePredicate(ctx context.Context, def domain.PredicateDefinit
 	if err != nil {
 		return domain.PredicateDefinition{}, err
 	}
+	stored.Aliases, err = s.listPredicateAliases(ctx, def.WorkspaceID, stored.ID)
+	if err != nil {
+		return domain.PredicateDefinition{}, err
+	}
 	return stored, nil
 }
 
@@ -188,7 +232,6 @@ func (s *Store) ListPredicates(ctx context.Context, ws domain.WorkspaceID) ([]do
 	if err != nil {
 		return nil, mapError(err, op, "cannot list predicates")
 	}
-	defer rows.Close()
 
 	var out []domain.PredicateDefinition
 	for rows.Next() {
@@ -198,7 +241,68 @@ func (s *Store) ListPredicates(ctx context.Context, ws domain.WorkspaceID) ([]do
 		}
 		out = append(out, def)
 	}
-	return out, mapError(rows.Err(), op, "cannot list predicates")
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return nil, mapError(err, op, "cannot list predicates")
+	}
+	rows.Close()
+	aliases, err := s.allPredicateAliases(ctx, ws)
+	if err != nil {
+		return nil, err
+	}
+	for i := range out {
+		out[i].Aliases = aliases[out[i].ID]
+	}
+	return out, nil
+}
+
+func prefixedPredicateColumns(alias string) string {
+	parts := []string{"id", "workspace_id", "name", "description", "subject_types", "object_types",
+		"object_kinds", "functional", "inverse_functional", "is_symmetric", "transitive", "temporal_policy",
+		"conflict_policy", "default_memory_kind", "sensitivity", "status", "version", "created_at", "updated_at"}
+	for i := range parts {
+		parts[i] = alias + "." + parts[i]
+	}
+	return strings.Join(parts, ", ")
+}
+
+func (s *Store) listPredicateAliases(ctx context.Context, ws domain.WorkspaceID, id domain.PredicateID) ([]string, error) {
+	const op = "ledger.listPredicateAliases"
+	rows, err := s.pool.Query(ctx, `SELECT alias FROM predicate_aliases
+		WHERE workspace_id = $1 AND predicate_id = $2 ORDER BY normalized`, ws, id)
+	if err != nil {
+		return nil, mapError(err, op, "cannot list predicate aliases")
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var alias string
+		if err := rows.Scan(&alias); err != nil {
+			return nil, mapError(err, op, "cannot scan predicate alias")
+		}
+		out = append(out, alias)
+	}
+	return out, mapError(rows.Err(), op, "cannot list predicate aliases")
+}
+
+func (s *Store) allPredicateAliases(ctx context.Context, ws domain.WorkspaceID) (map[domain.PredicateID][]string, error) {
+	const op = "ledger.allPredicateAliases"
+	rows, err := s.pool.Query(ctx, `SELECT predicate_id, alias FROM predicate_aliases
+		WHERE workspace_id = $1 ORDER BY predicate_id, normalized`, ws)
+	if err != nil {
+		return nil, mapError(err, op, "cannot list predicate aliases")
+	}
+	defer rows.Close()
+	out := map[domain.PredicateID][]string{}
+	for rows.Next() {
+		var id domain.PredicateID
+		var alias string
+		if err := rows.Scan(&id, &alias); err != nil {
+			return nil, mapError(err, op, "cannot scan predicate alias")
+		}
+		out[id] = append(out[id], alias)
+	}
+	return out, mapError(rows.Err(), op, "cannot list predicate aliases")
 }
 
 func scanPredicate(row pgx.Row, op string) (domain.PredicateDefinition, error) {

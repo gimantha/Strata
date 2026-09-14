@@ -87,10 +87,14 @@ type PredicateRef struct {
 // PredicateDefinition gives a predicate the semantics that make contradiction handling
 // something other than guesswork (AGENTS.md section 8).
 type PredicateDefinition struct {
-	ID                PredicateID
-	WorkspaceID       WorkspaceID
-	Name              string
-	Description       string
+	ID          PredicateID
+	WorkspaceID WorkspaceID
+	Name        string
+	Description string
+	// Aliases are alternate extraction spellings that resolve to this canonical predicate.
+	// They affect future commits only; existing immutable assertions keep the predicate
+	// version under which they were accepted.
+	Aliases           []string
 	SubjectTypes      []string
 	ObjectTypes       []string
 	ObjectKinds       []ObjectKind
@@ -106,6 +110,34 @@ type PredicateDefinition struct {
 	Version           int
 	CreatedAt         time.Time
 	UpdatedAt         time.Time
+}
+
+// PredicateAlias maps extraction vocabulary to one canonical predicate. Mappings are
+// explicit workspace data rather than a global synonym list: "owner" and "lead" can have
+// different semantics in different domains.
+type PredicateAlias struct {
+	ID          string
+	WorkspaceID WorkspaceID
+	PredicateID PredicateID
+	Alias       string
+	Normalized  string
+	Confidence  float64
+	CreatedBy   PrincipalID
+	CreatedAt   time.Time
+}
+
+func (a PredicateAlias) Validate() error {
+	const op = "domain.PredicateAlias.Validate"
+	if IsZero(a.WorkspaceID) || IsZero(a.PredicateID) {
+		return Errorf(CodeInvalidArgument, op, "workspace_id and predicate_id are required")
+	}
+	if NormalizePredicateName(a.Alias) == "" {
+		return Errorf(CodeInvalidArgument, op, "alias is required")
+	}
+	if a.Confidence < 0 || a.Confidence > 1 {
+		return Errorf(CodeInvalidArgument, op, "confidence must be between 0 and 1")
+	}
+	return nil
 }
 
 // NormalizePredicateName produces the canonical registry form: UPPER_SNAKE_CASE.
@@ -840,9 +872,13 @@ type ChunkProvenance struct {
 	ObservedAt      time.Time
 	EpisodeLocator  Locator
 
-	SourceEventID   SourceEventID
-	SourceEventTime *time.Time
-	RecordedAt      time.Time
+	SourceEventID    SourceEventID
+	SourceExternalID string
+	IdempotencyKey   string
+	SourceSequence   string
+	SourceVersion    string
+	SourceEventTime  *time.Time
+	RecordedAt       time.Time
 
 	SourceID   SourceID
 	SourceName string

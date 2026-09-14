@@ -154,6 +154,7 @@ func (s *Server) handleListEntities(w http.ResponseWriter, r *http.Request) {
 type definePredicateRequest struct {
 	Name              string   `json:"name"`
 	Description       string   `json:"description,omitempty"`
+	Aliases           []string `json:"aliases,omitempty"`
 	SubjectTypes      []string `json:"subject_types,omitempty"`
 	ObjectTypes       []string `json:"object_types,omitempty"`
 	ObjectKinds       []string `json:"object_kinds,omitempty"`
@@ -172,6 +173,7 @@ type predicateResponse struct {
 	ID                string   `json:"id"`
 	Name              string   `json:"name"`
 	Description       string   `json:"description,omitempty"`
+	Aliases           []string `json:"aliases,omitempty"`
 	SubjectTypes      []string `json:"subject_types,omitempty"`
 	ObjectTypes       []string `json:"object_types,omitempty"`
 	ObjectKinds       []string `json:"object_kinds,omitempty"`
@@ -196,6 +198,7 @@ func toPredicateResponse(p domain.PredicateDefinition) predicateResponse {
 		ID:                string(p.ID),
 		Name:              p.Name,
 		Description:       p.Description,
+		Aliases:           p.Aliases,
 		SubjectTypes:      p.SubjectTypes,
 		ObjectTypes:       p.ObjectTypes,
 		ObjectKinds:       kinds,
@@ -230,6 +233,7 @@ func (s *Server) handleDefinePredicate(w http.ResponseWriter, r *http.Request) {
 		WorkspaceID:       ws,
 		Name:              req.Name,
 		Description:       req.Description,
+		Aliases:           req.Aliases,
 		SubjectTypes:      req.SubjectTypes,
 		ObjectTypes:       req.ObjectTypes,
 		Functional:        req.Functional,

@@ -272,7 +272,7 @@ func TestIntegrationPredicateRegistryThroughTheAPI(t *testing.T) {
 
 	status, body := h.do(t, http.MethodPost, "/v1/workspaces/"+ws+"/predicates", owner, map[string]any{
 		"name": "current_plan", "functional": true, "conflict_policy": "manual",
-		"object_kinds": []string{"symbol"},
+		"object_kinds": []string{"symbol"}, "aliases": []string{"has current plan"},
 	}, nil)
 	if status != http.StatusCreated {
 		t.Fatalf("define predicate returned %d: %s", status, body)
@@ -283,6 +283,9 @@ func TestIntegrationPredicateRegistryThroughTheAPI(t *testing.T) {
 	}
 	if defined["version"].(float64) != 1 {
 		t.Fatalf("a new predicate starts at version 1: %s", body)
+	}
+	if aliases := defined["aliases"].([]any); len(aliases) != 1 || aliases[0] != "has current plan" {
+		t.Fatalf("predicate aliases were not returned: %s", body)
 	}
 
 	// Changing semantics bumps the version so existing claims keep their meaning.
@@ -323,6 +326,27 @@ func TestIntegrationPredicateRegistryThroughTheAPI(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("the invented predicate should appear in the registry: %s", body)
+	}
+
+	// An alias is resolved before EnsurePredicate can create a near-duplicate. The stored
+	// assertion therefore shares the canonical predicate identity and its temporal rules.
+	status, body = h.do(t, http.MethodPost,
+		"/v1/graph-spaces/"+string(h.fixture.Primary.GraphSpace.ID)+"/assertions", owner,
+		map[string]any{
+			"source_event_id": eventID,
+			"claims": []map[string]any{{
+				"subject":   map[string]any{"name": "Acme", "type": "organization"},
+				"predicate": "has current plan",
+				"object":    map[string]any{"kind": "symbol", "text": "PRO"},
+				"evidence":  []map[string]any{{"episode_id": episodeID}},
+			}},
+		}, nil)
+	if status != http.StatusCreated {
+		t.Fatalf("assertion using predicate alias returned %d: %s", status, body)
+	}
+	assertion := decode(t, body)["assertions"].([]any)[0].(map[string]any)
+	if assertion["predicate"] != "CURRENT_PLAN" {
+		t.Fatalf("alias was not committed as the canonical predicate: %s", body)
 	}
 }
 
