@@ -376,11 +376,15 @@ func buildLexicalSearch(op string, q domain.LexicalQuery) (string, []any, error)
 		       ORDER BY score DESC, length(l.content), l.record_id
 		       LIMIT $` + strconv.Itoa(len(args))
 	} else {
-		where = append(where, fmt.Sprintf("l.search_vector @@ websearch_to_tsquery('english', $%d)", term))
+		queryExpression := "websearch_to_tsquery('english', $" + strconv.Itoa(term) + ")"
+		if q.MatchAny {
+			queryExpression = "websearch_to_tsquery('english', regexp_replace(trim($" + strconv.Itoa(term) + "), E'\\\\s+', ' OR ', 'g'))"
+		}
+		where = append(where, "l.search_vector @@ "+queryExpression)
 		// ts_rank_cd weighs term proximity, which ranks a passage discussing the terms
 		// together above one that merely mentions them.
 		sql = `SELECT l.surface, l.record_id, l.content,
-		              ts_rank_cd(l.search_vector, websearch_to_tsquery('english', $` + strconv.Itoa(term) + `)) AS score,
+		              ts_rank_cd(l.search_vector, ` + queryExpression + `) AS score,
 		              l.decay_starts_at
 		       FROM lexical_records l
 		       WHERE ` + strings.Join(where, " AND ") + `

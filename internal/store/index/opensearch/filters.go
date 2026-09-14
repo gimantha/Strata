@@ -25,6 +25,10 @@ func matchClause(q domain.LexicalQuery) (clause []any, empty bool) {
 		}}, false
 	}
 
+	operator := "and"
+	if q.MatchAny {
+		operator = "or"
+	}
 	return []any{map[string]any{
 		"match": map[string]any{
 			"content": map[string]any{
@@ -33,7 +37,7 @@ func matchClause(q domain.LexicalQuery) (clause []any, empty bool) {
 				// conjunction. The OpenSearch default is OR, which would return documents
 				// sharing one common word with the query and make the two engines disagree
 				// about almost every multi-word search.
-				"operator": "and",
+				"operator": operator,
 			},
 		},
 	}}, false

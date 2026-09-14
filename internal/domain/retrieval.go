@@ -188,6 +188,9 @@ type RetrievalPlan struct {
 	// are recorded because a long natural-language question may be searched several ways,
 	// while these anchors must remain visible in every explanation of the plan.
 	FocusTerms []string
+	// EntityTerms are likely names extracted from a longer question. Unlike FocusTerms
+	// they seed canonical entity lookup but do not act as a hard context filter.
+	EntityTerms []string
 	// Temporal is the effective temporal intent after deterministic inference and explicit
 	// caller filters have been combined. Explicit filters always win.
 	Temporal TemporalQuery

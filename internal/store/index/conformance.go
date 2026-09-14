@@ -365,6 +365,28 @@ func RunLexicalConformance(t *testing.T, name string, idx Lexical, f Fixture) {
 		}
 	})
 
+	t.Run(name+"/match any is an explicit relaxation", func(t *testing.T) {
+		ctx := t.Context()
+		record := lexicalRecord(f.Primary, "quasar calibration procedure")
+		if err := idx.Upsert(ctx, []domain.ProjectedRecord{record}); err != nil {
+			t.Fatalf("upsert: %v", err)
+		}
+		strict, err := idx.Search(ctx, domain.LexicalQuery{Scope: f.Primary, Text: "quasar absentword", Limit: 10})
+		if err != nil {
+			t.Fatalf("strict search: %v", err)
+		}
+		if containsRecord(strict, record.RecordID) {
+			t.Fatal("default lexical search must remain conjunctive")
+		}
+		relaxed, err := idx.Search(ctx, domain.LexicalQuery{Scope: f.Primary, Text: "quasar absentword", MatchAny: true, Limit: 10})
+		if err != nil {
+			t.Fatalf("relaxed search: %v", err)
+		}
+		if !containsRecord(relaxed, record.RecordID) {
+			t.Fatal("match-any relaxation did not recover a partial lexical match")
+		}
+	})
+
 	t.Run(name+"/upsert is idempotent", func(t *testing.T) {
 		ctx := t.Context()
 		record := lexicalRecord(f.Primary,

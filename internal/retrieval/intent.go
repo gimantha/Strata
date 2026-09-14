@@ -15,6 +15,7 @@ import (
 // rewrites, but identifiers and explicit timestamps never need a model.
 type Intent struct {
 	FocusTerms   []string
+	EntityTerms  []string
 	Temporal     domain.TemporalQuery
 	Requirements []string
 }
@@ -28,10 +29,11 @@ var (
 // Interpret recovers exact anchors, explicit time coordinates, and broad answer
 // requirements. It is provider-independent and safe to run on every query.
 func Interpret(query string) Intent {
-	intent := Intent{FocusTerms: ExtractIdentifiers(query)}
+	intent := Intent{FocusTerms: ExtractIdentifiers(query), EntityTerms: ExtractEntityTerms(query)}
 	for _, match := range quotedInText.FindAllStringSubmatch(query, 4) {
 		if len(match) == 2 {
 			intent.FocusTerms = appendUniqueFold(intent.FocusTerms, strings.TrimSpace(match[1]))
+			intent.EntityTerms = appendUniqueFold(intent.EntityTerms, strings.TrimSpace(match[1]))
 		}
 	}
 
@@ -82,6 +84,65 @@ func Interpret(query string) Intent {
 	}
 	intent.Requirements = uniqueSorted(intent.Requirements)
 	return intent
+}
+
+// ExtractEntityTerms finds proper-name phrases inside a question so canonical entity
+// lookup receives "Alice Chen" rather than "why did Alice Chen change roles". It is a
+// retrieval hint only; entity resolution still decides whether the name exists.
+func ExtractEntityTerms(query string) []string {
+	clean := strings.NewReplacer("?", " ", "!", " ", ",", " ", ".", " ", "(", " ", ")", " ").Replace(query)
+	words := strings.Fields(clean)
+	var out []string
+	for i := 0; i < len(words); {
+		word := strings.Trim(words[i], "\"'“”")
+		if !properNameWord(word) {
+			i++
+			continue
+		}
+		start := i
+		phrase := []string{word}
+		i++
+		for i < len(words) && len(phrase) < 4 {
+			next := strings.Trim(words[i], "\"'“”")
+			if !properNameWord(next) {
+				break
+			}
+			phrase = append(phrase, next)
+			i++
+		}
+		candidate := strings.Join(phrase, " ")
+		if start == 0 && questionWord(strings.ToLower(candidate)) {
+			continue
+		}
+		out = appendUniqueFold(out, candidate)
+	}
+	return out
+}
+
+func properNameWord(word string) bool {
+	if word == "" || identifierToken(word) || isTimeToken(word) {
+		return false
+	}
+	runes := []rune(word)
+	if !unicode.IsUpper(runes[0]) {
+		return false
+	}
+	upper := 0
+	for _, r := range runes {
+		if unicode.IsUpper(r) {
+			upper++
+		}
+	}
+	return upper < len(runes) || len(runes) > 4
+}
+
+func questionWord(value string) bool {
+	switch value {
+	case "who", "what", "when", "where", "why", "how", "which", "is", "did", "does", "show", "find", "list":
+		return true
+	default:
+		return false
+	}
 }
 
 // ExtractIdentifiers returns identifier-like tokens wherever they occur in a sentence.

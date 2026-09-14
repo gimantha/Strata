@@ -122,7 +122,11 @@ type LexicalQuery struct {
 	// Exact switches from stemmed full-text matching to substring matching, for
 	// identifiers, error codes, and part numbers that stemming mangles.
 	Exact bool
-	Limit int
+	// MatchAny relaxes prose search from conjunction to disjunction. Retrieval uses it
+	// only after a strict search returns nothing, so common words cannot displace a real
+	// all-term match.
+	MatchAny bool
+	Limit    int
 }
 
 // DecayWeight is what a hit's lifecycle says about its ranking weight, defaulting to full

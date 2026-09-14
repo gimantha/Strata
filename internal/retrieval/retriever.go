@@ -282,6 +282,18 @@ func (r *Retriever) lexical(ctx context.Context, req domain.QueryRequest, exact 
 	if err != nil {
 		return nil, err
 	}
+	if !exact && len(hits) == 0 && len(strings.Fields(req.Query)) > 1 {
+		hits, err = r.indexes.Lexical.Search(ctx, domain.LexicalQuery{
+			Scope: req.Scope, Text: req.Query, Surfaces: req.Filters.Surfaces,
+			ValidAt: req.Temporal.ValidAt, Statuses: statusStrings(req.Filters.Statuses),
+			Classification: req.Filters.Classifications, MemoryKinds: req.Filters.MemoryKinds,
+			EntityTypes: req.Filters.EntityTypes, Policy: req.Policy, ActiveAt: req.Temporal.ActiveAt,
+			MatchAny: true, Limit: req.Limit,
+		})
+		if err != nil {
+			return nil, err
+		}
+	}
 	return toCandidates(mode, hits), nil
 }
 
@@ -314,7 +326,9 @@ func (r *Retriever) vector(ctx context.Context, req domain.QueryRequest) ([]cand
 		EntityTypes:    req.Filters.EntityTypes,
 		Policy:         req.Policy,
 		ActiveAt:       req.Temporal.ActiveAt,
-		Limit:          req.Limit * 3,
+		// A vector tail is semantically plausible noise. Keep it shallow so exact,
+		// lexical, entity, and graph evidence are not crowded out before fusion.
+		Limit: req.Limit,
 	})
 	if err != nil {
 		return nil, err
@@ -326,12 +340,13 @@ func (r *Retriever) vector(ctx context.Context, req domain.QueryRequest) ([]cand
 // a query. A planner must never lose an identifier or explicit timestamp the user supplied.
 func enrichPlan(plan domain.RetrievalPlan, req domain.QueryRequest, intent Intent) domain.RetrievalPlan {
 	plan.FocusTerms = append([]string(nil), intent.FocusTerms...)
+	plan.EntityTerms = append([]string(nil), intent.EntityTerms...)
 	plan.Temporal = req.Temporal
 	plan.Requirements = append([]string(nil), intent.Requirements...)
 	if plan.Reasons == nil {
 		plan.Reasons = map[domain.RetrievalMode]string{}
 	}
-	for _, focus := range intent.FocusTerms {
+	for _, focus := range append(append([]string(nil), intent.FocusTerms...), intent.EntityTerms...) {
 		found := false
 		for _, sub := range plan.SubQueries {
 			if strings.EqualFold(strings.TrimSpace(sub.Text), focus) {
@@ -346,7 +361,7 @@ func enrichPlan(plan domain.RetrievalPlan, req domain.QueryRequest, intent Inten
 			})
 		}
 	}
-	if len(intent.FocusTerms) > 0 {
+	if len(intent.FocusTerms) > 0 || len(intent.EntityTerms) > 0 {
 		if !slices.Contains(plan.Modes, domain.ModeExact) {
 			plan.Modes = append(plan.Modes, domain.ModeExact)
 			plan.Reasons[domain.ModeExact] = "an exact identifier occurs inside the question"
@@ -513,6 +528,9 @@ func Explain(plan domain.RetrievalPlan) []string {
 	var out []string
 	if len(plan.FocusTerms) > 0 {
 		out = append(out, "focus: "+strings.Join(plan.FocusTerms, ", "))
+	}
+	if len(plan.EntityTerms) > 0 {
+		out = append(out, "entity anchors: "+strings.Join(plan.EntityTerms, ", "))
 	}
 	if len(plan.Requirements) > 0 {
 		out = append(out, "answer requires: "+strings.Join(plan.Requirements, ", "))

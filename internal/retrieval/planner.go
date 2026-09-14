@@ -42,8 +42,19 @@ func (p heuristicPlanner) Plan(_ context.Context, req domain.QueryRequest) domai
 			Reason: "the question as asked",
 		}},
 		FocusTerms:   append([]string(nil), intent.FocusTerms...),
+		EntityTerms:  append([]string(nil), intent.EntityTerms...),
 		Temporal:     MergeTemporal(req.Temporal, intent.Temporal),
 		Requirements: append([]string(nil), intent.Requirements...),
+	}
+	for _, name := range intent.EntityTerms {
+		if len(out.SubQueries) >= domain.MaxSubQueries {
+			break
+		}
+		if containsSubQuery(out.SubQueries, name) {
+			continue
+		}
+		out.SubQueries = append(out.SubQueries, domain.SubQuery{Text: name, Kind: domain.SubQueryDecomposed,
+			Reason: "proper-name phrase recovered from the question"})
 	}
 	for _, focus := range intent.FocusTerms {
 		if len(out.SubQueries) >= domain.MaxSubQueries {
@@ -92,7 +103,7 @@ func (p heuristicPlanner) Plan(_ context.Context, req domain.QueryRequest) domai
 	}
 
 	// Entity lookup is worth running on anything short enough to be a name.
-	if len(intent.FocusTerms) > 0 || looksLikeName(req.Query) {
+	if len(intent.FocusTerms) > 0 || len(intent.EntityTerms) > 0 || looksLikeName(req.Query) {
 		out.Modes = append(out.Modes, domain.ModeEntity)
 		out.Reasons[domain.ModeEntity] = "short query, so it may name an entity directly"
 	}
@@ -104,6 +115,15 @@ func (p heuristicPlanner) Plan(_ context.Context, req domain.QueryRequest) domai
 	out.Reasons[domain.ModeGraph] = "expands from entities the other retrievers found"
 
 	return out
+}
+
+func containsSubQuery(values []domain.SubQuery, text string) bool {
+	for _, value := range values {
+		if strings.EqualFold(strings.TrimSpace(value.Text), strings.TrimSpace(text)) {
+			return true
+		}
+	}
+	return false
 }
 
 // looksLikeIdentifier reports whether a query resembles a code, key, or part number rather

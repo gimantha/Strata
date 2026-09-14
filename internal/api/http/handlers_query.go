@@ -151,6 +151,7 @@ func (s *Server) handleQuery(w http.ResponseWriter, r *http.Request) {
 			"planner":      result.Plan.Planner,
 			"sub_queries":  result.Plan.SubQueries,
 			"focus_terms":  result.Plan.FocusTerms,
+			"entity_terms": result.Plan.EntityTerms,
 			"requirements": result.Plan.Requirements,
 			"temporal": map[string]any{
 				"valid_at":  result.Plan.Temporal.ValidAt,

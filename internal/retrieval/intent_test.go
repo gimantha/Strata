@@ -15,6 +15,13 @@ func TestInterpretPreservesIdentifiersInsideQuestions(t *testing.T) {
 	}
 }
 
+func TestInterpretFindsNamesInsideQuestions(t *testing.T) {
+	intent := Interpret("Why did Alice Chen leave Acme Corporation?")
+	if len(intent.EntityTerms) != 2 || intent.EntityTerms[0] != "Alice Chen" || intent.EntityTerms[1] != "Acme Corporation" {
+		t.Fatalf("entity terms = %v", intent.EntityTerms)
+	}
+}
+
 func TestInterpretSeparatesWorldAndKnowledgeTime(t *testing.T) {
 	intent := Interpret("What did we believe on 2026-04-10 about the state valid at 2026-03-25?")
 	wantKnown := time.Date(2026, 4, 10, 23, 59, 59, 999999999, time.UTC)
