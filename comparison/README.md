@@ -218,6 +218,17 @@ retries Cognee's incremental `cognify` over its durable dataset. It retains only
 checkpoint's answer matrix and records the recovery method and harness hashes in the
 manifest. Other interruption points and provider profiles require a new run so results do
 not combine incompatible state.
+
+If retrieval completed but the shared Anthropic answer request exhausted its transient
+HTTP retries, rerun only that answer call against the row's saved context:
+
+```bash
+comparison/.venv/bin/python comparison/retry_answers.py <run-id>
+```
+
+The command never retrieves new context. It replaces only error rows that already contain
+their frozen context and records every attempt in `answer-retries.jsonl`.
+
 `--systems strata` or `--systems cognee` runs one engine for diagnostics; it is not a
 two-system comparison. `--preflight` checks credential presence only, not validity.
 
