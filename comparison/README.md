@@ -56,7 +56,8 @@ The three barriers are necessary to evaluate what each system knew after events 
 The launcher saves its PID
 and log under `.runtime/<run>/`, and uses macOS `caffeinate -i` for the child process's
 lifetime. Reports update after each processed batch and evaluation checkpoint. Keep
-Ollama and Docker running. Runs preserve partial evidence but do not resume after a crash.
+Ollama and Docker running. Runs preserve partial evidence. The guarded resume command
+described below currently supports the Anthropic profile only.
 
 `ollama_gateway.py` listens only on localhost port 18090 while the run is active. It
 bridges the existing OpenAI-compatible clients to Ollama's native chat/embed APIs,
@@ -203,8 +204,20 @@ The PostgreSQL container remains available to inspect results. Stop it with
 `docker stop strata-comparison-postgres`. No existing Strata workspace is cleared.
 
 Each invocation creates a new run ID and refuses to overwrite an existing result folder.
-Interrupted runs retain receipts, partial answers, and errors. Automatic resume is not
-implemented: use a new run, rather than mixing pre-update and post-update evidence.
+Interrupted runs retain receipts, partial answers, and errors. An Anthropic run interrupted
+after both engines accepted the complete final batch can resume from its last fully answered
+checkpoint:
+
+```bash
+comparison/.venv/bin/python comparison/resume.py <run-id>
+```
+
+Recovery reopens the run's isolated Strata database and Cognee dataset, releases abandoned
+Strata outbox leases, replays Strata events through their original idempotency keys, and
+retries Cognee's incremental `cognify` over its durable dataset. It retains only a complete
+checkpoint's answer matrix and records the recovery method and harness hashes in the
+manifest. Other interruption points and provider profiles require a new run so results do
+not combine incompatible state.
 `--systems strata` or `--systems cognee` runs one engine for diagnostics; it is not a
 two-system comparison. `--preflight` checks credential presence only, not validity.
 

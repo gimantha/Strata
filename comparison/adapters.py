@@ -143,6 +143,73 @@ class Strata:
             dict(workspace_id=self.ws, graph_space_id=self.gs, database=self.database),
         )
 
+    async def resume(self):
+        """Restart the server against an interrupted run's isolated durable state."""
+        scope = json.loads((self.runtime / "scope.json").read_text())
+        self.ws, self.gs, self.database = (
+            scope["workspace_id"],
+            scope["graph_space_id"],
+            scope["database"],
+        )
+        # The old process is confirmed dead before resume.py calls this. Release only its
+        # claims in this run's isolated database instead of waiting for the deliberately
+        # long benchmark lease to expire.
+        release = await asyncio.create_subprocess_exec(
+            "docker", "exec", "strata-comparison-postgres", "psql", "-U", "postgres",
+            "-d", self.database, "-v", "ON_ERROR_STOP=1", "-c",
+            "UPDATE outbox_events SET status='pending', claimed_by='', "
+            "claim_expires_at=NULL, updated_at=now() WHERE status='claimed'",
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+        )
+        _, error = await release.communicate()
+        if release.returncode:
+            raise RuntimeError("Cannot release abandoned Strata claims: " + error.decode())
+
+        token = secrets.token_hex(24)
+        keyfile = self.runtime / "api-keys.json"
+        save(keyfile, dict(version=1, keys=[dict(
+            key_id="comparison",
+            secret_sha256=hashlib.sha256(token.encode()).hexdigest(),
+            principal_id="comparison-admin", kind="service", display_name="Comparison",
+            system_role="admin",
+        )]))
+        keyfile.chmod(0o600)
+        env = {k: v for k, v in os.environ.copy().items() if not k.startswith("CG_")}
+        env.update(
+            CG_DATABASE_URL=f"postgres://postgres:comparison-local@127.0.0.1:55439/{self.database}?sslmode=disable",
+            CG_HTTP_ADDR="127.0.0.1:18089", CG_AUTO_MIGRATE="true",
+            CG_API_KEYS_FILE=str(keyfile), CG_BLOB_DIR=str(self.runtime / "blobs"),
+            CG_EMBEDDED_WORKER="true", CG_LLM_PROVIDER="openai",
+            CG_LLM_MODEL=self.models["strata_extraction"], CG_LLM_API_KEY=self.key,
+            CG_EMBEDDING_PROVIDER="openai",
+            CG_EMBEDDING_MODEL=self.models["strata_embedding"],
+            CG_EMBEDDING_API_KEY=self.key, CG_LOG_FORMAT="json",
+            CG_LLM_TIMEOUT="60m", CG_WORKER_LEASE="70m",
+            CG_WORKER_CONCURRENCY="4" if self.gateway_kind == "anthropic" else "1",
+        )
+        if self.base_url:
+            env.update(CG_LLM_BASE_URL=self.base_url, CG_EMBEDDING_BASE_URL=self.base_url)
+        self.log = (self.runtime / "server-resume.log").open("w")
+        self.process = subprocess.Popen(
+            [str(ROOT / ".runtime/contextgraphd")], cwd=ROOT.parent, env=env,
+            stdout=self.log, stderr=subprocess.STDOUT,
+        )
+        self.client = httpx.AsyncClient(
+            base_url="http://127.0.0.1:18089",
+            headers={"Authorization": f"Bearer comparison.{token}"}, timeout=120,
+        )
+        for _ in range(120):
+            if self.process.poll() is not None:
+                raise RuntimeError(f"Strata exited; inspect {self.runtime/'server-resume.log'}")
+            try:
+                response = await self.client.get("/readyz")
+                if response.status_code == 200:
+                    return
+            except httpx.HTTPError:
+                pass
+            await asyncio.sleep(0.5)
+        raise TimeoutError("Strata resume readiness timed out")
+
     async def request(self, method, path, payload=None):
         r = await self.client.request(method, path, json=payload)
         r.raise_for_status()
