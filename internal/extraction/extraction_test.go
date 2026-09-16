@@ -329,3 +329,31 @@ func TestHashesAreStableAndDistinct(t *testing.T) {
 		t.Fatal("different responses must hash differently")
 	}
 }
+
+func TestValidateCarriesTheStatedReplacementFlag(t *testing.T) {
+	raw := `{
+	  "entities": [],
+	  "assertions": [
+	    {"subject_name":"Alice Chen","subject_type":"person","predicate":"ROLE_AT",
+	     "object_entity_name":"Acme Corporation","object_kind":null,"object_value":null,
+	     "scope_key":null,"valid_from":null,"valid_to":null,"event_time":null,
+	     "replaces_prior":true,
+	     "evidence_quote":"Alice Chen is the CTO of Acme Corporation.","confidence":0.85},
+	    {"subject_name":"Alice Chen","subject_type":"person","predicate":"ROLE_AT",
+	     "object_entity_name":"Acme Corporation","object_kind":null,"object_value":null,
+	     "scope_key":null,"valid_from":null,"valid_to":null,"event_time":null,
+	     "evidence_quote":"Alice Chen is the CTO of Acme Corporation.","confidence":0.85}
+	  ],
+	  "temporal": []
+	}`
+	got, err := extraction.Validate([]byte(raw), sampleSource)
+	if err != nil {
+		t.Fatalf("valid output rejected: %v", err)
+	}
+	if len(got.Result.Assertions) != 2 {
+		t.Fatalf("candidates = %+v", got.Result.Assertions)
+	}
+	if !got.Result.Assertions[0].ReplacesPrior || got.Result.Assertions[1].ReplacesPrior {
+		t.Fatal("replaces_prior must be carried through exactly as the model stated it, defaulting to false")
+	}
+}

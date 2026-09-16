@@ -239,6 +239,7 @@ func (s ExtractStage) toClaims(episode domain.Episode, chunks []domain.Chunk, re
 			},
 			// Extracted, never inferred: the model reported what the source states.
 			ProvenanceMode:   domain.ProvenanceExtracted,
+			ReplacesPrior:    candidate.ReplacesPrior,
 			Quarantine:       candidate.Quarantine,
 			QuarantineReason: candidate.QuarantineReason,
 		}

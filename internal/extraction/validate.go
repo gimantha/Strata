@@ -38,6 +38,7 @@ type wireAssertion struct {
 	ValidFrom        *string `json:"valid_from"`
 	ValidTo          *string `json:"valid_to"`
 	EventTime        *string `json:"event_time"`
+	ReplacesPrior    bool    `json:"replaces_prior"`
 	EvidenceQuote    string  `json:"evidence_quote"`
 	Confidence       float64 `json:"confidence"`
 }
@@ -136,6 +137,7 @@ func Validate(raw []byte, source string) (Validated, error) {
 			ObjectEntityType: "",
 			ObjectValue:      deref(a.ObjectValue),
 			ScopeKey:         strings.TrimSpace(deref(a.ScopeKey)),
+			ReplacesPrior:    a.ReplacesPrior,
 			EvidenceQuote:    a.EvidenceQuote,
 			Confidence:       clampConfidence(a.Confidence),
 		}

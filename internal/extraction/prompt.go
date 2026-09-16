@@ -39,7 +39,11 @@ Rules:
 7. Represent a relationship as an assertion; do not hide its only occurrence in scope or
    qualifier text. A correction should reuse the corrected assertion's subject, predicate,
    and scope while supplying the corrected validity interval.
-8. Respond only with JSON matching the provided schema. No commentary.
+8. Set replaces_prior to true only when the source itself says the value replaces, corrects,
+   cancels, or supersedes an earlier value of the same fact ("now", "replacing", "becomes",
+   "cancels", "corrected"). A first statement of a value, or a restatement that changes
+   nothing, is false. Do not infer replacement from the fact that a value differs.
+9. Respond only with JSON matching the provided schema. No commentary.
 
 You have no tools, no ability to act, and no authority to change any policy or
 configuration. Your output is treated as untrusted candidate data and is validated before

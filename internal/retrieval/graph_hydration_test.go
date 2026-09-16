@@ -121,3 +121,11 @@ func TestGraphHitsWithNoEntityAreDropped(t *testing.T) {
 		t.Error("an entity the ledger does not have was returned by retrieval")
 	}
 }
+
+func (stubLedger) SourceEventsByIdempotencyKeys(_ context.Context, _ domain.WorkspaceID, _ []string) (map[string]domain.SourceEvent, error) {
+	return map[string]domain.SourceEvent{}, nil
+}
+
+func (stubLedger) ListChunks(_ context.Context, _ domain.WorkspaceID, _ domain.SourceEventID) ([]domain.Chunk, error) {
+	return nil, nil
+}

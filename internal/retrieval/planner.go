@@ -46,6 +46,23 @@ func (p heuristicPlanner) Plan(_ context.Context, req domain.QueryRequest) domai
 		Temporal:     MergeTemporal(req.Temporal, intent.Temporal),
 		Requirements: append([]string(nil), intent.Requirements...),
 	}
+	// Identifiers first. An identifier is the strongest anchor a question can carry: it
+	// names one record, and the search for it is the one that brings that record's own
+	// passages in. Name phrases are weaker and more numerous, and when they were queued
+	// first they could fill the sub-query cap before the identifier was reached, so the one
+	// search that mattered never ran.
+	for _, focus := range intent.FocusTerms {
+		if len(out.SubQueries) >= domain.MaxSubQueries {
+			break
+		}
+		if strings.EqualFold(strings.TrimSpace(req.Query), focus) || containsSubQuery(out.SubQueries, focus) {
+			continue
+		}
+		out.SubQueries = append(out.SubQueries, domain.SubQuery{
+			Text: focus, Kind: domain.SubQueryDecomposed,
+			Reason: "exact entity or record identifier recovered from the question",
+		})
+	}
 	for _, name := range intent.EntityTerms {
 		if len(out.SubQueries) >= domain.MaxSubQueries {
 			break
@@ -55,18 +72,6 @@ func (p heuristicPlanner) Plan(_ context.Context, req domain.QueryRequest) domai
 		}
 		out.SubQueries = append(out.SubQueries, domain.SubQuery{Text: name, Kind: domain.SubQueryDecomposed,
 			Reason: "proper-name phrase recovered from the question"})
-	}
-	for _, focus := range intent.FocusTerms {
-		if len(out.SubQueries) >= domain.MaxSubQueries {
-			break
-		}
-		if strings.EqualFold(strings.TrimSpace(req.Query), focus) {
-			continue
-		}
-		out.SubQueries = append(out.SubQueries, domain.SubQuery{
-			Text: focus, Kind: domain.SubQueryDecomposed,
-			Reason: "exact entity or record identifier recovered from the question",
-		})
 	}
 
 	// An explicit mode list is honoured as given: a caller narrowing retrieval usually

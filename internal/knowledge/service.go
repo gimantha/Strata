@@ -174,6 +174,10 @@ type Claim struct {
 	// Supersedes names claims this one corrects. The correction and the supersession
 	// commit together.
 	Supersedes []domain.AssertionID
+	// ReplacesPrior says the source stated that this value replaces an earlier value of
+	// the same fact, without naming the earlier claim. Reconciliation resolves which
+	// claims those are: the same canonical slot, from the same source, recorded earlier.
+	ReplacesPrior bool
 
 	// Quarantine holds a claim out of current belief without discarding it, for material
 	// that cannot be trusted at face value (AGENTS.md section 24). A quarantined claim is
@@ -310,6 +314,7 @@ func (s *Service) Assert(ctx context.Context, req AssertRequest) (AssertResult, 
 	)
 
 	violationsByFingerprint := map[string][]domain.Violation{}
+	replacesByFingerprint := map[string]bool{}
 
 	for i, claim := range req.Claims {
 		violations, err := s.checkOntology(ctx, req.Scope, binding, claim)
@@ -340,6 +345,9 @@ func (s *Service) Assert(ctx context.Context, req AssertRequest) (AssertResult, 
 			violationsByFingerprint[built.Fingerprint] = violations
 		}
 		predicates[predicate.Name] = predicate
+		if claim.ReplacesPrior {
+			replacesByFingerprint[built.Fingerprint] = true
+		}
 		commit.Entities = append(commit.Entities, created...)
 
 		evidence := make([]domain.Evidence, 0, len(claim.Evidence))
@@ -395,7 +403,7 @@ func (s *Service) Assert(ctx context.Context, req AssertRequest) (AssertResult, 
 		}
 
 		outcome, err := s.reconciler.Reconcile(ctx, assertion.WithSourceID(event.SourceID),
-			predicate, event.Operation, now)
+			predicate, event.Operation, replacesByFingerprint[assertion.Fingerprint], now)
 		if err != nil {
 			return AssertResult{}, err
 		}

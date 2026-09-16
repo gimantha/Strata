@@ -17,7 +17,7 @@ const SchemaName = "strata_extraction_result"
 
 // PromptVersion is recorded on every model run, so a change in prompting can be correlated
 // with a change in extraction quality.
-const PromptVersion = 2
+const PromptVersion = 3
 
 // PromptTemplate names the prompt in model-run records.
 const PromptTemplate = "extract_candidates"
@@ -56,7 +56,7 @@ var ResultSchema = json.RawMessage(`{
         "additionalProperties": false,
         "required": ["subject_name", "subject_type", "predicate", "object_entity_name",
                      "object_kind", "object_value", "scope_key", "valid_from", "valid_to",
-                     "event_time", "evidence_quote", "confidence"],
+                     "event_time", "replaces_prior", "evidence_quote", "confidence"],
         "properties": {
           "subject_name": {"type": "string"},
           "subject_type": {"type": "string"},
@@ -82,6 +82,10 @@ var ResultSchema = json.RawMessage(`{
           "valid_from": {"type": ["string", "null"], "description": "RFC3339 instant the fact became true."},
           "valid_to": {"type": ["string", "null"], "description": "RFC3339 instant the fact stopped being true."},
           "event_time": {"type": ["string", "null"], "description": "RFC3339 instant the described event occurred."},
+          "replaces_prior": {
+            "type": "boolean",
+            "description": "True only when the source explicitly states that this value replaces, corrects, cancels, or supersedes an earlier value of the same fact about the same subject. False when the source merely states a value."
+          },
           "evidence_quote": {
             "type": "string",
             "description": "A verbatim span copied from the source that states this fact. Required."

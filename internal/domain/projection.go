@@ -129,7 +129,13 @@ type LexicalQuery struct {
 	// only after a strict search returns nothing, so common words cannot displace a real
 	// all-term match.
 	MatchAny bool
-	Limit    int
+	// Anchors are terms every hit must contain, matched as phrases, while the rest of Text
+	// is matched under the usual strict or MatchAny rule. A question that names an
+	// identifier and then asks something about it in twenty ordinary words is otherwise
+	// searched as twenty-one words of equal standing, and the identifier decides nothing.
+	// Anchors do not apply to Exact searches, which are already a single required term.
+	Anchors []string
+	Limit   int
 }
 
 // DecayWeight is what a hit's lifecycle says about its ranking weight, defaulting to full

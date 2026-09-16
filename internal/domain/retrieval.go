@@ -219,6 +219,10 @@ const (
 	// instead of the question. A question and its answer are worded differently, so
 	// embedding the answer's shape often lands closer to the passage that contains it.
 	SubQueryHypothetical SubQueryKind = "hypothetical"
+	// SubQueryReference is an identifier that a passage about the question's subject cited,
+	// searched so the record it points at can be read too. It is issued by the retriever
+	// after the planned searches, never by a planner.
+	SubQueryReference SubQueryKind = "reference"
 )
 
 // MaxSubQueries bounds how far a question may be expanded.
@@ -227,6 +231,12 @@ const (
 // than added to. Four is enough for a decomposition plus a hypothetical answer and little
 // enough that a planner cannot turn one question into a scan.
 const MaxSubQueries = 4
+
+// MaxReferenceFollows bounds how many cited identifiers the retriever follows after the
+// planned searches. Following is one exact search each, so the bound is a cost ceiling, and
+// it is separate from MaxSubQueries because a reference is discovered from results rather
+// than planned from the question.
+const MaxReferenceFollows = 3
 
 // MaxSubQueryLength bounds a single rewritten search, so a planner cannot smuggle a
 // document into the index as a query.

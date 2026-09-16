@@ -63,6 +63,13 @@ type AssertionCandidate struct {
 	ValidTo   *time.Time
 	EventTime *time.Time
 
+	// ReplacesPrior records that the source itself said this value replaces, corrects,
+	// cancels, or supersedes an earlier value of the same fact. It is what the text says,
+	// not an inference from values differing, and reconciliation treats it the way it
+	// treats an explicit correction: earlier claims in the same canonical slot from the
+	// same source are superseded (AGENTS.md sections 7.4, 14.3).
+	ReplacesPrior bool
+
 	// EvidenceQuote must be a verbatim span of the source material. It is the anchor that
 	// makes an extracted claim checkable rather than merely plausible.
 	EvidenceQuote string

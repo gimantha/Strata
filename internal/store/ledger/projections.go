@@ -380,6 +380,34 @@ func buildLexicalSearch(op string, q domain.LexicalQuery) (string, []any, error)
 		if q.MatchAny {
 			queryExpression = "websearch_to_tsquery('english', regexp_replace(trim($" + strconv.Itoa(term) + "), E'\\\\s+', ' OR ', 'g'))"
 		}
+		if anchors, rest := anchoredTerms(q); len(anchors) > 0 {
+			// Every anchor is a required phrase; the remaining words keep the strict or
+			// relaxed rule the caller asked for. Composed as tsquery values rather than by
+			// rewriting the text, because websearch syntax has no grouping and "a b or c"
+			// parses as (a & b) | c, which is not "a and (b or c)".
+			//
+			// The text parameter is reused for the first anchor so every parameter the
+			// statement carries is referenced, and the limit is re-appended last so it
+			// keeps the final position the SQL below assumes.
+			limitValue := args[len(args)-1]
+			args = args[:len(args)-1]
+			args[term-1] = `"` + strings.ReplaceAll(anchors[0], `"`, ``) + `"`
+			parts := []string{"websearch_to_tsquery('english', $" + strconv.Itoa(term) + ")"}
+			for _, anchor := range anchors[1:] {
+				args = append(args, `"`+strings.ReplaceAll(anchor, `"`, ``)+`"`)
+				parts = append(parts, "websearch_to_tsquery('english', $"+strconv.Itoa(len(args))+")")
+			}
+			if rest != "" {
+				args = append(args, rest)
+				restExpression := "websearch_to_tsquery('english', $" + strconv.Itoa(len(args)) + ")"
+				if q.MatchAny {
+					restExpression = "websearch_to_tsquery('english', regexp_replace(trim($" + strconv.Itoa(len(args)) + "), E'\\\\s+', ' OR ', 'g'))"
+				}
+				parts = append(parts, restExpression)
+			}
+			queryExpression = "(" + strings.Join(parts, " && ") + ")"
+			args = append(args, limitValue)
+		}
 		where = append(where, "l.search_vector @@ "+queryExpression)
 		// ts_rank_cd weighs term proximity, which ranks a passage discussing the terms
 		// together above one that merely mentions them.
@@ -1190,4 +1218,37 @@ func likePattern(text string) string {
 		"_", "\\_",
 	).Replace(text)
 	return "%" + escaped + "%"
+}
+
+// anchoredTerms splits a lexical query into its required anchors and the remaining words.
+//
+// Anchors that do not occur in the text are still required: the caller named them, and a
+// hit that lacks one is not what was asked for. The rest is the text with the anchor tokens
+// removed so the identifier is not also counted as an ordinary word.
+func anchoredTerms(q domain.LexicalQuery) ([]string, string) {
+	if q.Exact || len(q.Anchors) == 0 {
+		return nil, ""
+	}
+	anchors := make([]string, 0, len(q.Anchors))
+	lowered := map[string]bool{}
+	for _, anchor := range q.Anchors {
+		anchor = strings.TrimSpace(anchor)
+		if anchor == "" || lowered[strings.ToLower(anchor)] {
+			continue
+		}
+		lowered[strings.ToLower(anchor)] = true
+		anchors = append(anchors, anchor)
+	}
+	if len(anchors) == 0 {
+		return nil, ""
+	}
+	var rest []string
+	for _, field := range strings.Fields(q.Text) {
+		token := strings.Trim(field, ",.;:!?()[]{}\"'")
+		if token == "" || lowered[strings.ToLower(token)] {
+			continue
+		}
+		rest = append(rest, token)
+	}
+	return anchors, strings.Join(rest, " ")
 }

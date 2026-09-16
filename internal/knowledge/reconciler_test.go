@@ -468,3 +468,64 @@ func TestIntegrationTemporalFixtureIsDeterministic(t *testing.T) {
 
 	_ = ctx
 }
+
+func TestIntegrationStatedReplacementRetiresThePriorValue(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+
+	ingestOne := func(content, key string) (domain.SourceEventID, domain.EpisodeID) {
+		receipt, err := h.gateway.Accept(ctx, ingest.Request{
+			Scope: h.scope(), Principal: h.principal(), SourceID: h.fixture.Primary.Source.ID,
+			ExternalID: "project-7", Operation: domain.SourceOpUpsert, MediaType: normalize.MediaTypePlain,
+			Payload: []byte(content), IdempotencyKey: key,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := h.runner.Process(ctx, h.scope().WorkspaceID, receipt.SourceEventID, false); err != nil {
+			t.Fatal(err)
+		}
+		episodes, err := h.fixture.Store.ListEpisodes(ctx, h.scope().WorkspaceID, receipt.SourceEventID)
+		if err != nil || len(episodes) == 0 {
+			t.Fatalf("episodes: %v", err)
+		}
+		return receipt.SourceEventID, episodes[0].ID
+	}
+	assert := func(event domain.SourceEventID, episode domain.EpisodeID, value string, replaces bool) knowledge.AssertResult {
+		result, err := h.service.Assert(ctx, knowledge.AssertRequest{Scope: h.scope(), Principal: h.principal(), SourceEventID: event,
+			Claims: []knowledge.Claim{{Subject: knowledge.EntityRef{Name: "Project 7", Type: "project"},
+				Predicate: "APPROVED_BUDGET", Object: domain.ObjectOfString(value), ReplacesPrior: replaces,
+				Evidence: []knowledge.EvidenceInput{{EpisodeID: episode}}}}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return result
+	}
+
+	// Open mode: the predicate has no declared cardinality, so two values coexist unless
+	// the source says otherwise.
+	firstEvent, firstEpisode := ingestOne("Project 7 approved budget is USD 100.", "replace-1")
+	first := assert(firstEvent, firstEpisode, "USD 100", false)
+	secondEvent, secondEpisode := ingestOne("Project 7 approved budget is USD 110 as well.", "replace-2")
+	second := assert(secondEvent, secondEpisode, "USD 110", false)
+	if len(second.Superseded) != 0 {
+		t.Fatalf("a plain restatement must not retire anything in open mode: %+v", second)
+	}
+
+	// The source states the replacement. That is the same statement a correction event
+	// makes, made about one claim rather than the whole event, and it retires the earlier
+	// values of the slot from the same source.
+	thirdEvent, thirdEpisode := ingestOne("Project 7 approved budget is now USD 125, replacing USD 110.", "replace-3")
+	third := assert(thirdEvent, thirdEpisode, "USD 125", true)
+	if len(third.Superseded) != 2 {
+		t.Fatalf("a stated replacement must retire the earlier values in the slot: %+v", third)
+	}
+	current := h.query(t, domain.AssertionQuery{Predicates: []string{"APPROVED_BUDGET"}})
+	if len(current) != 1 || current[0].Object.Display() != "USD 125" {
+		t.Fatalf("current state = %v", objectsOf(current))
+	}
+	old, err := h.service.Get(ctx, h.scope().WorkspaceID, first.Assertions[0].ID)
+	if err != nil || old.Status != domain.AssertionSuperseded {
+		t.Fatalf("the earlier claim must be retained as superseded, not deleted or still active: %+v %v", old.Status, err)
+	}
+}

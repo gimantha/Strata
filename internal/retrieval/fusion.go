@@ -9,6 +9,7 @@ package retrieval
 
 import (
 	"sort"
+	"strings"
 
 	"github.com/gimantha/strata/internal/domain"
 )
@@ -141,6 +142,18 @@ func (w Weights) forMode(mode domain.RetrievalMode) float64 {
 	}
 }
 
+// rankOnly reports whether a retriever's scores carry no magnitude worth comparing.
+//
+// An exact match is binary: the record contains the identifier or it does not. The score
+// attached to it is a trigram similarity that mostly measures how short the record is, so a
+// two-line label scores 0.5 and a page that mentions the identifier once scores 0.05.
+// Trimming or damping by that number threw away every passage exact mode found and kept
+// only the labels, which is the opposite of what an identifier search is for. Entity hits
+// all score one already; naming them here makes the rule explicit rather than incidental.
+func rankOnly(mode domain.RetrievalMode) bool {
+	return mode == domain.ModeExact || mode == domain.ModeEntity
+}
+
 // scoreQuality builds a factor that scales a candidate's rank credit by how strong its score
 // was relative to the best its own retriever produced.
 //
@@ -165,6 +178,9 @@ func scoreQuality(candidates []candidate, weight float64) func(candidate) float6
 	}
 
 	return func(c candidate) float64 {
+		if rankOnly(c.mode) {
+			return 1
+		}
 		top := best[streamKey{mode: c.mode, stream: c.stream}]
 		if top <= 0 {
 			// No usable magnitude information, so rank alone decides and every candidate
@@ -210,8 +226,9 @@ func dropWeakTails(candidates []candidate, floor float64) []candidate {
 	for _, c := range candidates {
 		key := streamKey{mode: c.mode, stream: c.stream}
 		// A retriever whose scores are all zero or negative carries no magnitude
-		// information, so everything it found is kept and rank alone decides.
-		if top := best[key]; top > 0 && c.score < top*floor {
+		// information, so everything it found is kept and rank alone decides. The same
+		// holds for retrievers whose scores are not magnitudes at all.
+		if top := best[key]; top > 0 && c.score < top*floor && !rankOnly(c.mode) {
 			continue
 		}
 		nextRank[key]++
@@ -273,9 +290,11 @@ func fuse(candidates []candidate, weights Weights, limit int) []domain.Retrieved
 		contribution := weights.forMode(c.mode) / (weights.RRFConstant + float64(c.rank))
 		contribution *= quality(c)
 
-		// A graph result is discounted by how far it was traversed: reaching something in
-		// four hops is weaker evidence of relevance than matching it directly.
-		if c.mode == domain.ModeGraph && c.path != nil && c.path.Depth > 0 {
+		// A result reached by traversal is discounted by how far it was traversed:
+		// reaching something in four hops, or through a citation in one, is weaker
+		// evidence of relevance than matching it directly. Any candidate with a path was
+		// reached rather than matched, whichever retriever recorded it.
+		if c.path != nil && c.path.Depth > 0 {
 			contribution /= 1 + weights.GraphDepthPenalty*float64(c.path.Depth)
 		}
 
@@ -389,4 +408,67 @@ func diversifyBySurface(items []domain.RetrievedItem, minPerSurface, limit int) 
 		return head[i].RecordID < head[j].RecordID
 	})
 	return head
+}
+
+// prioritizeAnchored moves results that mention one of the question's identifiers ahead of
+// results that do not, then cuts to the limit.
+//
+// Fusion ranks by agreement between retrievers, and on a corpus of near-duplicate records
+// the retrievers agree most about records that resemble the question rather than records
+// that are about its subject: a hundred replacement notices for a hundred projects all look
+// alike to a vector, and the one for the project the question named is not special among
+// them. Selection later drops everything that fails to mention the identifier, so ranking
+// those records highly only spends the candidate limit on items that will be discarded and
+// leaves the anchored ones below the cut. Ordering within each group is preserved; nothing
+// is rescored. Items whose text is unknown are treated as unanchored, which keeps a
+// vector-only tail from displacing passages that visibly name the subject.
+func prioritizeAnchored(items []domain.RetrievedItem, anchors []string, referenced map[string]bool, limit int) []domain.RetrievedItem {
+	if len(anchors) == 0 {
+		if limit > 0 && len(items) > limit {
+			return items[:limit]
+		}
+		return items
+	}
+	anchored := make([]domain.RetrievedItem, 0, len(items))
+	rest := make([]domain.RetrievedItem, 0, len(items))
+	for _, item := range items {
+		// A record fetched because an anchored passage cited it counts as anchored too:
+		// the citation is the link, whether or not the cited text repeats the identifier.
+		if mentionsAny(item.Content, anchors) || referenced[item.RecordID] {
+			if item.Signals == nil {
+				item.Signals = map[string]float64{}
+			}
+			item.Signals["anchored"] = 1
+			anchored = append(anchored, item)
+			continue
+		}
+		rest = append(rest, item)
+	}
+	if len(anchored) == 0 {
+		// Nothing names the identifier, so the question's anchor is not in the corpus as
+		// written and the fused order is the best available.
+		if limit > 0 && len(items) > limit {
+			return items[:limit]
+		}
+		return items
+	}
+	out := append(anchored, rest...)
+	if limit > 0 && len(out) > limit {
+		out = out[:limit]
+	}
+	return out
+}
+
+// mentionsAny reports whether text contains any anchor, case-insensitively.
+func mentionsAny(text string, anchors []string) bool {
+	if text == "" {
+		return false
+	}
+	lower := strings.ToLower(text)
+	for _, anchor := range anchors {
+		if anchor != "" && strings.Contains(lower, strings.ToLower(anchor)) {
+			return true
+		}
+	}
+	return false
 }

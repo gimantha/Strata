@@ -39,6 +39,9 @@ type candidate struct {
 	assertion  *domain.Assertion
 	supportIDs []domain.AssertionID
 	derivation *domain.Derivation
+	// excerpt is the source passage a claim's evidence was read from, kept so a claim
+	// brought in as a required premise can bring its checkable text with it.
+	excerpt *domain.ProvenanceLink
 
 	// subjects and predicate drive coverage: a second claim about an entity already
 	// covered adds less than the first claim about a new one.
@@ -159,13 +162,22 @@ func (h *hydrator) hydrate(ctx context.Context, items []domain.RetrievedItem) ([
 const RequirementExpansionLimit = 16
 
 func (h *hydrator) expandRequirements(ctx context.Context, candidates []candidate, seen map[string]bool) ([]candidate, error) {
-	needsHistory := hasRequirement(h.requirements, "history") || hasRequirement(h.requirements, "comparison_inputs") || hasRequirement(h.requirements, "absence_proof")
+	// An as-of question needs the bounds of the interval it asks about, whichever words it
+	// used: the claim that held at that instant, and the claim that ended it.
+	needsHistory := hasRequirement(h.requirements, "history") || hasRequirement(h.requirements, "comparison_inputs") ||
+		hasRequirement(h.requirements, "absence_proof") || h.req.Temporal.ValidAt != nil
 	needsInputs := hasRequirement(h.requirements, "decision_trace")
 	if (!needsHistory && !needsInputs) || expansionPolicyUnsupported(h.req.Policy) {
 		return candidates, nil
 	}
 	base := append([]candidate(nil), candidates...)
-	added := 0
+	// Expansion follows the question's subject. When any candidate names the identifier
+	// the question asked about, candidates that do not are not seeds: their history and
+	// premises are about something else, and marking them required would carry them past
+	// the focus gate that would otherwise drop them. That is how a question about one
+	// record came to state another record's budget as a known fact.
+	focused := anyFocused(base)
+	added, excerpts := 0, 0
 	add := func(id domain.AssertionID, score float64) error {
 		if added >= RequirementExpansionLimit || seen[string(id)] {
 			return nil
@@ -175,16 +187,34 @@ func (h *hydrator) expandRequirements(ctx context.Context, candidates []candidat
 		if err != nil {
 			return err
 		}
-		if built != nil {
-			built.required = true
-			seen[string(id)] = true
-			candidates = append(candidates, *built)
-			added++
+		if built == nil {
+			return nil
+		}
+		built.required = true
+		seen[string(id)] = true
+		candidates = append(candidates, *built)
+		added++
+		// A premise is only as useful as its checkable text. The claim's own sentence is
+		// the graph's paraphrase; the passage it was read from is what a reader can
+		// verify and quote, so it comes along, once per passage. It is offered, not
+		// required: it competes for the excerpt budget on its own merit, because a
+		// passage brought in for a premise must not displace the passage that answers
+		// the question.
+		if built.excerpt != nil && excerpts < RequiredExcerptLimit {
+			key := "chunk:" + string(built.excerpt.Chunk.ID)
+			if !seen[key] {
+				seen[key] = true
+				candidates = append(candidates, h.excerptOf(*built.excerpt, score))
+				excerpts++
+			}
 		}
 		return nil
 	}
 	for _, candidate := range base {
 		if candidate.assertion == nil || added >= RequirementExpansionLimit {
+			continue
+		}
+		if focused && candidate.focus == 0 {
 			continue
 		}
 		if needsInputs {
@@ -217,6 +247,76 @@ func (h *hydrator) expandRequirements(ctx context.Context, candidates []candidat
 		}
 	}
 	return candidates, nil
+}
+
+// RequiredExcerptLimit bounds how many source passages are offered alongside required
+// premises. Each is a whole passage, so the bound protects the budget for the claims and
+// for the passages retrieval itself ranked.
+const RequiredExcerptLimit = 4
+
+// anyFocused reports whether any candidate names one of the question's identifiers.
+func anyFocused(candidates []candidate) bool {
+	for _, c := range candidates {
+		if c.focus > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+// focusedOnly returns the candidates that name one of the question's identifiers, or all of
+// them when none does.
+func focusedOnly(candidates []candidate) []candidate {
+	if !anyFocused(candidates) {
+		return candidates
+	}
+	out := make([]candidate, 0, len(candidates))
+	for _, c := range candidates {
+		if c.focus > 0 || c.required {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+// excerptOf builds a source-excerpt candidate from the passage a claim's evidence came from.
+func (h *hydrator) excerptOf(link domain.ProvenanceLink, relevance float64) candidate {
+	text := strings.TrimSpace(link.Chunk.Content)
+	chunkID := link.Chunk.ID
+	episodeID := link.Episode.ID
+	recorded := link.SourceEvent.RecordedAt
+	return candidate{
+		section:    domain.SectionExcerpts,
+		text:       text,
+		surface:    domain.SurfaceChunk,
+		recordID:   string(chunkID),
+		relevance:  relevance,
+		confidence: trustWeight(link.Source.TrustLevel),
+		evidence:   1,
+		temporal:   h.temporalFit(link.SourceEvent.EventTime, nil),
+		priority:   1,
+		focus:      focusScore(text, h.focusTerms),
+		// Related rather than required: reached through a claim, exempt from the focus
+		// gate for that reason, but carrying no requirement bonus of its own.
+		related: true,
+		citation: domain.Citation{
+			Surface:          domain.SurfaceChunk,
+			ChunkID:          &chunkID,
+			EpisodeID:        &episodeID,
+			SourceEventID:    link.SourceEvent.ID,
+			SourceExternalID: link.SourceEvent.ExternalID,
+			IdempotencyKey:   link.SourceEvent.IdempotencyKey,
+			SourceSequence:   link.SourceEvent.SourceSequence,
+			SourceVersion:    link.SourceEvent.SourceVersion,
+			EventTime:        link.SourceEvent.EventTime,
+			RecordedAt:       &recorded,
+			SourceID:         link.Source.ID,
+			SourceName:       link.Source.Name,
+			Quote:            text,
+			Locator:          locatorText(link.Episode.Locator),
+		},
+		terms: terms(text),
+	}
 }
 
 func expansionPolicyUnsupported(policy domain.PolicyFilters) bool {
@@ -341,6 +441,12 @@ func (h *hydrator) fromAssertion(ctx context.Context, item domain.RetrievedItem,
 	for _, support := range chain.Supports {
 		built.supportIDs = append(built.supportIDs, support.ID)
 	}
+	for i := range chain.Links {
+		if chain.Links[i].Chunk != nil && strings.TrimSpace(chain.Links[i].Chunk.Content) != "" {
+			built.excerpt = &chain.Links[i]
+			break
+		}
+	}
 	if assertion.Object.Kind == domain.ObjectEntity {
 		built.subjects = append(built.subjects, assertion.Object.EntityID)
 	}
@@ -416,6 +522,12 @@ func (h *hydrator) sectionFor(a domain.Assertion, item domain.RetrievedItem) dom
 	if a.Temporal.ValidTo != nil && !a.Temporal.ValidTo.After(h.asOf()) {
 		// Valid once, not now. Historical rather than current, and mixing the two is how
 		// a prompt ends up stating last quarter's price as today's.
+		return domain.SectionHistory
+	}
+	if a.Temporal.ValidFrom != nil && a.Temporal.ValidFrom.After(h.asOf()) {
+		// Not yet in force at the instant the block describes. It is shown because it
+		// bounds the interval the question asked about, and it is labelled with its start
+		// so it cannot be read as the state at that instant.
 		return domain.SectionHistory
 	}
 	if item.Path != nil {

@@ -36,6 +36,27 @@ func (s *Store) EnsurePredicate(ctx context.Context, ws domain.WorkspaceID, name
 		return domain.PredicateDefinition{}, err
 	}
 
+	// A name that is new only by an auxiliary differs from a registered predicate by
+	// grammar, not meaning: HAS_APPROVED_BUDGET and APPROVED_BUDGET, DELIVERED_PROTOTYPE and
+	// DELIVERED_PROTOTYPE_FOR. Open-mode extraction produces both spellings for the same
+	// relation across a corpus, and every fact then splits across two vocabularies that no
+	// query asks for together. The spelling is recorded as an alias of the existing
+	// predicate, so the resolution is visible and reversible in the registry.
+	for _, variant := range predicateSpellingVariants(normalized) {
+		existing, err := s.GetPredicateByName(ctx, ws, variant)
+		if domain.IsCode(err, domain.CodeNotFound) {
+			continue
+		}
+		if err != nil {
+			return domain.PredicateDefinition{}, err
+		}
+		if err := s.recordPredicateAlias(ctx, ws, existing.ID, name, normalized); err != nil {
+			return domain.PredicateDefinition{}, err
+		}
+		existing.Aliases = append(existing.Aliases, name)
+		return existing, nil
+	}
+
 	candidate := domain.PredicateDefinition{
 		ID:                domain.PredicateID(domain.NewUUIDString()),
 		WorkspaceID:       ws,
@@ -359,4 +380,45 @@ func parseObjectKinds(raw []string) []domain.ObjectKind {
 		out = append(out, domain.ObjectKind(r))
 	}
 	return out
+}
+
+// predicateSpellingVariants lists the names a normalized predicate may already be registered
+// under: with an auxiliary prefix or a trailing preposition removed, or added.
+func predicateSpellingVariants(name string) []string {
+	var out []string
+	add := func(value string) {
+		if value == "" || value == name {
+			return
+		}
+		for _, existing := range out {
+			if existing == value {
+				return
+			}
+		}
+		out = append(out, value)
+	}
+	bare := name
+	for _, prefix := range []string{"HAS_", "IS_", "WAS_"} {
+		bare = strings.TrimPrefix(bare, prefix)
+	}
+	bare = strings.TrimSuffix(bare, "_FOR")
+	add(bare)
+	for _, prefix := range []string{"HAS_", "IS_"} {
+		add(prefix + bare)
+		add(prefix + bare + "_FOR")
+	}
+	add(bare + "_FOR")
+	return out
+}
+
+// recordPredicateAlias maps an extraction spelling to a registered predicate.
+func (s *Store) recordPredicateAlias(ctx context.Context, ws domain.WorkspaceID, id domain.PredicateID, alias, normalized string) error {
+	const op = "ledger.recordPredicateAlias"
+	_, err := s.pool.Exec(ctx, `
+		INSERT INTO predicate_aliases
+		    (id, workspace_id, predicate_id, alias, normalized, confidence, created_by)
+		VALUES ($1, $2, $3, $4, $5, 1, $6)
+		ON CONFLICT (workspace_id, normalized) DO NOTHING`,
+		domain.NewUUIDString(), ws, id, alias, normalized, "system:predicate-spelling")
+	return mapError(err, op, "cannot record predicate alias")
 }

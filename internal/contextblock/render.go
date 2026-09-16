@@ -208,22 +208,18 @@ func referenceLine(c domain.Citation) string {
 			b.WriteString(string(id))
 		}
 	case c.AssertionID != nil:
+		// The claim's own identifier is the handle a reader walks provenance from; the
+		// evidence and episode identifiers behind it stay on the structured citation.
+		// Each identifier costs about twenty-five tokens of a budget that is better spent
+		// on one more passage, and a reference line orients, it does not dump.
 		b.WriteString("assertion ")
 		b.WriteString(string(*c.AssertionID))
-		if len(c.EvidenceIDs) > 0 {
-			b.WriteString(", evidence ")
-			b.WriteString(string(c.EvidenceIDs[0]))
-			if len(c.EvidenceIDs) > 1 {
-				b.WriteString(fmt.Sprintf(" (+%d more)", len(c.EvidenceIDs)-1))
-			}
+		if len(c.EvidenceIDs) > 1 {
+			b.WriteString(fmt.Sprintf(" (%d evidence records)", len(c.EvidenceIDs)))
 		}
 	case c.ChunkID != nil:
 		b.WriteString("chunk ")
 		b.WriteString(string(*c.ChunkID))
-		if c.EpisodeID != nil {
-			b.WriteString(", episode ")
-			b.WriteString(string(*c.EpisodeID))
-		}
 	}
 
 	if c.SourceName != "" {
@@ -251,11 +247,11 @@ func referenceLine(c domain.Citation) string {
 	}
 	if c.EventTime != nil {
 		b.WriteString(", event time ")
-		b.WriteString(c.EventTime.UTC().Format(time.RFC3339Nano))
+		b.WriteString(c.EventTime.UTC().Format(time.RFC3339))
 	}
 	if c.RecordedAt != nil {
 		b.WriteString(", recorded ")
-		b.WriteString(c.RecordedAt.UTC().Format(time.RFC3339Nano))
+		b.WriteString(c.RecordedAt.UTC().Format(time.RFC3339))
 	}
 	if c.Locator != "" {
 		b.WriteString(" (")
@@ -289,7 +285,28 @@ func (r *renderer) commit(text string) int {
 	return cost
 }
 
-// collapse folds whitespace so one passage cannot spend budget on blank lines.
+// collapse folds whitespace so one passage cannot spend budget on blank lines, while
+// keeping the passage's own line breaks.
+//
+// Folding everything onto one line made a passage's header run into its body, and a reader
+// quoting the passage back could produce a span that exists nowhere in the source. Phase 8
+// renders excerpts so they can be quoted verbatim; a rendering that alters where lines end
+// defeats that. Runs of spaces collapse to one, runs of blank lines to one blank line.
 func collapse(text string) string {
-	return strings.Join(strings.Fields(text), " ")
+	lines := strings.Split(text, "\n")
+	out := make([]string, 0, len(lines))
+	blank := false
+	for _, line := range lines {
+		line = strings.Join(strings.Fields(line), " ")
+		if line == "" {
+			blank = true
+			continue
+		}
+		if blank && len(out) > 0 {
+			out = append(out, "")
+		}
+		blank = false
+		out = append(out, line)
+	}
+	return strings.Join(out, "\n")
 }

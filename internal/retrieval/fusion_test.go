@@ -289,3 +289,74 @@ func TestPlannerSkipsVectorWithoutAnEmbedder(t *testing.T) {
 		t.Fatalf("expected only the runnable requested mode, got %v", plan.Modes)
 	}
 }
+
+func TestExactStreamIsRankOnly(t *testing.T) {
+	// Exact mode's score is a trigram similarity that mostly measures record length. A
+	// passage that contains the identifier once scores far below a two-word label that is
+	// the identifier, and the relative floor used to drop it before fusion.
+	items := fuse([]candidate{
+		hit(domain.ModeExact, 1, 0.9, domain.SurfaceEntity, "label"),
+		hit(domain.ModeExact, 2, 0.05, domain.SurfaceChunk, "passage"),
+	}, DefaultWeights(), 10)
+	if _, ok := find(items, "passage"); !ok {
+		t.Fatal("an exact match was dropped for having a low similarity score")
+	}
+	// The same shape in a retriever whose scores are magnitudes is still trimmed.
+	items = fuse([]candidate{
+		hit(domain.ModeLexical, 1, 0.9, domain.SurfaceChunk, "strong"),
+		hit(domain.ModeLexical, 2, 0.05, domain.SurfaceChunk, "weak"),
+	}, DefaultWeights(), 10)
+	if _, ok := find(items, "weak"); ok {
+		t.Fatal("the relative floor must still apply to scored retrievers")
+	}
+}
+
+func TestPrioritizeAnchoredPromotesRecordsNamingTheIdentifier(t *testing.T) {
+	items := []domain.RetrievedItem{
+		{RecordID: "lookalike", Content: "replacement decision for another case", Score: 0.9},
+		{RecordID: "about-it", Content: "replacement decision for CASE-42", Score: 0.5},
+		{RecordID: "cited", Content: "audit report", Score: 0.1},
+		{RecordID: "noise", Content: "", Score: 0.05},
+	}
+	got := prioritizeAnchored(items, []string{"CASE-42"}, map[string]bool{"cited": true}, 3)
+	if len(got) != 3 || got[0].RecordID != "about-it" || got[1].RecordID != "cited" || got[2].RecordID != "lookalike" {
+		t.Fatalf("anchored and cited records must come first, in fused order: %+v", got)
+	}
+	if got[0].Signals["anchored"] != 1 || got[1].Signals["anchored"] != 1 {
+		t.Fatal("promotion must be visible in the item signals")
+	}
+	unanchored := prioritizeAnchored(items, nil, nil, 2)
+	if len(unanchored) != 2 || unanchored[0].RecordID != "lookalike" {
+		t.Fatalf("without anchors the fused order stands: %+v", unanchored)
+	}
+	absent := prioritizeAnchored(items, []string{"CASE-99"}, nil, 2)
+	if absent[0].RecordID != "lookalike" {
+		t.Fatalf("an anchor nothing mentions must not reorder anything: %+v", absent)
+	}
+}
+
+func TestAnchorsInSkipsAbsentTermsAndTheAnchorItself(t *testing.T) {
+	got := anchorsIn([]string{"CASE-42", "ERR_9"}, "why did CASE-42 fail?")
+	if len(got) != 1 || got[0] != "CASE-42" {
+		t.Fatalf("anchors = %v", got)
+	}
+	if anchorsIn([]string{"CASE-42"}, "CASE-42") != nil {
+		t.Fatal("a sub-query that is the identifier has nothing to anchor")
+	}
+}
+
+func TestReachedRecordsAreDiscountedWhateverRetrieverReachedThem(t *testing.T) {
+	direct := hit(domain.ModeExact, 1, 1, domain.SurfaceChunk, "direct")
+	cited := hit(domain.ModeExact, 1, 1, domain.SurfaceChunk, "cited")
+	cited.stream = 2
+	cited.path = &domain.GraphPath{ViaPredicate: "cites", Depth: 1}
+	items := fuse([]candidate{direct, cited}, DefaultWeights(), 10)
+	d, _ := find(items, "direct")
+	c, _ := find(items, "cited")
+	if !(c.Score < d.Score) {
+		t.Fatalf("a record reached through a citation must not outrank one matched directly: %v vs %v", c.Score, d.Score)
+	}
+	if c.Path == nil || c.Path.ViaPredicate != "cites" {
+		t.Fatal("the path a record was reached by must be reported")
+	}
+}

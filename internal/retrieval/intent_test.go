@@ -1,8 +1,11 @@
 package retrieval
 
 import (
+	"context"
 	"testing"
 	"time"
+
+	"github.com/gimantha/strata/internal/domain"
 )
 
 func TestInterpretPreservesIdentifiersInsideQuestions(t *testing.T) {
@@ -50,4 +53,38 @@ func contains(values []string, want string) bool {
 		}
 	}
 	return false
+}
+
+func TestInterpretIgnoresFunctionWordsAndCalendarWords(t *testing.T) {
+	intent := Interpret("For Project-001, why was the supplier changed on January 25? Return the recorded reason code.")
+	if len(intent.FocusTerms) != 1 || intent.FocusTerms[0] != "Project-001" {
+		t.Fatalf("focus terms = %v", intent.FocusTerms)
+	}
+	// "For", "January", and "Return" are capitalized and name nothing. A sub-query for any
+	// of them retrieves whatever happens to contain a common word.
+	if len(intent.EntityTerms) != 0 {
+		t.Fatalf("entity terms = %v", intent.EntityTerms)
+	}
+}
+
+func TestInterpretKeepsNamesThatFollowFunctionWords(t *testing.T) {
+	intent := Interpret("For Alice Chen, what changed at New Horizons Ltd in March?")
+	if !contains(intent.EntityTerms, "Alice Chen") || !contains(intent.EntityTerms, "New Horizons Ltd") {
+		t.Fatalf("entity terms = %v", intent.EntityTerms)
+	}
+	if contains(intent.EntityTerms, "For") || contains(intent.EntityTerms, "March") {
+		t.Fatalf("entity terms = %v", intent.EntityTerms)
+	}
+}
+
+func TestPlanQueuesIdentifiersBeforeNamePhrases(t *testing.T) {
+	plan := heuristicPlanner{hasEmbedder: true}.Plan(context.Background(), domain.QueryRequest{
+		Query: "Why did Alice Chen, Bob Stone and Carol Diaz object to CASE-42?",
+	})
+	if !containsSubQuery(plan.SubQueries, "CASE-42") {
+		t.Fatalf("the identifier must survive the sub-query cap, got %+v", plan.SubQueries)
+	}
+	if len(plan.SubQueries) > domain.MaxSubQueries {
+		t.Fatalf("%d sub-queries exceeds the cap", len(plan.SubQueries))
+	}
 }

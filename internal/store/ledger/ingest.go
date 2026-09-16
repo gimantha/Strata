@@ -239,6 +239,39 @@ func (s *Store) GetSourceEventByIdempotencyKey(ctx context.Context, ws domain.Wo
 	return s.sourceEventByIdempotencyKey(ctx, s.pool, ws, src, key)
 }
 
+// SourceEventsByIdempotencyKeys resolves record identifiers quoted inside source material to
+// the events that carry them, across every source in the workspace.
+//
+// This is how a passage's reference to another record is followed: the key it cites is
+// looked up as written, and only keys that name an event resolve. A key held by more than
+// one source resolves to the earliest recorded event, which is the one other material is
+// most likely to have been citing.
+func (s *Store) SourceEventsByIdempotencyKeys(ctx context.Context, ws domain.WorkspaceID, keys []string) (map[string]domain.SourceEvent, error) {
+	const op = "ledger.SourceEventsByIdempotencyKeys"
+
+	out := map[string]domain.SourceEvent{}
+	if len(keys) == 0 {
+		return out, nil
+	}
+	rows, err := s.pool.Query(ctx, `SELECT `+sourceEventColumns+` FROM source_events
+		WHERE workspace_id = $1 AND idempotency_key = ANY($2::text[])
+		ORDER BY recorded_at, id`, ws, keys)
+	if err != nil {
+		return nil, mapError(err, op, "cannot resolve idempotency keys")
+	}
+	defer rows.Close()
+	for rows.Next() {
+		event, err := scanSourceEvent(rowAdapter{rows}, op)
+		if err != nil {
+			return nil, err
+		}
+		if _, seen := out[event.IdempotencyKey]; !seen {
+			out[event.IdempotencyKey] = event
+		}
+	}
+	return out, mapError(rows.Err(), op, "cannot resolve idempotency keys")
+}
+
 func scanSourceEvent(row pgx.Row, op string) (domain.SourceEvent, error) {
 	var (
 		e            domain.SourceEvent

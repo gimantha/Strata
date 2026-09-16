@@ -29,10 +29,30 @@ func matchClause(q domain.LexicalQuery) (clause []any, empty bool) {
 	if q.MatchAny {
 		operator = "or"
 	}
-	return []any{map[string]any{
+	text := q.Text
+	for _, anchor := range q.Anchors {
+		anchor = strings.TrimSpace(anchor)
+		if anchor == "" {
+			continue
+		}
+		// A required phrase per anchor, alongside the ordinary match on the remaining
+		// words. This is the same contract the reference expresses as a tsquery
+		// conjunction: the identifier must be present, the rest is matched as asked.
+		clause = append(clause, map[string]any{
+			"match_phrase": map[string]any{"content": anchor},
+		})
+		text = removeToken(text, anchor)
+	}
+	if strings.TrimSpace(text) == "" {
+		if len(clause) == 0 {
+			return nil, true
+		}
+		return clause, false
+	}
+	return append(clause, map[string]any{
 		"match": map[string]any{
 			"content": map[string]any{
-				"query": q.Text,
+				"query": text,
 				// Every term must appear, matching websearch_to_tsquery's default of
 				// conjunction. The OpenSearch default is OR, which would return documents
 				// sharing one common word with the query and make the two engines disagree
@@ -40,7 +60,20 @@ func matchClause(q domain.LexicalQuery) (clause []any, empty bool) {
 				"operator": operator,
 			},
 		},
-	}}, false
+	}), false
+}
+
+// removeToken drops every whitespace-delimited occurrence of token from text, ignoring
+// case and surrounding punctuation, so an anchor is not also matched as an ordinary word.
+func removeToken(text, token string) string {
+	var kept []string
+	for _, field := range strings.Fields(text) {
+		if strings.EqualFold(strings.Trim(field, ",.;:!?()[]{}\"'"), token) {
+			continue
+		}
+		kept = append(kept, field)
+	}
+	return strings.Join(kept, " ")
 }
 
 // wildcardPattern renders a substring search that means what it says.

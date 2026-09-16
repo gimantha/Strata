@@ -120,7 +120,7 @@ func ExtractEntityTerms(query string) []string {
 }
 
 func properNameWord(word string) bool {
-	if word == "" || identifierToken(word) || isTimeToken(word) {
+	if word == "" || identifierToken(word) || isTimeToken(word) || functionWord(word) {
 		return false
 	}
 	runes := []rune(word)
@@ -225,7 +225,71 @@ func identifierToken(token string) bool {
 }
 
 func isTimeToken(token string) bool {
-	return rfc3339InText.MatchString(token) || dateInText.MatchString(token)
+	return rfc3339InText.MatchString(token) || dateInText.MatchString(token) || calendarWord(token)
+}
+
+// calendarWord reports whether a token is a month or weekday name. These are capitalized in
+// English and so look like proper names, but "January" is a coordinate, not an identity, and
+// a sub-query for it would retrieve every record that mentions the month.
+func calendarWord(token string) bool {
+	_, ok := monthNumbers[strings.ToLower(strings.TrimSuffix(token, "."))]
+	if ok {
+		return true
+	}
+	switch strings.ToLower(strings.TrimSuffix(token, ".")) {
+	case "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday",
+		"mon", "tue", "tues", "wed", "thu", "thur", "thurs", "fri", "sat", "sun":
+		return true
+	}
+	return false
+}
+
+// monthNumbers maps English month names and their common abbreviations to month numbers.
+var monthNumbers = map[string]time.Month{
+	"january": time.January, "jan": time.January,
+	"february": time.February, "feb": time.February,
+	"march": time.March, "mar": time.March,
+	"april": time.April, "apr": time.April,
+	"may":  time.May,
+	"june": time.June, "jun": time.June,
+	"july": time.July, "jul": time.July,
+	"august": time.August, "aug": time.August,
+	"september": time.September, "sep": time.September, "sept": time.September,
+	"october": time.October, "oct": time.October,
+	"november": time.November, "nov": time.November,
+	"december": time.December, "dec": time.December,
+}
+
+// functionWord reports whether a capitalized word is grammar or instruction rather than a
+// name. A question that opens "For ..." or ends "... Return the reason code" capitalizes
+// words that name nothing, and a sub-query built from one retrieves whatever happens to
+// contain a common word. The list is deliberately confined to articles, prepositions,
+// conjunctions, auxiliaries, pronouns, and the verbs questions are phrased with; adjectives
+// that begin real names ("New", "North", "Great") are left alone.
+func functionWord(word string) bool {
+	switch strings.ToLower(word) {
+	case "a", "an", "the", "and", "or", "but", "nor", "so", "yet", "if", "then", "than", "that",
+		"this", "these", "those", "as", "at", "by", "for", "from", "in", "into", "of", "off", "on",
+		"onto", "to", "up", "with", "without", "within", "about", "above", "across", "after",
+		"against", "along", "among", "around", "before", "behind", "below", "beneath", "beside",
+		"between", "beyond", "during", "except", "inside", "near", "outside", "over", "past",
+		"per", "since", "through", "throughout", "toward", "towards", "under", "until", "upon",
+		"via", "versus", "vs",
+		"i", "me", "my", "we", "us", "our", "you", "your", "he", "him", "his", "she", "her", "it",
+		"its", "they", "them", "their", "who", "whom", "whose", "which", "what", "when", "where",
+		"why", "how", "whether",
+		"am", "is", "are", "was", "were", "be", "been", "being", "do", "does", "did", "done",
+		"has", "have", "had", "having", "can", "could", "may", "might", "must", "shall", "should",
+		"will", "would",
+		"not", "no", "yes", "all", "any", "both", "each", "either", "every", "neither", "none",
+		"only", "also", "even", "just", "still", "already", "again", "please",
+		"return", "give", "tell", "show", "list", "find", "explain", "describe", "state", "cite",
+		"answer", "report", "provide", "identify", "determine", "summarize", "summarise",
+		"compare", "include", "including", "use", "using", "used", "based", "according",
+		"given", "consider", "considering", "assume", "assuming", "note":
+		return true
+	}
+	return false
 }
 
 func containsAny(text string, values ...string) bool {

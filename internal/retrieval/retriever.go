@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
@@ -37,6 +38,14 @@ type Ledger interface {
 	// GetEntities names the identities a graph traversal reached. Batched, because the
 	// alternative is one lookup per hit.
 	GetEntities(ctx context.Context, ws domain.WorkspaceID, ids []domain.EntityID) (map[domain.EntityID]domain.Entity, error)
+	// SourceEventsByIdempotencyKeys resolves identifiers quoted in retrieved passages to the
+	// events they name, so a citation inside one record can lead to the record it cites.
+	// Like the entity lookup this is canonical, not a projection: a record key is a fact
+	// about the ledger, and no index is asked to guess at it.
+	SourceEventsByIdempotencyKeys(ctx context.Context, ws domain.WorkspaceID, keys []string) (map[string]domain.SourceEvent, error)
+	// ListChunks returns a cited event's passages, in order, so the followed reference is
+	// read from the same canonical text every other excerpt comes from.
+	ListChunks(ctx context.Context, ws domain.WorkspaceID, eventID domain.SourceEventID) ([]domain.Chunk, error)
 }
 
 // Retriever runs the planned candidate generators and fuses their results.
@@ -179,7 +188,36 @@ func (r *Retriever) Query(ctx context.Context, req domain.QueryRequest) (domain.
 		candidates = append(candidates, found...)
 	}
 
-	items := fuse(candidates, r.weights, req.Limit)
+	// Anchored questions get two more steps. Fusion is run wide, and the passages that
+	// name the identifier are read for the record identifiers they cite; those records
+	// are fetched and fused in, and finally results that name the identifier are ranked
+	// ahead of ones that merely resemble the question before the cut is made.
+	items := fuse(candidates, r.weights, fusionWidth(req.Limit, plan.FocusTerms))
+	var referenced map[string]bool
+	if len(plan.FocusTerms) > 0 && len(req.Modes) == 0 && slices.Contains(plan.Modes, domain.ModeExact) {
+		followed, keys, err := r.followReferences(ctx, req, items, plan.FocusTerms)
+		if err != nil {
+			return domain.QueryResult{}, err
+		}
+		if len(followed) > 0 {
+			stream := len(plan.SubQueries) + 2
+			referenced = map[string]bool{}
+			for i := range followed {
+				followed[i].stream = stream
+				referenced[followed[i].hit.RecordID] = true
+			}
+			for _, key := range keys {
+				plan.SubQueries = append(plan.SubQueries, domain.SubQuery{
+					Text: key, Kind: domain.SubQueryReference,
+					Reason: "record identifier cited by a passage about the question's subject",
+				})
+			}
+			plan.Candidates[domain.ModeExact] += len(followed)
+			candidates = append(candidates, followed...)
+			items = fuse(candidates, r.weights, fusionWidth(req.Limit, plan.FocusTerms))
+		}
+	}
+	items = prioritizeAnchored(items, plan.FocusTerms, referenced, req.Limit)
 	result := domain.QueryResult{Items: items, Total: countDistinct(candidates)}
 	if req.Explain {
 		result.Plan = &plan
@@ -200,6 +238,123 @@ func (r *Retriever) Query(ctx context.Context, req domain.QueryRequest) (domain.
 			slog.String("planner", plan.Planner))
 	}
 	return result, nil
+}
+
+// fusionWidth is how many fused results to keep before anchored prioritization. Wider than
+// the requested limit when the question carries an identifier, because the records that
+// name it may sit below records that merely resemble the question, and prioritization can
+// only promote what fusion kept.
+func fusionWidth(limit int, focus []string) int {
+	if len(focus) == 0 || limit <= 0 {
+		return limit
+	}
+	return limit * 3
+}
+
+// followReferences reads the record identifiers cited by passages about the question's
+// subject and fetches the records they name.
+//
+// A decision record says which report it relied on; a correction names the record it
+// corrects; a late delivery names the transfer it predates. Those citations are how the
+// source itself links the evidence, and a reader who is handed the decision without the
+// report it cites has to take the decision's word for it. Only identifiers that resolve to
+// an event in the workspace are followed, so a code word or a product name in the same
+// passage is not mistaken for a record. Followed passages are returned as exact-mode
+// candidates in their own stream: they were found by a required identifier, and the citing
+// passage's rank is not theirs.
+func (r *Retriever) followReferences(ctx context.Context, req domain.QueryRequest, items []domain.RetrievedItem, focus []string) ([]candidate, []string, error) {
+	counts := map[string]int{}
+	for _, item := range items {
+		if !mentionsAny(item.Content, focus) {
+			continue
+		}
+		for _, raw := range strings.Fields(item.Content) {
+			token := strings.Trim(raw, "\t\r\n ,;:!?()[]{}\"'“”.")
+			if token == "" || isTimeToken(token) || !identifierToken(token) || !containsDigit(token) {
+				continue
+			}
+			if equalsAnyFold(token, focus) {
+				continue
+			}
+			counts[token]++
+		}
+	}
+	if len(counts) == 0 {
+		return nil, nil, nil
+	}
+	tokens := make([]string, 0, len(counts))
+	for token := range counts {
+		tokens = append(tokens, token)
+	}
+	events, err := r.ledger.SourceEventsByIdempotencyKeys(ctx, req.Scope.WorkspaceID, tokens)
+	if err != nil {
+		return nil, nil, err
+	}
+	keys := make([]string, 0, len(events))
+	for key := range events {
+		keys = append(keys, key)
+	}
+	// Most-cited first, then alphabetical so the choice is stable.
+	sort.Slice(keys, func(i, j int) bool {
+		if counts[keys[i]] != counts[keys[j]] {
+			return counts[keys[i]] > counts[keys[j]]
+		}
+		return keys[i] < keys[j]
+	})
+	if len(keys) > domain.MaxReferenceFollows {
+		keys = keys[:domain.MaxReferenceFollows]
+	}
+
+	var out []candidate
+	rank := 0
+	for _, key := range keys {
+		event := events[key]
+		if !domain.IsZero(req.Scope.GraphSpaceID) && event.GraphSpaceID != req.Scope.GraphSpaceID {
+			continue
+		}
+		chunks, err := r.ledger.ListChunks(ctx, req.Scope.WorkspaceID, event.ID)
+		if err != nil {
+			return nil, nil, err
+		}
+		for _, chunk := range chunks {
+			// Policy is applied here as it is in every retriever: a passage the caller may
+			// not read is not returned because another passage cited it.
+			if !req.Policy.Allows(chunk.Classification, event.SourceID, "", "", "") {
+				continue
+			}
+			rank++
+			out = append(out, candidate{
+				mode: domain.ModeExact, rank: rank, score: 1,
+				hit: domain.Hit{
+					Surface: domain.SurfaceChunk, RecordID: string(chunk.ID), Content: chunk.Content,
+					Detail: map[string]any{"retriever": "reference", "cited_key": key},
+				},
+				// One hop from what was matched, and discounted as such in fusion: a
+				// cited record is worth reading, but the citing passage's relevance is
+				// not automatically its own.
+				path: &domain.GraphPath{ViaPredicate: "cites", Depth: 1},
+			})
+		}
+	}
+	return out, keys, nil
+}
+
+func containsDigit(s string) bool {
+	for _, r := range s {
+		if unicode.IsDigit(r) {
+			return true
+		}
+	}
+	return false
+}
+
+func equalsAnyFold(value string, values []string) bool {
+	for _, other := range values {
+		if strings.EqualFold(value, other) {
+			return true
+		}
+	}
+	return false
 }
 
 // seedingModes is every mode except graph, in plan order.
@@ -236,9 +391,9 @@ func (r *Retriever) runModes(ctx context.Context, req domain.QueryRequest,
 		)
 		switch mode {
 		case domain.ModeLexical:
-			found, err = r.lexical(ctx, req, false)
+			found, err = r.lexical(ctx, req, false, anchorsIn(plan.FocusTerms, req.Query))
 		case domain.ModeExact:
-			found, err = r.lexical(ctx, req, true)
+			found, err = r.lexical(ctx, req, true, nil)
 		case domain.ModeVector:
 			found, err = r.vector(ctx, req)
 		case domain.ModeEntity:
@@ -264,7 +419,15 @@ func (r *Retriever) runModes(ctx context.Context, req domain.QueryRequest,
 }
 
 // lexical runs full-text or substring search.
-func (r *Retriever) lexical(ctx context.Context, req domain.QueryRequest, exact bool) ([]candidate, error) {
+//
+// Prose search is a ladder. Strict conjunction first, because when every word of a question
+// occurs in one record that record is the answer. If nothing matches and the question names
+// an identifier, the identifier becomes a required phrase and the other words are relaxed:
+// the record has to be about the named subject, and then the more of the question it
+// echoes the better. Only if that also finds nothing are all the words relaxed together,
+// which is the search that ranks a hundred look-alike records about other subjects above
+// the one about this one.
+func (r *Retriever) lexical(ctx context.Context, req domain.QueryRequest, exact bool, anchors []string) ([]candidate, error) {
 	mode := domain.ModeLexical
 	if exact {
 		mode = domain.ModeExact
@@ -290,6 +453,18 @@ func (r *Retriever) lexical(ctx context.Context, req domain.QueryRequest, exact 
 	if err != nil {
 		return nil, err
 	}
+	if !exact && len(hits) == 0 && len(anchors) > 0 && len(strings.Fields(req.Query)) > len(anchors) {
+		hits, err = r.indexes.Lexical.Search(ctx, domain.LexicalQuery{
+			Scope: req.Scope, Text: req.Query, Surfaces: req.Filters.Surfaces,
+			ValidAt: req.Temporal.ValidAt, Statuses: statusStrings(req.Filters.Statuses),
+			Classification: req.Filters.Classifications, MemoryKinds: req.Filters.MemoryKinds,
+			EntityTypes: req.Filters.EntityTypes, Policy: req.Policy, ActiveAt: req.Temporal.ActiveAt,
+			Anchors: anchors, MatchAny: true, Limit: req.Limit * 3,
+		})
+		if err != nil {
+			return nil, err
+		}
+	}
 	if !exact && len(hits) == 0 && len(strings.Fields(req.Query)) > 1 {
 		hits, err = r.indexes.Lexical.Search(ctx, domain.LexicalQuery{
 			Scope: req.Scope, Text: req.Query, Surfaces: req.Filters.Surfaces,
@@ -303,6 +478,25 @@ func (r *Retriever) lexical(ctx context.Context, req domain.QueryRequest, exact 
 		}
 	}
 	return toCandidates(mode, hits), nil
+}
+
+// anchorsIn returns the focus terms that occur in this search's text. A decomposed
+// sub-query that is itself an identifier has nothing to anchor: it is the anchor.
+func anchorsIn(focus []string, query string) []string {
+	if len(focus) == 0 {
+		return nil
+	}
+	lower := strings.ToLower(query)
+	var out []string
+	for _, term := range focus {
+		if term == "" || strings.EqualFold(strings.TrimSpace(query), term) {
+			continue
+		}
+		if strings.Contains(lower, strings.ToLower(term)) {
+			out = append(out, term)
+		}
+	}
+	return out
 }
 
 // vector runs nearest-neighbour search.

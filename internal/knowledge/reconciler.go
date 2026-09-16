@@ -41,7 +41,11 @@ type Outcome struct {
 }
 
 // Reconcile compares a committed claim against the believable claims it might contradict.
-func (r *Reconciler) Reconcile(ctx context.Context, assertion domain.Assertion, predicate domain.PredicateDefinition, operation domain.SourceOperation, now time.Time) (Outcome, error) {
+//
+// replaces says the source stated, in the text this claim was read from, that the value
+// replaces an earlier one. It is honoured like a correction operation: the two are the same
+// statement made at different granularities, one about the event and one about the claim.
+func (r *Reconciler) Reconcile(ctx context.Context, assertion domain.Assertion, predicate domain.PredicateDefinition, operation domain.SourceOperation, replaces bool, now time.Time) (Outcome, error) {
 	// A quarantined claim is not believed, so it cannot contradict anything. Letting it
 	// dispute good knowledge would hand untrusted material a veto.
 	if assertion.Status == domain.AssertionQuarantined {
@@ -52,7 +56,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, assertion domain.Assertion, 
 	// same canonical slot and from the same source are retired; facts from other sources
 	// remain independent corroboration or disagreement.
 	var explicitlyCorrected []domain.AssertionID
-	if operation == domain.SourceOpCorrection {
+	if operation == domain.SourceOpCorrection || replaces {
 		inSlot, err := r.store.FindClaimsInSlot(ctx, assertion)
 		if err != nil {
 			return Outcome{}, err
@@ -69,8 +73,11 @@ func (r *Reconciler) Reconcile(ctx context.Context, assertion domain.Assertion, 
 				Reason: "the correction predates source position " + sourceMarker(superseder)}, nil
 		}
 		if len(prior) > 0 {
-			outcome, err := r.supersede(ctx, assertion, prior, now,
-				"the source explicitly corrected this canonical slot")
+			reason := "the source explicitly corrected this canonical slot"
+			if operation != domain.SourceOpCorrection {
+				reason = "the source stated that this value replaces the earlier value in this canonical slot"
+			}
+			outcome, err := r.supersede(ctx, assertion, prior, now, reason)
 			if err != nil {
 				return Outcome{}, err
 			}

@@ -387,6 +387,31 @@ func RunLexicalConformance(t *testing.T, name string, idx Lexical, f Fixture) {
 		}
 	})
 
+	t.Run(name+"/anchors are required and the rest is relaxed", func(t *testing.T) {
+		ctx := t.Context()
+		wanted := lexicalRecord(f.Primary, "CASE-42 was approved after a second review")
+		other := lexicalRecord(f.Primary, "CASE-99 was approved after a second review")
+		if err := idx.Upsert(ctx, []domain.ProjectedRecord{wanted, other}); err != nil {
+			t.Fatalf("upsert: %v", err)
+		}
+		// The question names an identifier and asks about it in ordinary words. Without
+		// anchoring, the identifier is one word among many and the record about the
+		// other case matches just as well; with it, the identifier is a precondition.
+		hits, err := idx.Search(ctx, domain.LexicalQuery{
+			Scope: f.Primary, Text: "why was CASE-42 approved after review",
+			Anchors: []string{"CASE-42"}, MatchAny: true, Limit: 10,
+		})
+		if err != nil {
+			t.Fatalf("anchored search: %v", err)
+		}
+		if !containsRecord(hits, wanted.RecordID) {
+			t.Fatalf("the anchored record was not found: %v", hits)
+		}
+		if containsRecord(hits, other.RecordID) {
+			t.Fatal("a record without the anchor was returned by an anchored search")
+		}
+	})
+
 	t.Run(name+"/upsert is idempotent", func(t *testing.T) {
 		ctx := t.Context()
 		record := lexicalRecord(f.Primary,
