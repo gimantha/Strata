@@ -39,8 +39,10 @@ type Options struct {
 	// be selected. Selection can only drop, so a redundancy filter with nothing to fall
 	// back on returns a short block.
 	CandidateMultiple int
-	// ScaffoldingReserve is the fraction of the budget held back for the header and
-	// section headings before content selection runs.
+	// ScaffoldingReserve, when set, is a fixed fraction of the budget held back for the
+	// header and section headings before content selection runs. When zero, the default,
+	// the real cost of the header and headings is held back instead. Reference lines are
+	// not part of it either way: each item pays for its own.
 	ScaffoldingReserve float64
 	// Clock is injectable so temporal behavior is testable.
 	Clock func() time.Time
@@ -58,9 +60,6 @@ type Assembler struct {
 // DefaultCandidateMultiple is how many candidates are fetched per selectable item.
 const DefaultCandidateMultiple = 4
 
-// DefaultScaffoldingReserve holds back budget for headings and references.
-const DefaultScaffoldingReserve = 0.25
-
 func New(retriever Retriever, store Store, opts Options, logger *slog.Logger, tracer trace.Tracer) *Assembler {
 	opts.Weights = opts.Weights.withDefaults()
 	if opts.Estimator == nil {
@@ -68,9 +67,6 @@ func New(retriever Retriever, store Store, opts Options, logger *slog.Logger, tr
 	}
 	if opts.CandidateMultiple <= 0 {
 		opts.CandidateMultiple = DefaultCandidateMultiple
-	}
-	if opts.ScaffoldingReserve <= 0 {
-		opts.ScaffoldingReserve = DefaultScaffoldingReserve
 	}
 	if opts.Clock == nil {
 		opts.Clock = time.Now
@@ -109,7 +105,10 @@ func (a *Assembler) Assemble(ctx context.Context, req domain.ContextRequest) (do
 		Policy:    req.Policy,
 		Purpose:   req.Purpose,
 		Limit:     req.MaxItems * a.opts.CandidateMultiple,
-		Explain:   req.Explain,
+		// Selection below works under the token budget and scores each candidate, so a
+		// weak match is ranked last and only fills room nothing better wanted.
+		KeepWeakTail: true,
+		Explain:      req.Explain,
 	})
 	if err != nil {
 		return domain.ContextBlock{}, err
@@ -124,25 +123,40 @@ func (a *Assembler) Assemble(ctx context.Context, req domain.ContextRequest) (do
 		return domain.ContextBlock{}, err
 	}
 
-	// Content gets the budget minus what the header and section headings are expected to
-	// cost. Reference lines are charged to the items themselves rather than to this
-	// reserve, because their cost scales with how many items are selected. The renderer
-	// enforces the real ceiling either way.
-	contentBudget := int(float64(req.TokenBudget) * (1 - a.opts.ScaffoldingReserve))
+	// A question about sources or evidence gets every identifier in its reference lines;
+	// any other question gets short ones (see referenceLine).
+	fullReferences := hasRequirement(intent.Requirements, "provenance")
+	r, err := newRenderer(a.opts.Estimator, req.TokenBudget, fullReferences)
+	if err != nil {
+		return domain.ContextBlock{}, err
+	}
+	asOf := ""
+	if req.Temporal.ValidAt != nil {
+		asOf = req.Temporal.ValidAt.UTC().Format(time.RFC3339)
+	}
+
+	// Content gets the budget minus what the header and section headings cost. Reference
+	// lines are charged to the items themselves, because their cost grows with how many
+	// items are selected. The renderer enforces the real ceiling either way.
+	//
+	// This used to be a fixed quarter of the budget, sized for when reference lines were
+	// long. Once they were short, that quarter mostly went unused: on a 4,000-token block
+	// the header and headings cost about 150 tokens and about 800 were left empty.
+	contentBudget := req.TokenBudget - r.fixedCost(req, asOf, candidates)
+	if a.opts.ScaffoldingReserve > 0 {
+		contentBudget = int(float64(req.TokenBudget) * (1 - a.opts.ScaffoldingReserve))
+	}
 	if contentBudget < 1 {
 		contentBudget = 1
 	}
 
 	selector := &selector{
 		weights: weightsForRequirements(a.opts.Weights, intent.Requirements), estimator: a.opts.Estimator, req: req,
-		cost: a.renderedCost,
+		cost: func(c candidate) int { return a.renderedCost(c, fullReferences) },
 	}
 	chosen := orderForRendering(selector.choose(candidates, contentBudget))
 
-	block, err := a.render(req, chosen)
-	if err != nil {
-		return domain.ContextBlock{}, err
-	}
+	block := a.render(r, req, asOf, chosen)
 
 	block.Dropped = append(hydrator.dropped, selector.dropped...)
 	block.Dropped = append(block.Dropped, a.droppedByRenderer(chosen, block.Items)...)
@@ -184,11 +198,15 @@ func cloneSectionShares(in map[domain.ContextSection]float64) map[domain.Context
 	return out
 }
 
-// renderedCost is what one candidate will spend: its own text and its reference line.
-func (a *Assembler) renderedCost(c candidate) int {
+// renderedCost is what one candidate will spend: its own text, its marker and time, and its
+// reference line.
+func (a *Assembler) renderedCost(c candidate, fullReferences bool) int {
 	citation := c.citation
 	citation.Marker = 1 // one digit; the difference against a three-digit marker is noise
-	cost := a.opts.Estimator.Estimate(c.text) + a.opts.Estimator.Estimate(referenceLine(citation))
+	cost := a.opts.Estimator.Estimate(c.text) + a.opts.Estimator.Estimate(referenceLine(citation, fullReferences))
+	if c.section == domain.SectionExcerpts {
+		cost += a.opts.Estimator.Estimate("[1] " + excerptPrefix(c.when))
+	}
 	if c.surface != domain.SurfaceChunk && strings.TrimSpace(citation.Quote) != "" {
 		cost += a.opts.Estimator.Estimate("supporting evidence " + citation.Quote)
 		cost += a.opts.Estimator.Estimate("<<SOURCE:0000000000000000>>\n<<SOURCE:0000000000000000>>\n")
@@ -197,16 +215,7 @@ func (a *Assembler) renderedCost(c candidate) int {
 }
 
 // render writes the block, dropping anything that no longer fits.
-func (a *Assembler) render(req domain.ContextRequest, chosen []selection) (domain.ContextBlock, error) {
-	r, err := newRenderer(a.opts.Estimator, req.TokenBudget)
-	if err != nil {
-		return domain.ContextBlock{}, err
-	}
-
-	asOf := ""
-	if req.Temporal.ValidAt != nil {
-		asOf = req.Temporal.ValidAt.UTC().Format(time.RFC3339)
-	}
+func (a *Assembler) render(r *renderer, req domain.ContextRequest, asOf string, chosen []selection) domain.ContextBlock {
 	r.header(req.Query, asOf)
 
 	block := domain.ContextBlock{}
@@ -256,7 +265,7 @@ func (a *Assembler) render(req domain.ContextRequest, chosen []selection) (domai
 		Tolerance:   a.opts.Estimator.Tolerance(),
 		Estimator:   a.opts.Estimator.Name(),
 	}
-	return block, nil
+	return block
 }
 
 // droppedByRenderer records selections that did not survive rendering.

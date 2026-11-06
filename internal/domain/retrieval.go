@@ -72,6 +72,12 @@ type QueryRequest struct {
 
 	Limit      int
 	GraphDepth int
+	// KeepWeakTail keeps each retriever's weak results instead of dropping them, ranked
+	// after every strong result. Context assembly sets it. It chooses under its own token
+	// budget and gives a weak match a low score, so a weak match only fills room that
+	// would otherwise stay empty. A plain search leaves it off, so a question with one
+	// excellent answer does not get nine poor ones added (ADR 0012).
+	KeepWeakTail bool
 	// Explain returns the plan and per-signal scores, so a result can be argued with
 	// rather than merely accepted.
 	Explain bool

@@ -23,6 +23,7 @@ type fakeStore struct {
 	entities   map[domain.EntityID]domain.Entity
 	conflicts  map[domain.ConflictSetID][]domain.Assertion
 	bySubject  map[domain.EntityID][]domain.Assertion
+	neighbors  map[domain.ChunkID]domain.ChunkNeighbors
 }
 
 func (f *fakeStore) ProvenanceChain(_ context.Context, _ domain.WorkspaceID, id domain.AssertionID) (domain.ProvenanceChain, error) {
@@ -31,6 +32,16 @@ func (f *fakeStore) ProvenanceChain(_ context.Context, _ domain.WorkspaceID, id 
 		return domain.ProvenanceChain{}, domain.Errorf(domain.CodeNotFound, "fake", "no assertion %s", id)
 	}
 	return chain, nil
+}
+
+func (f *fakeStore) ChunkNeighbors(_ context.Context, _ domain.WorkspaceID, ids []domain.ChunkID, _ []domain.Classification) (map[domain.ChunkID]domain.ChunkNeighbors, error) {
+	out := map[domain.ChunkID]domain.ChunkNeighbors{}
+	for _, id := range ids {
+		if n, ok := f.neighbors[id]; ok {
+			out[id] = n
+		}
+	}
+	return out, nil
 }
 
 func (f *fakeStore) ChunkProvenance(_ context.Context, _ domain.WorkspaceID, ids []domain.ChunkID) (map[domain.ChunkID]domain.ChunkProvenance, error) {
@@ -462,11 +473,35 @@ func TestRenderedFactIncludesEvidenceAndUpstreamOrigin(t *testing.T) {
 	}
 	c.store.chains[id] = chain
 
+	// An ordinary question gets a short reference line: where the claim came from, not
+	// every identifier behind it. The identifiers stay in the structured citation.
 	block, err := c.assembler(Options{}).Assemble(t.Context(), c.request(1000))
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"supporting evidence:", "recovery time was lower", "upstream event review-42", "idempotency key EV-0042", "sequence 17", "version v3"} {
+	for _, want := range []string{"supporting evidence:", "recovery time was lower", "support-chat: review-42"} {
+		if !strings.Contains(block.Text, want) {
+			t.Fatalf("missing %q from the block:\n%s", want, block.Text)
+		}
+	}
+	for _, unwanted := range []string{"idempotency key", string(id)} {
+		if strings.Contains(block.Text, unwanted) {
+			t.Fatalf("an ordinary question should not get %q in its reference lines:\n%s", unwanted, block.Text)
+		}
+	}
+	if len(block.Citations) != 1 || block.Citations[0].IdempotencyKey != "EV-0042" ||
+		block.Citations[0].AssertionID == nil || *block.Citations[0].AssertionID != id {
+		t.Fatalf("the structured citation must keep every identifier: %+v", block.Citations)
+	}
+
+	// A question about the source gets every identifier, because then they are the answer.
+	req := c.request(1000)
+	req.Query = "which source event says who supplies fasteners"
+	block, err = c.assembler(Options{}).Assemble(t.Context(), req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"supporting evidence:", "recovery time was lower", "assertion " + string(id), "upstream event review-42", "idempotency key EV-0042", "sequence 17", "version v3"} {
 		if !strings.Contains(block.Text, want) {
 			t.Fatalf("missing %q from provenance block:\n%s", want, block.Text)
 		}

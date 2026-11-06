@@ -2,6 +2,7 @@ package contextblock
 
 import (
 	"context"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -42,6 +43,17 @@ type candidate struct {
 	// excerpt is the source passage a claim's evidence was read from, kept so a claim
 	// brought in as a required premise can bring its checkable text with it.
 	excerpt *domain.ProvenanceLink
+	// message marks an excerpt that is one message of a conversation. Its neighbours in
+	// the conversation are offered too (see addNeighbors).
+	message bool
+	// anchor is set on a neighbour: the record ID of the retrieved message it sits next
+	// to, and offset says on which side (-1 before, +1 after).
+	anchor string
+	offset int
+	// when is the source time of an excerpt: when its message or document was written.
+	// It is rendered next to the excerpt, because a question about when something
+	// happened is answered from it, and "last Saturday" in the text means nothing without it.
+	when *time.Time
 
 	// subjects and predicate drive coverage: a second claim about an entity already
 	// covered adds less than the first claim about a new one.
@@ -64,6 +76,7 @@ type candidate struct {
 type Store interface {
 	ProvenanceChain(ctx context.Context, ws domain.WorkspaceID, id domain.AssertionID) (domain.ProvenanceChain, error)
 	ChunkProvenance(ctx context.Context, ws domain.WorkspaceID, ids []domain.ChunkID) (map[domain.ChunkID]domain.ChunkProvenance, error)
+	ChunkNeighbors(ctx context.Context, ws domain.WorkspaceID, ids []domain.ChunkID, classifications []domain.Classification) (map[domain.ChunkID]domain.ChunkNeighbors, error)
 	ConflictMembers(ctx context.Context, ws domain.WorkspaceID, id domain.ConflictSetID) (domain.ConflictSet, []domain.Assertion, error)
 	QueryAssertions(ctx context.Context, q domain.AssertionQuery) ([]domain.Assertion, error)
 	GetEntity(ctx context.Context, ws domain.WorkspaceID, id domain.EntityID) (domain.Entity, error)
@@ -152,11 +165,124 @@ func (h *hydrator) hydrate(ctx context.Context, items []domain.RetrievedItem) ([
 				"surface "+string(item.Surface)+" has no citable form")
 		}
 	}
+	out, err = h.addNeighbors(ctx, out)
+	if err != nil {
+		return nil, err
+	}
 	expanded, err := h.expandRequirements(ctx, out, seen)
 	if err != nil {
 		return nil, err
 	}
 	return h.deriveProofs(ctx, expanded)
+}
+
+// Neighbour shares: a neighbouring message is offered at this fraction of the relevance
+// of the message it sits next to.
+//
+// In a conversation the words of a question often match the turn that asked about the
+// thing, and the answer is in the reply. On the LoCoMo dev questions (bench/), offering the
+// neighbours raised evidence recall at a 4,000-token budget from 76% to 80%; the next
+// message helps far more than the previous one, so it gets the larger share. Shares of
+// 0.7/0.4, 0.9/0.6 and 1.0/0.8 all landed within a point of each other there; the lowest
+// is kept, so a neighbour is least likely to push out a real match on other data. Both
+// compete for the budget like any other excerpt.
+const (
+	nextMessageShare     = 0.7
+	previousMessageShare = 0.4
+)
+
+// addNeighbors offers the messages just before and after each retrieved conversation
+// message.
+//
+// A neighbour comes from the same source event as the message it sits next to, so it shares
+// that message's source, collection and graph space, which the caller was already allowed
+// to see. Its classification can differ, so the store filters on it in the query, and the
+// policy is checked again here on the record itself, as for any retrieved passage.
+func (h *hydrator) addNeighbors(ctx context.Context, candidates []candidate) ([]candidate, error) {
+	present := map[string]bool{}
+	var anchors []domain.ChunkID
+	for _, c := range candidates {
+		if c.surface != domain.SurfaceChunk {
+			continue
+		}
+		present[c.recordID] = true
+		if c.message && c.anchor == "" {
+			anchors = append(anchors, domain.ChunkID(c.recordID))
+		}
+	}
+	if len(anchors) == 0 {
+		return candidates, nil
+	}
+
+	allowed := h.req.Policy.PermittedClassifications()
+	if len(h.req.Filters.Classifications) > 0 {
+		var narrowed []domain.Classification
+		for _, c := range allowed {
+			if slices.Contains(h.req.Filters.Classifications, c) {
+				narrowed = append(narrowed, c)
+			}
+		}
+		allowed = narrowed
+	}
+	neighbors, err := h.store.ChunkNeighbors(ctx, h.req.Scope.WorkspaceID, anchors, allowed)
+	if err != nil {
+		return nil, err
+	}
+
+	type offer struct {
+		id     domain.ChunkID
+		anchor candidate
+		offset int
+		share  float64
+	}
+	var offers []offer
+	var ids []domain.ChunkID
+	byID := map[string]candidate{}
+	for _, c := range candidates {
+		if c.surface == domain.SurfaceChunk {
+			byID[c.recordID] = c
+		}
+	}
+	for _, anchorID := range anchors {
+		n := neighbors[anchorID]
+		anchor := byID[string(anchorID)]
+		for _, side := range []offer{
+			{id: n.Next, anchor: anchor, offset: 1, share: nextMessageShare},
+			{id: n.Previous, anchor: anchor, offset: -1, share: previousMessageShare},
+		} {
+			if side.id == "" || present[string(side.id)] {
+				continue
+			}
+			present[string(side.id)] = true
+			offers = append(offers, side)
+			ids = append(ids, side.id)
+		}
+	}
+	if len(offers) == 0 {
+		return candidates, nil
+	}
+
+	chunks, err := h.store.ChunkProvenance(ctx, h.req.Scope.WorkspaceID, ids)
+	if err != nil {
+		return nil, err
+	}
+	for _, o := range offers {
+		p, ok := chunks[o.id]
+		if !ok || !h.req.Policy.Allows(p.Chunk.Classification, p.SourceID, "", "", "") {
+			continue
+		}
+		item := domain.RetrievedItem{
+			Surface: domain.SurfaceChunk, RecordID: string(o.id), Score: o.anchor.relevance * o.share,
+		}
+		c := h.fromChunk(item, p)
+		// Related: reached through a retrieved message, so exempt from the focus gate
+		// the way a passage reached through a claim is.
+		c.related = true
+		c.anchor = o.anchor.recordID
+		c.offset = o.offset
+		candidates = append(candidates, c)
+	}
+	return candidates, nil
 }
 
 const RequirementExpansionLimit = 16
@@ -296,6 +422,7 @@ func (h *hydrator) excerptOf(link domain.ProvenanceLink, relevance float64) cand
 		temporal:   h.temporalFit(link.SourceEvent.EventTime, nil),
 		priority:   1,
 		focus:      focusScore(text, h.focusTerms),
+		when:       firstTime(link.Episode.EventTime, link.SourceEvent.EventTime),
 		// Related rather than required: reached through a claim, exempt from the focus
 		// gate for that reason, but carrying no requirement bonus of its own.
 		related: true,
@@ -359,6 +486,8 @@ func (h *hydrator) fromChunk(item domain.RetrievedItem, p domain.ChunkProvenance
 		temporal:   h.temporalFit(p.EventTime, nil),
 		priority:   1,
 		focus:      focusScore(text, h.focusTerms),
+		when:       firstTime(p.EventTime, p.SourceEventTime),
+		message:    p.Chunk.Locator.MessageIndex != nil || p.EpisodeLocator.MessageIndex != nil,
 
 		citation: domain.Citation{
 			Surface:          domain.SurfaceChunk,
@@ -677,7 +806,9 @@ func locatorText(l domain.Locator) string {
 		}
 		parts = append(parts, label)
 	}
-	if l.JSONPointer != "" {
+	// A chat message's pointer only repeats its index ("/messages/14" next to
+	// "message 14"), so it is left out then.
+	if l.JSONPointer != "" && (l.MessageIndex == nil || l.JSONPointer != "/messages/"+itoa(*l.MessageIndex)) {
 		parts = append(parts, l.JSONPointer)
 	}
 	if l.RowKey != "" {
@@ -694,6 +825,16 @@ func locatorText(l domain.Locator) string {
 }
 
 func itoa(i int) string { return strconv.Itoa(i) }
+
+// firstTime returns the first time that is set.
+func firstTime(times ...*time.Time) *time.Time {
+	for _, t := range times {
+		if t != nil {
+			return t
+		}
+	}
+	return nil
+}
 
 // evidenceQuality scores citation strength in [0,1].
 //

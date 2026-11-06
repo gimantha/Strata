@@ -44,46 +44,54 @@
   {
     "query": "hybrid / prose with shared vocabulary",
     "labels": [
-      "chunk:supply"
+      "chunk:contract",
+      "chunk:fastener-policy",
+      "chunk:supply",
+      "entity:Acme Corporation"
     ],
     "scores": [
-      0.0328
+      0.0328,
+      0.012,
+      0.0115,
+      0.0098
     ],
     "found_by": {
+      "chunk:contract": [
+        "lexical"
+      ],
+      "chunk:fastener-policy": [
+        "lexical"
+      ],
       "chunk:supply": [
         "lexical",
         "vector"
+      ],
+      "entity:Acme Corporation": [
+        "graph"
       ]
     }
   },
   {
     "query": "hybrid / wording the document does not use",
     "labels": [
-      "chunk:berlin-office",
       "chunk:energy-market",
       "chunk:housing",
       "chunk:turbine"
     ],
     "scores": [
-      0.0882,
-      0.0545,
-      0.0135,
+      0.0328,
+      0.025,
       0.01
     ],
     "found_by": {
-      "chunk:berlin-office": [
-        "exact",
-        "lexical",
-        "vector"
-      ],
       "chunk:energy-market": [
+        "lexical",
         "vector"
       ],
       "chunk:housing": [
         "vector"
       ],
       "chunk:turbine": [
-        "exact",
         "lexical",
         "vector"
       ]
@@ -99,10 +107,10 @@
       "entity:Globex Industries (organization)"
     ],
     "scores": [
-      0.0725,
-      0.0498,
-      0.0494,
-      0.0469,
+      0.0754,
+      0.0515,
+      0.0473,
+      0.0464,
       0.0115
     ],
     "found_by": {
@@ -141,9 +149,9 @@
       "entity:Globex Industries"
     ],
     "scores": [
-      0.0751,
-      0.0524,
-      0.0497,
+      0.0754,
+      0.0515,
+      0.0464,
       0.0115
     ],
     "found_by": {
@@ -180,10 +188,10 @@
       "chunk:supplier-review"
     ],
     "scores": [
-      0.0303,
-      0.03,
-      0.0271,
-      0.0243,
+      0.0305,
+      0.0288,
+      0.0259,
+      0.0231,
       0.0164,
       0.0146,
       0.0144
@@ -224,10 +232,11 @@
     ],
     "scores": [
       0.0328,
-      0.0105
+      0.0248
     ],
     "found_by": {
       "chunk:charges": [
+        "lexical",
         "vector"
       ],
       "chunk:escalation": [
@@ -276,12 +285,22 @@
       "lexical"
     ],
     "labels": [
+      "chunk:contract",
+      "chunk:fastener-policy",
       "chunk:supply"
     ],
     "scores": [
-      0.0164
+      0.0164,
+      0.012,
+      0.0098
     ],
     "found_by": {
+      "chunk:contract": [
+        "lexical"
+      ],
+      "chunk:fastener-policy": [
+        "lexical"
+      ],
       "chunk:supply": [
         "lexical"
       ]
@@ -293,15 +312,15 @@
       "lexical"
     ],
     "labels": [
-      "chunk:berlin-office",
+      "chunk:energy-market",
       "chunk:turbine"
     ],
     "scores": [
-      0.0328,
-      0.0161
+      0.0164,
+      0.0115
     ],
     "found_by": {
-      "chunk:berlin-office": [
+      "chunk:energy-market": [
         "lexical"
       ],
       "chunk:turbine": [
@@ -322,9 +341,9 @@
     ],
     "scores": [
       0.0164,
-      0.0137,
-      0.0135,
-      0.0133
+      0.015,
+      0.0143,
+      0.0132
     ],
     "found_by": {
       "assertion:Acme Corporation supplies Globex Industries": [
@@ -353,8 +372,8 @@
     ],
     "scores": [
       0.0164,
-      0.0161,
-      0.0159
+      0.015,
+      0.0131
     ],
     "found_by": {
       "assertion:Acme Corporation supplies Globex Industries": [
@@ -381,9 +400,9 @@
     ],
     "scores": [
       0.0164,
-      0.0161,
-      0.0111,
-      0.0109
+      0.0152,
+      0.0099,
+      0.0097
     ],
     "found_by": {
       "chunk:delivery": [
@@ -406,12 +425,17 @@
       "lexical"
     ],
     "labels": [
+      "chunk:charges",
       "chunk:escalation"
     ],
     "scores": [
-      0.0164
+      0.0164,
+      0.0143
     ],
     "found_by": {
+      "chunk:charges": [
+        "lexical"
+      ],
       "chunk:escalation": [
         "lexical"
       ]
@@ -465,22 +489,9 @@
     "modes": [
       "exact"
     ],
-    "labels": [
-      "chunk:berlin-office",
-      "chunk:turbine"
-    ],
-    "scores": [
-      0.023,
-      0.0226
-    ],
-    "found_by": {
-      "chunk:berlin-office": [
-        "exact"
-      ],
-      "chunk:turbine": [
-        "exact"
-      ]
-    }
+    "labels": null,
+    "scores": null,
+    "found_by": {}
   },
   {
     "query": "exact / entity by name",
@@ -626,21 +637,16 @@
       "vector"
     ],
     "labels": [
-      "chunk:berlin-office",
       "chunk:energy-market",
       "chunk:housing",
       "chunk:turbine"
     ],
     "scores": [
-      0.0328,
-      0.0155,
+      0.0164,
       0.0135,
       0.01
     ],
     "found_by": {
-      "chunk:berlin-office": [
-        "vector"
-      ],
       "chunk:energy-market": [
         "vector"
       ],

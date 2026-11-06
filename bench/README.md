@@ -95,9 +95,13 @@ bench/.venv/bin/python bench/run.py report --run $R
 For a cheap first try, add `--conversations 1 --max-questions 20` to the retrieve step.
 For LongMemEval, pick a fixed sample with `--per-category 10`.
 
-Without any model keys, steps 1 and 4 still work with `--extraction none --embedding
-hashing` (the defaults). The report then shows evidence recall, tokens and speed, but no
-accuracy.
+Without any model keys, steps 1 and 4 still work with `--extraction none --embedding none`
+(the defaults). The report then shows evidence recall, tokens and speed, but no accuracy.
+This is the cheap check to run after every Strata change. `--embedding hashing` is also
+accepted: it is Strata's test stand-in for an embedding model, which hashes words and has
+no notion of meaning. On LoCoMo it lowers recall by about 4 points, so it is not the
+default. See [ADR 0027](../docs/adr/0027-what-the-public-benchmark-changed.md) for what
+these numbers looked like before and after the changes they led to.
 
 All systems in one run must use the same questions and budget. The harness refuses to mix
 them, and refuses to mix answer or judge models inside one run.

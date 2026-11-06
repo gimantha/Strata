@@ -408,20 +408,73 @@ func buildLexicalSearch(op string, q domain.LexicalQuery) (string, []any, error)
 			queryExpression = "(" + strings.Join(parts, " && ") + ")"
 			args = append(args, limitValue)
 		}
+		// The whole question is scored, anchors included, so it travels as its own
+		// parameter. The limit stays last.
+		limitValue := args[len(args)-1]
+		args = append(args[:len(args)-1], q.Text, limitValue)
+		scored := len(args) - 1
+
+		filters := strings.Join(where, " AND ")
 		where = append(where, "l.search_vector @@ "+queryExpression)
-		// ts_rank_cd weighs term proximity, which ranks a passage discussing the terms
-		// together above one that merely mentions them.
-		sql = `SELECT l.surface, l.record_id, l.content,
-		              ts_rank_cd(l.search_vector, ` + queryExpression + `) AS score,
-		              l.decay_starts_at
-		       FROM lexical_records l
-		       WHERE ` + strings.Join(where, " AND ") + `
-		       ORDER BY score DESC, l.record_id
-		       LIMIT $` + strconv.Itoa(len(args))
+		sql = fmt.Sprintf(bm25Search, scored, filters, lexicalStatsSample, strings.Join(where, " AND "), len(args))
 	}
 
 	return sql, args, nil
 }
+
+// lexicalStatsSample is how many records in scope are read to learn how common each
+// word of a question is. It bounds the cost of a search on a large graph space: past this
+// many records, how common a word is gets estimated from the sample.
+const lexicalStatsSample = 5000
+
+// bm25Search ranks full-text matches with BM25.
+//
+// Which records match is decided by the tsquery, as before: strict, anchored or relaxed.
+// Only the order changed. ts_rank_cd, used until now, gives every word of the question
+// the same weight, so in a chat where one speaker's name is on half the messages, that
+// name counted as much as "education" or "adoption" did. Most of the list then went to
+// messages that only shared the name. BM25 weights each word by how rare it is in this
+// scope, and counts a word less in a long record than in a short one. On the public LoCoMo
+// dev questions this moved the source message into far more contexts (see bench/).
+//
+// How rare a word is comes from a bounded sample of the records the caller may see, read
+// with the same filters as the search. Statistics are therefore never drawn from records
+// policy hides. The constants are the usual BM25 ones: k1 = 1.2 and b = 0.75.
+//
+// Parameters, in order: the question text, the scope filters, the sample size, the full
+// WHERE clause with the match, and the limit.
+const bm25Search = `WITH terms AS (
+           SELECT DISTINCT u.lexeme FROM unnest(to_tsvector('english', $%[1]d)) u
+       ),
+       sample AS MATERIALIZED (
+           SELECT l.search_vector FROM lexical_records l WHERE %[2]s LIMIT %[3]d
+       ),
+       pool AS (
+           SELECT count(*)::float8 AS n,
+                  greatest(coalesce(avg(length(search_vector)), 1), 1)::float8 AS avgdl
+           FROM sample
+       ),
+       df AS (
+           SELECT u.lexeme, count(*)::float8 AS df
+           FROM sample s CROSS JOIN LATERAL unnest(s.search_vector) u
+           WHERE u.lexeme IN (SELECT lexeme FROM terms)
+           GROUP BY u.lexeme
+       ),
+       weights AS (
+           SELECT t.lexeme,
+                  ln(1 + (p.n - coalesce(d.df, 0) + 0.5) / (coalesce(d.df, 0) + 0.5)) AS idf
+           FROM terms t CROSS JOIN pool p LEFT JOIN df d ON d.lexeme = t.lexeme
+       )
+       SELECT l.surface, l.record_id, l.content,
+              (SELECT coalesce(sum(w.idf * greatest(cardinality(u.positions), 1) * 2.2
+                                   / (greatest(cardinality(u.positions), 1)
+                                      + 1.2 * (0.25 + 0.75 * length(l.search_vector) / p.avgdl))), 0)
+               FROM unnest(l.search_vector) u JOIN weights w ON w.lexeme = u.lexeme)::float8 AS score,
+              l.decay_starts_at
+       FROM lexical_records l CROSS JOIN pool p
+       WHERE %[4]s
+       ORDER BY score DESC, l.record_id
+       LIMIT $%[5]d`
 
 // scanLexicalHits reads the result set.
 func (s *Store) scanLexicalHits(rows pgx.Rows, q domain.LexicalQuery, op string) ([]domain.Hit, error) {

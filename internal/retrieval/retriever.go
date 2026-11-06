@@ -155,11 +155,16 @@ func (r *Retriever) Query(ctx context.Context, req domain.QueryRequest) (domain.
 	// Graph is held back until every other search has run, because it expands from what the
 	// others found and seeds gathered from one sub-query are just as good a starting point
 	// for another (AGENTS.md section 19.5).
+	names := nameAnchors(intent)
 	for subIndex, sub := range plan.SubQueries {
 		searched := req
 		searched.Query = sub.Text
 
-		found, err := r.runModes(ctx, searched, &plan, seedingModes(plan.Modes), nil)
+		modes := seedingModes(plan.Modes)
+		if sub.Kind == domain.SubQueryDecomposed && names[strings.ToLower(strings.TrimSpace(sub.Text))] {
+			modes = nameModes(modes)
+		}
+		found, err := r.runModes(ctx, searched, &plan, modes, nil)
 		if err != nil {
 			return domain.QueryResult{}, err
 		}
@@ -192,7 +197,7 @@ func (r *Retriever) Query(ctx context.Context, req domain.QueryRequest) (domain.
 	// name the identifier are read for the record identifiers they cite; those records
 	// are fetched and fused in, and finally results that name the identifier are ranked
 	// ahead of ones that merely resemble the question before the cut is made.
-	items := fuse(candidates, r.weights, fusionWidth(req.Limit, plan.FocusTerms))
+	items := fuseWithTail(candidates, r.weights, fusionWidth(req.Limit, plan.FocusTerms), req.KeepWeakTail)
 	var referenced map[string]bool
 	if len(plan.FocusTerms) > 0 && len(req.Modes) == 0 && slices.Contains(plan.Modes, domain.ModeExact) {
 		followed, keys, err := r.followReferences(ctx, req, items, plan.FocusTerms)
@@ -214,7 +219,7 @@ func (r *Retriever) Query(ctx context.Context, req domain.QueryRequest) (domain.
 			}
 			plan.Candidates[domain.ModeExact] += len(followed)
 			candidates = append(candidates, followed...)
-			items = fuse(candidates, r.weights, fusionWidth(req.Limit, plan.FocusTerms))
+			items = fuseWithTail(candidates, r.weights, fusionWidth(req.Limit, plan.FocusTerms), req.KeepWeakTail)
 		}
 	}
 	items = prioritizeAnchored(items, plan.FocusTerms, referenced, req.Limit)
@@ -238,6 +243,36 @@ func (r *Retriever) Query(ctx context.Context, req domain.QueryRequest) (domain.
 			slog.String("planner", plan.Planner))
 	}
 	return result, nil
+}
+
+// nameAnchors returns the proper names recovered from the question that are not also
+// identifiers, lowercased.
+func nameAnchors(intent Intent) map[string]bool {
+	out := map[string]bool{}
+	for _, term := range intent.EntityTerms {
+		out[strings.ToLower(strings.TrimSpace(term))] = true
+	}
+	for _, term := range intent.FocusTerms {
+		delete(out, strings.ToLower(strings.TrimSpace(term)))
+	}
+	return out
+}
+
+// nameModes is what a search for a name on its own runs: entity lookup only.
+//
+// A name sub-query exists so the name resolves to its entity, which then seeds graph
+// expansion. Run as a text search it does harm. An identifier such as CASE-42 is in a few
+// records, so searching for it alone finds them. A person's name in that person's memory
+// is in half of all records, so searching for it alone returns hundreds of them in an order
+// that has nothing to do with the question. Exact search counts by rank only and weighs
+// more than any other retriever, so its first hit there, which is merely the shortest
+// record that mentions the name, outranked the best match for the question itself. The
+// question's own text search still contains the name, and BM25 weighs it by how rare it is.
+func nameModes(modes []domain.RetrievalMode) []domain.RetrievalMode {
+	if slices.Contains(modes, domain.ModeEntity) {
+		return []domain.RetrievalMode{domain.ModeEntity}
+	}
+	return nil
 }
 
 // fusionWidth is how many fused results to keep before anchored prioritization. Wider than
@@ -421,12 +456,18 @@ func (r *Retriever) runModes(ctx context.Context, req domain.QueryRequest,
 // lexical runs full-text or substring search.
 //
 // Prose search is a ladder. Strict conjunction first, because when every word of a question
-// occurs in one record that record is the answer. If nothing matches and the question names
-// an identifier, the identifier becomes a required phrase and the other words are relaxed:
-// the record has to be about the named subject, and then the more of the question it
-// echoes the better. Only if that also finds nothing are all the words relaxed together,
-// which is the search that ranks a hundred look-alike records about other subjects above
-// the one about this one.
+// occurs in one record that record is the answer. If that does not fill the list and the
+// question names an identifier, the identifier becomes a required phrase and the other words
+// are relaxed: the record has to be about the named subject, and then the more of the
+// question it echoes the better. A question with no identifier fills the rest of its list
+// with the relaxed search, where any word may match; BM25 ranks those by how many of the
+// question's rare words they share. Strict matches always stay ahead of the rest.
+//
+// The relaxed search used to run only when the strict one found nothing. A question whose
+// words all met in one or two records then got one or two lexical results, and the rest of
+// the context came from retrievers that matched the question less well. With an anchor,
+// the old rule stays: relaxed search runs only if the anchored one found nothing, because
+// records about other subjects are what anchoring exists to keep out.
 func (r *Retriever) lexical(ctx context.Context, req domain.QueryRequest, exact bool, anchors []string) ([]candidate, error) {
 	mode := domain.ModeLexical
 	if exact {
@@ -453,31 +494,55 @@ func (r *Retriever) lexical(ctx context.Context, req domain.QueryRequest, exact 
 	if err != nil {
 		return nil, err
 	}
-	if !exact && len(hits) == 0 && len(anchors) > 0 && len(strings.Fields(req.Query)) > len(anchors) {
-		hits, err = r.indexes.Lexical.Search(ctx, domain.LexicalQuery{
+	want := req.Limit * 3
+	multiword := len(strings.Fields(req.Query)) > 1
+	anchored := len(anchors) > 0 && len(strings.Fields(req.Query)) > len(anchors)
+	if !exact && len(hits) < want && anchored {
+		more, err := r.indexes.Lexical.Search(ctx, domain.LexicalQuery{
 			Scope: req.Scope, Text: req.Query, Surfaces: req.Filters.Surfaces,
 			ValidAt: req.Temporal.ValidAt, Statuses: statusStrings(req.Filters.Statuses),
 			Classification: req.Filters.Classifications, MemoryKinds: req.Filters.MemoryKinds,
 			EntityTypes: req.Filters.EntityTypes, Policy: req.Policy, ActiveAt: req.Temporal.ActiveAt,
-			Anchors: anchors, MatchAny: true, Limit: req.Limit * 3,
+			Anchors: anchors, MatchAny: true, Limit: want,
 		})
 		if err != nil {
 			return nil, err
 		}
+		hits = appendNewHits(hits, more, want)
 	}
-	if !exact && len(hits) == 0 && len(strings.Fields(req.Query)) > 1 {
-		hits, err = r.indexes.Lexical.Search(ctx, domain.LexicalQuery{
+	if !exact && multiword && (len(hits) == 0 || (!anchored && len(hits) < want)) {
+		more, err := r.indexes.Lexical.Search(ctx, domain.LexicalQuery{
 			Scope: req.Scope, Text: req.Query, Surfaces: req.Filters.Surfaces,
 			ValidAt: req.Temporal.ValidAt, Statuses: statusStrings(req.Filters.Statuses),
 			Classification: req.Filters.Classifications, MemoryKinds: req.Filters.MemoryKinds,
 			EntityTypes: req.Filters.EntityTypes, Policy: req.Policy, ActiveAt: req.Temporal.ActiveAt,
-			MatchAny: true, Limit: req.Limit,
+			MatchAny: true, Limit: want,
 		})
 		if err != nil {
 			return nil, err
 		}
+		hits = appendNewHits(hits, more, want)
 	}
 	return toCandidates(mode, hits), nil
+}
+
+// appendNewHits adds the hits of a looser search after those of a stricter one, skipping
+// records already found, up to limit.
+func appendNewHits(hits, more []domain.Hit, limit int) []domain.Hit {
+	seen := make(map[string]bool, len(hits))
+	for _, hit := range hits {
+		seen[string(hit.Surface)+"/"+hit.RecordID] = true
+	}
+	for _, hit := range more {
+		if len(hits) >= limit {
+			break
+		}
+		if key := string(hit.Surface) + "/" + hit.RecordID; !seen[key] {
+			seen[key] = true
+			hits = append(hits, hit)
+		}
+	}
+	return hits
 }
 
 // anchorsIn returns the focus terms that occur in this search's text. A decomposed

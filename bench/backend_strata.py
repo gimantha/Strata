@@ -89,8 +89,8 @@ def model_env(kind: str, spec: str) -> dict:
     if spec in ("none", "hashing"):
         if kind == "extraction" and spec != "none":
             raise ValueError("extraction must be none or openai:<model>")
-        if kind == "embedding" and spec != "hashing":
-            raise ValueError("embedding must be hashing or openai:<model>")
+        if kind == "embedding" and spec not in ("none", "hashing"):
+            raise ValueError("embedding must be none, hashing or openai:<model>")
         return {f"{prefix}_PROVIDER": spec}
     provider, _, model = spec.partition(":")
     if provider == "openai" and model:
@@ -120,7 +120,7 @@ class Strata(Backend):
         self.port = int(options.get("strata_port") or 18089)
         self.planner = options.get("strata_planner") or "heuristic"
         self.extraction = options.get("extraction") or "none"
-        self.embedding = options.get("embedding") or "hashing"
+        self.embedding = options.get("embedding") or "none"
         self.workers = int(options.get("strata_workers") or 4)
         self.ingest_timeout = float(options.get("ingest_timeout") or 6 * 3600)
         self.database = "bench_" + hashlib.sha256(str(run_dir.resolve()).encode()).hexdigest()[:20]

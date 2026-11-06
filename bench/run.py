@@ -341,7 +341,7 @@ def main() -> None:
     p.add_argument("--max-questions", type=int)
     p.add_argument("--budget", type=int, default=4000, help="context tokens per question (default 4000)")
     p.add_argument("--extraction", default="none", help="model a system uses to read text: none or openai:<model>")
-    p.add_argument("--embedding", default="hashing", help="embedding model: hashing or openai:<model>")
+    p.add_argument("--embedding", default="none", help="embedding model: none, hashing or openai:<model>")
     p.add_argument("--concurrency", type=int, default=8)
     p.add_argument("--ingest-timeout", type=float, default=6 * 3600)
     p.add_argument("--strata-port", type=int, default=18089)

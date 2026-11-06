@@ -860,6 +860,14 @@ func (o *AssertionObject) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
+// ChunkNeighbors names the chunks just before and just after one chunk, in reading order
+// inside the same source event. Either may be empty: at the start or end of the event, or
+// when the neighbour may not be shown to the caller.
+type ChunkNeighbors struct {
+	Previous ChunkID
+	Next     ChunkID
+}
+
 // ChunkProvenance is a chunk resolved to the ingestion behind it.
 //
 // Enough to cite a quoted excerpt: which passage, from which episode, from which event,

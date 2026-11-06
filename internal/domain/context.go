@@ -80,8 +80,20 @@ type ContextRequest struct {
 	Explain bool
 }
 
-// DefaultMaxContextItems bounds selection when a caller does not.
-const DefaultMaxContextItems = 40
+// Item limits used when a caller does not set MaxItems.
+//
+// The default grows with the budget, at one item per TokensPerContextItem tokens. A fixed
+// limit of 40 left most of a large budget unused: one chat message with its reference line
+// costs about 40 tokens, so a 4,000-token block stopped at 40 items and about half its
+// budget. The budget still decides in the end; this only stops the item count from
+// deciding first.
+const (
+	DefaultMaxContextItems = 40
+	TokensPerContextItem   = 40
+	// MaxDefaultContextItems matches MaxQueryLimit: selection cannot use more candidates
+	// than retrieval may return.
+	MaxDefaultContextItems = 200
+)
 
 // Normalize applies defaults and bounds.
 func (r ContextRequest) Normalize() ContextRequest {
@@ -92,7 +104,7 @@ func (r ContextRequest) Normalize() ContextRequest {
 		r.TokenBudget = MaxTokenBudget
 	}
 	if r.MaxItems <= 0 {
-		r.MaxItems = DefaultMaxContextItems
+		r.MaxItems = min(max(DefaultMaxContextItems, r.TokenBudget/TokensPerContextItem), MaxDefaultContextItems)
 	}
 	for i, predicate := range r.Filters.Predicates {
 		r.Filters.Predicates[i] = NormalizePredicateName(predicate)

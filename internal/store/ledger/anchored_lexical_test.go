@@ -62,3 +62,44 @@ func anyStrings(values []any) []string {
 	}
 	return out
 }
+
+func TestLexicalSearchReferencesEveryParameterInEveryForm(t *testing.T) {
+	scope := domain.Scope{
+		WorkspaceID:  domain.WorkspaceID(domain.NewUUIDString()),
+		GraphSpaceID: domain.GraphSpaceID(domain.NewUUIDString()),
+	}
+	for name, q := range map[string]domain.LexicalQuery{
+		"strict":   {Scope: scope, Text: "adoption interview", Limit: 10},
+		"relaxed":  {Scope: scope, Text: "what did Caroline say about adoption", MatchAny: true, Limit: 10},
+		"anchored": {Scope: scope, Text: "why was CASE-42 approved", Anchors: []string{"CASE-42"}, MatchAny: true, Limit: 10},
+		"policy": {Scope: scope, Text: "adoption", Limit: 10, Policy: domain.PolicyFilters{
+			MaxClassification: domain.ClassificationInternal,
+		}},
+	} {
+		sql, args, err := buildLexicalSearch("test", q)
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		seen := map[int]bool{}
+		for _, m := range regexp.MustCompile(`\$(\d+)`).FindAllStringSubmatch(sql, -1) {
+			n, _ := strconv.Atoi(m[1])
+			seen[n] = true
+		}
+		for i := 1; i <= len(args); i++ {
+			if !seen[i] {
+				t.Fatalf("%s: parameter $%d is not referenced in:\n%s\nargs=%v", name, i, sql, args)
+			}
+		}
+		if len(seen) != len(args) {
+			t.Fatalf("%s: the statement references %d parameters but %d are sent", name, len(seen), len(args))
+		}
+		if args[len(args)-1] != 10 {
+			t.Fatalf("%s: the limit must be the last parameter, got %v", name, args[len(args)-1])
+		}
+		// Rarity statistics are read with the same filters as the search itself, so they
+		// never come from records the caller may not see.
+		if !strings.Contains(sql, "sample AS MATERIALIZED") || strings.Count(sql, "l.workspace_id = $1") < 2 {
+			t.Fatalf("%s: the statistics sample must carry the search's own filters:\n%s", name, sql)
+		}
+	}
+}

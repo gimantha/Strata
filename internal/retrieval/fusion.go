@@ -205,8 +205,15 @@ func scoreQuality(candidates []candidate, weight float64) func(candidate) float6
 // Ranks are re-assigned afterwards so a surviving candidate is credited for its position
 // among the results worth keeping, rather than its position in the raw list.
 func dropWeakTails(candidates []candidate, floor float64) []candidate {
+	strong, _ := splitWeakTails(candidates, floor)
+	return strong
+}
+
+// splitWeakTails separates each retriever's low-scoring results from the rest. Both parts
+// are ranked again from one, each within its own retriever stream.
+func splitWeakTails(candidates []candidate, floor float64) ([]candidate, []candidate) {
 	if floor <= 0 {
-		return candidates
+		return candidates, nil
 	}
 
 	type streamKey struct {
@@ -222,20 +229,25 @@ func dropWeakTails(candidates []candidate, floor float64) []candidate {
 	}
 
 	kept := make([]candidate, 0, len(candidates))
+	var weak []candidate
 	nextRank := map[streamKey]int{}
+	nextWeakRank := map[streamKey]int{}
 	for _, c := range candidates {
 		key := streamKey{mode: c.mode, stream: c.stream}
 		// A retriever whose scores are all zero or negative carries no magnitude
 		// information, so everything it found is kept and rank alone decides. The same
 		// holds for retrievers whose scores are not magnitudes at all.
 		if top := best[key]; top > 0 && c.score < top*floor && !rankOnly(c.mode) {
+			nextWeakRank[key]++
+			c.rank = nextWeakRank[key]
+			weak = append(weak, c)
 			continue
 		}
 		nextRank[key]++
 		c.rank = nextRank[key]
 		kept = append(kept, c)
 	}
-	return kept
+	return kept, weak
 }
 
 // candidate is one retriever's view of a record before fusion.
@@ -260,8 +272,59 @@ type candidate struct {
 // retrievers rank highly rises without any of them having to agree on a number
 // (AGENTS.md section 19.3).
 func fuse(candidates []candidate, weights Weights, limit int) []domain.RetrievedItem {
+	return fuseWithTail(candidates, weights, limit, false)
+}
+
+// fuseWithTail fuses like fuse. With keepTail set, the results each retriever's floor would
+// drop are fused on their own and placed after every strong result, up to the limit.
+func fuseWithTail(candidates []candidate, weights Weights, limit int, keepTail bool) []domain.RetrievedItem {
 	weights = weights.withDefaults()
-	candidates = dropWeakTails(candidates, weights.RelativeFloor)
+	strong, weak := splitWeakTails(candidates, weights.RelativeFloor)
+	items := fuseRanked(strong, weights, limit)
+	if !keepTail || len(weak) == 0 || (limit > 0 && len(items) >= limit) {
+		return items
+	}
+
+	// The weak results are ranked among themselves, by the same rule, and only records the
+	// strong results did not already include are added. Their scores are scaled to sit
+	// below the weakest strong result, keeping their own order: callers sort by score, and
+	// the first weak result would otherwise outscore strong results from about rank forty
+	// down.
+	present := make(map[string]bool, len(items))
+	floor := 0.0
+	for i, item := range items {
+		present[string(item.Surface)+"\x00"+item.RecordID] = true
+		if i == 0 || item.Score < floor {
+			floor = item.Score
+		}
+	}
+	tail := fuseRanked(weak, weights, 0)
+	top := 0.0
+	if len(tail) > 0 {
+		top = tail[0].Score
+	}
+	for _, item := range tail {
+		if limit > 0 && len(items) >= limit {
+			break
+		}
+		if present[string(item.Surface)+"\x00"+item.RecordID] {
+			continue
+		}
+		if len(items) > 0 && top > 0 {
+			item.Score = item.Score / top * floor * weakTailShare
+		}
+		item.Signals["weak_tail"] = 1
+		items = append(items, item)
+	}
+	return items
+}
+
+// weakTailShare is the most a weak result may score, as a fraction of the weakest strong
+// result.
+const weakTailShare = 0.9
+
+// fuseRanked fuses candidates that already passed the floor.
+func fuseRanked(candidates []candidate, weights Weights, limit int) []domain.RetrievedItem {
 	quality := scoreQuality(candidates, weights.ScoreQualityWeight)
 
 	type accumulator struct {

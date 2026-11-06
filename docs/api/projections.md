@@ -85,9 +85,12 @@ ranking one against the other is ranking noise against signal.
 
 Two modes, because they fail in opposite places:
 
-- **Full text** (default) — stemmed `tsvector` matching ranked by `ts_rank_cd`, which weighs
-  term proximity so a passage discussing the terms together outranks one that merely
-  mentions them. Good for prose.
+- **Full text** (default) — stemmed `tsvector` matching ranked by BM25: each word of the
+  question counts by how rare it is in the scope, and counts less in a long record than in
+  a short one. A name on half the records says little; a rare word says a lot. Rarity is
+  read from at most 5,000 records the caller may see, with the search's own filters. Good
+  for prose. Strict search (every word) runs first; for a question with no identifier,
+  any-word matches fill the rest of the list after the strict ones.
 - **Exact** (`exact: true`) — trigram-backed substring matching. This is what finds
   `ERR_7731X` and `AF-2291-B`, which stemming mangles and vectors have no useful
   neighbourhood for (AGENTS.md section 18).

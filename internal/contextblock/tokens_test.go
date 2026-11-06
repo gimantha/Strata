@@ -75,3 +75,34 @@ func TestEstimatorSafetyFactorRaisesTheCount(t *testing.T) {
 		t.Fatalf("the default estimator should over-count on purpose: %d vs raw %d", padded, raw)
 	}
 }
+
+func TestEstimatorStaysAboveARealTokenizerWithoutWastingTheBudget(t *testing.T) {
+	// Counts from OpenAI's o200k_base tokenizer. The estimate must not fall below them,
+	// because then a block could overflow a model's window; and over a whole block it
+	// must not run far above them either, because every extra estimated token is budget
+	// left empty. Version 1 of the estimator came out 1.4 to 1.7 times these counts.
+	samples := []struct {
+		text  string
+		o200k int
+	}{
+		{"Caroline: I went to a LGBTQ support group yesterday and it was so powerful.", 17},
+		{"Melanie: Woah, Caroline, it sounds like you're doing some impressive work. It's inspiring to see your dedication to helping others. What motivated you to pursue counseling?", 34},
+		{"Acme Corporation supplies industrial fasteners to Globex Industries under a long term agreement.", 17},
+		{"[12] (2023-07-20 Thu 20:56) Caroline: Hey Melanie! Just wanted to say hi!\n[12] benchmark: conv-26/session_10, Caroline message 12\n", 44},
+		{"func (s *selector) best(remaining []candidate, overlaps []float64) (candidate, int, float64) {\n\tbestIndex, bestValue := -1, 0.0\n", 40},
+		{`SKU-4471 shipped 2026-03-14, invoice INV-88213, net 30. {"order": 88213, "status": "shipped"}`, 37},
+	}
+	estimator := NewHeuristicEstimator()
+	estimated, real := 0, 0
+	for _, s := range samples {
+		got := estimator.Estimate(s.text)
+		if got < s.o200k {
+			t.Errorf("estimate %d is below the real count %d for %q", got, s.o200k, s.text)
+		}
+		estimated += got
+		real += s.o200k
+	}
+	if ratio := float64(estimated) / float64(real); ratio > 1.4 {
+		t.Fatalf("estimates total %.2f times the real count; budget would be left empty", ratio)
+	}
+}

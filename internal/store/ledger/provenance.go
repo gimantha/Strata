@@ -509,6 +509,77 @@ func (s *Store) ChunkProvenance(ctx context.Context, ws domain.WorkspaceID, ids 
 	return out, mapError(rows.Err(), op, "cannot resolve chunk provenance")
 }
 
+// ChunkNeighbors returns, for each chunk, the chunks just before and just after it in
+// reading order inside the same source event: by episode sequence, then chunk sequence.
+//
+// A neighbour is left out when its classification is not in classifications, or when it
+// has no text. Classification is the only filter that can differ between two chunks of one
+// source event: source, collection and graph space belong to the event, so a neighbour
+// shares them with the chunk the caller was already allowed to see. The filter runs in
+// this query, so a passage the caller may not see is never read into the assembler.
+func (s *Store) ChunkNeighbors(ctx context.Context, ws domain.WorkspaceID, ids []domain.ChunkID,
+	classifications []domain.Classification) (map[domain.ChunkID]domain.ChunkNeighbors, error) {
+	const op = "ledger.ChunkNeighbors"
+
+	out := make(map[domain.ChunkID]domain.ChunkNeighbors, len(ids))
+	if len(ids) == 0 || len(classifications) == 0 {
+		return out, nil
+	}
+	raw := make([]string, 0, len(ids))
+	for _, id := range ids {
+		raw = append(raw, string(id))
+	}
+	allowed := make([]string, 0, len(classifications))
+	for _, c := range classifications {
+		allowed = append(allowed, string(c))
+	}
+
+	rows, err := s.pool.Query(ctx, `
+		WITH hits AS (
+		    SELECT id, source_event_id FROM chunks WHERE workspace_id = $1 AND id = ANY($2)
+		),
+		ordered AS (
+		    SELECT c.id,
+		           lag(c.id)  OVER w AS previous_id,
+		           lead(c.id) OVER w AS next_id
+		    FROM chunks c
+		    JOIN episodes ep ON ep.id = c.episode_id
+		    WHERE c.workspace_id = $1
+		      AND c.source_event_id IN (SELECT source_event_id FROM hits)
+		    WINDOW w AS (PARTITION BY c.source_event_id ORDER BY ep.sequence, c.sequence)
+		)
+		SELECT o.id, p.id, n.id
+		FROM ordered o
+		LEFT JOIN chunks p ON p.id = o.previous_id AND p.workspace_id = $1
+		                  AND p.classification = ANY($3) AND btrim(p.content) <> ''
+		LEFT JOIN chunks n ON n.id = o.next_id AND n.workspace_id = $1
+		                  AND n.classification = ANY($3) AND btrim(n.content) <> ''
+		WHERE o.id IN (SELECT id FROM hits)`, ws, raw, allowed)
+	if err != nil {
+		return nil, mapError(err, op, "cannot find neighbouring chunks")
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var (
+			id             domain.ChunkID
+			previous, next *string
+		)
+		if err := rows.Scan(&id, &previous, &next); err != nil {
+			return nil, mapError(err, op, "cannot scan neighbouring chunks")
+		}
+		var n domain.ChunkNeighbors
+		if previous != nil {
+			n.Previous = domain.ChunkID(*previous)
+		}
+		if next != nil {
+			n.Next = domain.ChunkID(*next)
+		}
+		out[id] = n
+	}
+	return out, mapError(rows.Err(), op, "cannot find neighbouring chunks")
+}
+
 // ConflictMembers returns the claims held against each other in a conflict set.
 //
 // Both sides are kept and reported; the ledger records contradictions rather than resolving

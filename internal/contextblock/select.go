@@ -240,12 +240,23 @@ type fill struct {
 func (s *selector) fillPass(remaining []candidate, chosen []selection, state *fill) []selection {
 	state.deferred = nil
 
+	// overlaps[i] is how much remaining[i] repeats the most similar item chosen so far. It
+	// is kept up to date one pick at a time rather than recomputed against every chosen item
+	// for every pick, which made selection cost grow with the square of the items chosen:
+	// half a second per block at 200 candidates and 50 picks.
+	remaining = append([]candidate(nil), remaining...)
+	overlaps := make([]float64, len(remaining))
+	for i, c := range remaining {
+		overlaps[i] = s.maxSimilarity(c, chosen)
+	}
+
 	for len(chosen) < s.req.MaxItems && len(remaining) > 0 {
-		pick, index, redundancy := s.best(remaining, chosen)
+		pick, index, overlap := s.best(remaining, overlaps)
 		if index < 0 {
 			break
 		}
 		remaining = removeAt(remaining, index)
+		overlaps = append(overlaps[:index:index], overlaps[index+1:]...)
 
 		tokens := s.cost(pick)
 		if state.total+tokens > state.budget {
@@ -265,12 +276,17 @@ func (s *selector) fillPass(remaining []candidate, chosen []selection, state *fi
 		}
 
 		chosen = append(chosen, selection{
-			candidate: pick, score: s.weights.merit(pick), redundancy: redundancy,
-			signals: s.signalsFor(pick, redundancy),
+			candidate: pick, score: s.weights.merit(pick), redundancy: overlap,
+			signals: s.signalsFor(pick, overlap),
 		})
 		state.spent[pick.section] += tokens
 		state.total += tokens
 		s.cover(pick)
+		for i, c := range remaining {
+			if sim := redundancy(c, pick); sim > overlaps[i] {
+				overlaps[i] = sim
+			}
+		}
 	}
 
 	if len(chosen) >= s.req.MaxItems {
@@ -310,16 +326,12 @@ func (s *selector) rescaleRelevance(candidates []candidate) {
 // Marginal value is MMR: relevance discounted by similarity to what is already in, plus a
 // bonus for covering a subject or predicate nothing else covers. Ten facts about ten things
 // beat ten phrasings of one thing (AGENTS.md section 20.2).
-func (s *selector) best(remaining []candidate, chosen []selection) (candidate, int, float64) {
+// overlaps[i] is remaining[i]'s highest similarity to anything already chosen.
+func (s *selector) best(remaining []candidate, overlaps []float64) (candidate, int, float64) {
 	bestIndex, bestValue, bestRedundancy := -1, 0.0, 0.0
 
 	for i, c := range remaining {
-		overlap := 0.0
-		for _, already := range chosen {
-			if sim := redundancy(c, already.candidate); sim > overlap {
-				overlap = sim
-			}
-		}
+		overlap := overlaps[i]
 		if overlap >= s.weights.RedundancyCutoff {
 			continue
 		}
@@ -335,11 +347,11 @@ func (s *selector) best(remaining []candidate, chosen []selection) (candidate, i
 
 	if bestIndex < 0 {
 		// Everything left is a near-duplicate of something already chosen.
-		for _, c := range remaining {
+		for i, c := range remaining {
 			s.dropped = append(s.dropped, domain.DroppedItem{
 				Surface: c.surface, RecordID: c.recordID, Section: c.section,
 				Reason: domain.DropRedundant, Relevance: c.relevance,
-				Redundancy: s.maxSimilarity(c, chosen),
+				Redundancy: overlaps[i],
 			})
 		}
 		return candidate{}, -1, 0
@@ -438,5 +450,37 @@ func orderForRendering(chosen []selection) []selection {
 		}
 		return out[i].score > out[j].score
 	})
+	return placeNeighbors(out)
+}
+
+// placeNeighbors moves each selected neighbouring message next to the message it belongs
+// to, before it or after it, when that message was selected too. A reply such as "Yes, last
+// year!" means nothing far from the question it answers. A neighbour whose message was not
+// selected keeps its place.
+func placeNeighbors(chosen []selection) []selection {
+	selected := map[string]bool{}
+	for _, s := range chosen {
+		selected[s.candidate.recordID] = true
+	}
+	before := map[string][]selection{}
+	after := map[string][]selection{}
+	rest := make([]selection, 0, len(chosen))
+	for _, s := range chosen {
+		if anchor := s.candidate.anchor; anchor != "" && selected[anchor] {
+			if s.candidate.offset < 0 {
+				before[anchor] = append(before[anchor], s)
+			} else {
+				after[anchor] = append(after[anchor], s)
+			}
+			continue
+		}
+		rest = append(rest, s)
+	}
+	out := make([]selection, 0, len(chosen))
+	for _, s := range rest {
+		out = append(out, before[s.candidate.recordID]...)
+		out = append(out, s)
+		out = append(out, after[s.candidate.recordID]...)
+	}
 	return out
 }

@@ -351,3 +351,19 @@ func FuzzDeriveKeyDeterminism(f *testing.F) {
 		}
 	})
 }
+
+func TestContextItemLimitGrowsWithTheBudget(t *testing.T) {
+	cases := []struct{ budget, explicit, want int }{
+		{budget: 0, want: 50},       // default budget 2000 tokens
+		{budget: 1000, want: 40},    // the floor
+		{budget: 4000, want: 100},   // one item per 40 tokens
+		{budget: 100000, want: 200}, // no more than retrieval may return
+		{budget: 4000, explicit: 7, want: 7},
+	}
+	for _, c := range cases {
+		got := ContextRequest{TokenBudget: c.budget, MaxItems: c.explicit}.Normalize().MaxItems
+		if got != c.want {
+			t.Errorf("budget %d, max_items %d: got %d items, want %d", c.budget, c.explicit, got, c.want)
+		}
+	}
+}
