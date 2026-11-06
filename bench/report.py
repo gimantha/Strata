@@ -246,3 +246,139 @@ def build(run_dir: Path, manifest: dict) -> tuple[str, dict]:
         lines.append(f"- **{name}**: `{json.dumps(d['backend'].get('settings', {}), sort_keys=True)}`")
     lines.append("")
     return "\n".join(lines), scores_out
+
+
+# --- Per-question report ------------------------------------------------------------------
+
+
+def _cell(text, limit: int | None = None) -> str:
+    """Make text safe for one Markdown table cell."""
+    text = " ".join(str(text).split())
+    if limit and len(text) > limit:
+        text = text[: limit - 1].rstrip() + "…"
+    return text.replace("|", "\\|")
+
+
+def _judged(labels: dict[int, int] | None) -> str:
+    if not labels:
+        return ""
+    value = mean(labels.values())
+    if value == 1:
+        return "correct"
+    if value == 0:
+        return "wrong"
+    return f"correct in {sum(labels.values())} of {len(labels)} judgings"
+
+
+def questions(run_dir: Path, manifest: dict, conversations: dict, selected: list) -> str:
+    """QUESTIONS.md: every question, its correct answer, the messages that hold the answer,
+    and for each system whether those messages reached the context, its answer, and the
+    judge's label. Steps not run yet are shown as such, so a run with no model still gets a
+    useful report."""
+    import datasets
+
+    bdirs = sorted(p for p in run_dir.iterdir() if (p / "contexts.jsonl").exists())
+    systems = {}
+    for bdir in bdirs:
+        labels: dict[str, dict[int, int]] = {}
+        for row in read_jsonl(bdir / "judgments.jsonl"):
+            if not row.get("error"):
+                labels.setdefault(row["qid"], {})[row["repeat"]] = row["label"]
+        systems[bdir.name] = dict(
+            contexts=latest(read_jsonl(bdir / "contexts.jsonl")),
+            answers=latest(read_jsonl(bdir / "answers.jsonl")),
+            labels=labels,
+        )
+    names = list(systems)
+
+    def status(name: str, q, known: list[str], turns: dict) -> dict:
+        s = systems[name]
+        ctx = s["contexts"].get(q.qid)
+        out = dict(found=None, answer="", judge="", note="")
+        if ctx is None:
+            out["note"] = "not run"
+            return out
+        if ctx.get("error"):
+            out["note"] = "retrieval failed"
+            return out
+        normalized = datasets.normalize(ctx.get("context", ""))
+        out["found"] = [e for e in known if datasets.turn_found(turns[e].text, normalized)]
+        ans = s["answers"].get(q.qid)
+        if ans is None:
+            out["answer"] = "not answered yet"
+        elif ans.get("error"):
+            out["answer"] = "answer failed"
+        else:
+            out["answer"] = ans.get("answer") or ""
+            out["judge"] = _judged(s["labels"].get(q.qid)) or "not judged yet"
+        return out
+
+    lines = [
+        f"# Questions in run `{manifest['run']}`",
+        "",
+        f"Dataset **{manifest['dataset']}**, {len(selected)} questions, a context budget of "
+        f"{manifest['budget']} tokens. Systems: {', '.join(names) or 'none yet'}.",
+        "",
+        "For each question: the correct answer from the dataset, the messages the dataset marks "
+        "as holding it, and for each system whether those messages reached its context "
+        "(\"found 1 of 2\"), its answer and the judge's label. A message counts as found when "
+        "at least half of it appears word for word. Answers and labels appear once the answer "
+        "and judge steps have run.",
+        "",
+        "Dev questions were used to tune Strata; test questions were not.",
+        "",
+        "## Summary",
+        "",
+        "| # | Type | Split | Question | Correct answer | " + " | ".join(names) + " |",
+        "|---|---|---|---|---|" + "---|" * len(names),
+    ]
+    details = []
+    for n, q in enumerate(selected, 1):
+        conv = conversations[q.conv_id]
+        turns = {t.turn_id: t for s in conv.sessions for t in s.turns}
+        when = {t.turn_id: s.time for s in conv.sessions for t in s.turns}
+        known = [e for e in q.evidence if e in turns]
+        per = {name: status(name, q, known, turns) for name in names}
+
+        cells = []
+        for name in names:
+            st = per[name]
+            if st["found"] is None:
+                cells.append(st["note"])
+                continue
+            parts = [f"found {len(st['found'])} of {len(known)}" if known else "no source marked"]
+            if st["judge"] and st["judge"] != "not judged yet":
+                parts.append(st["judge"])
+            cells.append("; ".join(parts))
+        lines.append(
+            f"| [{n}](#q{n}) | {_cell(q.category)} | {q.split} | {_cell(q.question, 90)} | "
+            f"{_cell(q.answer, 60)} | " + " | ".join(cells) + " |"
+        )
+
+        details += ["", f'<a id="q{n}"></a>', f"### {n}. {_cell(q.question)}", ""]
+        details.append(f"- ID `{q.qid}`, type {q.category}, {q.split} split")
+        if q.question_date:
+            details.append(f"- Asked on {datasets.format_time(q.question_date)}")
+        details.append(f"- **Correct answer:** {_cell(q.answer)}")
+        if q.abstention:
+            details.append("- This question has no answer in the chats: the right reply says so.")
+        if known:
+            details.append("- **Messages that hold the answer:**")
+            for e in known:
+                t = turns[e]
+                details.append(f"  - `{e}` ({datasets.format_time(when[e])}) {t.speaker}: {_cell(t.text, 400)}")
+        elif q.evidence:
+            details.append("- The dataset names source messages that are not in the chats.")
+        details += ["", "| System | Source messages found | Answer | Judge |", "|---|---|---|---|"]
+        for name in names:
+            st = per[name]
+            if st["found"] is None:
+                details.append(f"| {name} | {st['note']} | | |")
+                continue
+            found = f"{len(st['found'])} of {len(known)}" if known else "-"
+            if known and len(st["found"]) < len(known):
+                found += " (missing " + ", ".join(f"`{e}`" for e in known if e not in st["found"]) + ")"
+            details.append(f"| {name} | {found} | {_cell(st['answer'], 300)} | {st['judge']} |")
+
+    lines += ["", "## Each question"] + details + [""]
+    return "\n".join(lines)

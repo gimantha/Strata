@@ -88,7 +88,7 @@ bench/.venv/bin/python bench/run.py answer --run $R --answerer anthropic:claude-
 # 3. Judge every answer.
 bench/.venv/bin/python bench/run.py judge --run $R --judge anthropic:claude-sonnet-5-5
 
-# 4. Write runs/$R/REPORT.md and runs/$R/scores.json.
+# 4. Write runs/$R/REPORT.md, runs/$R/QUESTIONS.md and runs/$R/scores.json.
 bench/.venv/bin/python bench/run.py report --run $R
 ```
 
@@ -118,6 +118,8 @@ bench/.venv/bin/python -m unittest discover -s bench -v
 bench/runs/<run>/
   manifest.json        dataset and its SHA-256, the selection, the budget
   REPORT.md            the human report
+  QUESTIONS.md         every question: correct answer, the messages that hold it, and for each
+                       system whether they reached the context, its answer and the judge's label
   scores.json          the same numbers for tools
   <system>/
     backend.json       settings, Strata commit, ingest time and model cost

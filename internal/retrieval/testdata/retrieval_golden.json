@@ -44,21 +44,18 @@
   {
     "query": "hybrid / prose with shared vocabulary",
     "labels": [
-      "chunk:contract",
       "chunk:fastener-policy",
       "chunk:supply",
-      "entity:Acme Corporation"
+      "entity:Acme Corporation",
+      "entity:Globex Industries (organization)"
     ],
     "scores": [
       0.0328,
-      0.012,
+      0.0123,
       0.0115,
-      0.0098
+      0.0097
     ],
     "found_by": {
-      "chunk:contract": [
-        "lexical"
-      ],
       "chunk:fastener-policy": [
         "lexical"
       ],
@@ -68,6 +65,9 @@
       ],
       "entity:Acme Corporation": [
         "graph"
+      ],
+      "entity:Globex Industries (organization)": [
+        "lexical"
       ]
     }
   },
@@ -80,8 +80,8 @@
     ],
     "scores": [
       0.0328,
-      0.025,
-      0.01
+      0.0254,
+      0.0197
     ],
     "found_by": {
       "chunk:energy-market": [
@@ -89,6 +89,7 @@
         "vector"
       ],
       "chunk:housing": [
+        "lexical",
         "vector"
       ],
       "chunk:turbine": [
@@ -108,9 +109,9 @@
     ],
     "scores": [
       0.0754,
-      0.0515,
-      0.0473,
-      0.0464,
+      0.052,
+      0.0472,
+      0.0463,
       0.0115
     ],
     "found_by": {
@@ -150,8 +151,8 @@
     ],
     "scores": [
       0.0754,
-      0.0515,
-      0.0464,
+      0.0519,
+      0.0462,
       0.0115
     ],
     "found_by": {
@@ -189,9 +190,9 @@
     ],
     "scores": [
       0.0305,
-      0.0288,
-      0.0259,
-      0.0231,
+      0.0291,
+      0.026,
+      0.0232,
       0.0164,
       0.0146,
       0.0144
@@ -232,7 +233,7 @@
     ],
     "scores": [
       0.0328,
-      0.0248
+      0.025
     ],
     "found_by": {
       "chunk:charges": [
@@ -285,23 +286,23 @@
       "lexical"
     ],
     "labels": [
-      "chunk:contract",
       "chunk:fastener-policy",
-      "chunk:supply"
+      "chunk:supply",
+      "entity:Globex Industries (organization)"
     ],
     "scores": [
       0.0164,
-      0.012,
-      0.0098
+      0.0123,
+      0.0097
     ],
     "found_by": {
-      "chunk:contract": [
-        "lexical"
-      ],
       "chunk:fastener-policy": [
         "lexical"
       ],
       "chunk:supply": [
+        "lexical"
+      ],
+      "entity:Globex Industries (organization)": [
         "lexical"
       ]
     }
@@ -313,14 +314,19 @@
     ],
     "labels": [
       "chunk:energy-market",
+      "chunk:housing",
       "chunk:turbine"
     ],
     "scores": [
       0.0164,
-      0.0115
+      0.0119,
+      0.0097
     ],
     "found_by": {
       "chunk:energy-market": [
+        "lexical"
+      ],
+      "chunk:housing": [
         "lexical"
       ],
       "chunk:turbine": [
@@ -341,8 +347,8 @@
     ],
     "scores": [
       0.0164,
-      0.015,
-      0.0143,
+      0.0154,
+      0.0142,
       0.0132
     ],
     "found_by": {
@@ -372,8 +378,8 @@
     ],
     "scores": [
       0.0164,
-      0.015,
-      0.0131
+      0.0154,
+      0.0128
     ],
     "found_by": {
       "assertion:Acme Corporation supplies Globex Industries": [
@@ -400,9 +406,9 @@
     ],
     "scores": [
       0.0164,
-      0.0152,
-      0.0099,
-      0.0097
+      0.0154,
+      0.0101,
+      0.0099
     ],
     "found_by": {
       "chunk:delivery": [
@@ -430,7 +436,7 @@
     ],
     "scores": [
       0.0164,
-      0.0143
+      0.0145
     ],
     "found_by": {
       "chunk:charges": [

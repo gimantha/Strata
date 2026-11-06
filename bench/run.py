@@ -321,7 +321,10 @@ def cmd_report(args) -> None:
     text, scores = report.build(run_dir, manifest)
     write_json(run_dir / "scores.json", scores)
     (run_dir / "REPORT.md").write_text(text)
+    conversations, questions = load_selection(manifest)
+    (run_dir / "QUESTIONS.md").write_text(report.questions(run_dir, manifest, conversations, questions))
     print(text)
+    print(f"Each question, with its answers: {run_dir / 'QUESTIONS.md'}", file=sys.stderr)
 
 
 def main() -> None:

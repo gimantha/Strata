@@ -441,17 +441,24 @@ const lexicalStatsSample = 5000
 // with the same filters as the search. Statistics are therefore never drawn from records
 // policy hides. The constants are the usual BM25 ones: k1 = 1.2 and b = 0.75.
 //
+// A record's length is its length in characters, which follows its word count. The number
+// of distinct word stems was tried first; it grows much more slowly than the text does, so
+// a long reply that repeats the question's words many times beat the short message that
+// held the answer. On LongMemEval, where assistant replies run to hundreds of tokens,
+// characters moved the answer's message into more contexts, and LoCoMo improved too.
+//
 // Parameters, in order: the question text, the scope filters, the sample size, the full
 // WHERE clause with the match, and the limit.
 const bm25Search = `WITH terms AS (
            SELECT DISTINCT u.lexeme FROM unnest(to_tsvector('english', $%[1]d)) u
        ),
        sample AS MATERIALIZED (
-           SELECT l.search_vector FROM lexical_records l WHERE %[2]s LIMIT %[3]d
+           SELECT l.search_vector, char_length(l.content) AS chars
+           FROM lexical_records l WHERE %[2]s LIMIT %[3]d
        ),
        pool AS (
            SELECT count(*)::float8 AS n,
-                  greatest(coalesce(avg(length(search_vector)), 1), 1)::float8 AS avgdl
+                  greatest(coalesce(avg(chars), 1), 1)::float8 AS avgdl
            FROM sample
        ),
        df AS (
@@ -468,7 +475,7 @@ const bm25Search = `WITH terms AS (
        SELECT l.surface, l.record_id, l.content,
               (SELECT coalesce(sum(w.idf * greatest(cardinality(u.positions), 1) * 2.2
                                    / (greatest(cardinality(u.positions), 1)
-                                      + 1.2 * (0.25 + 0.75 * length(l.search_vector) / p.avgdl))), 0)
+                                      + 1.2 * (0.25 + 0.75 * char_length(l.content) / p.avgdl))), 0)
                FROM unnest(l.search_vector) u JOIN weights w ON w.lexeme = u.lexeme)::float8 AS score,
               l.decay_starts_at
        FROM lexical_records l CROSS JOIN pool p

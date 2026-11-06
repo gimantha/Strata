@@ -114,6 +114,27 @@ The golden retrieval file changed. A distractor reached only through the name su
 matches now follow a full match; exact-only search for a question that names a place but
 no identifier now returns nothing, which is the honest answer.
 
+### Later the same day: a second dataset
+
+The same no-model check on a fixed LongMemEval sample (20 questions of each of the six
+types; 30 dev, 90 test) showed Strata 6 points behind BM25 on its test questions. Its
+chats have assistant replies hundreds of tokens long. BM25 measured a record's length as
+its number of distinct word stems, which grows much more slowly than the text, so long
+replies that repeat the question's words beat the short user messages that hold the
+answer. Length is now measured in characters. Results with that change:
+
+| | test | dev |
+|---|---|---|
+| LongMemEval sample, BM25 reference | 87.8% | 82.7% |
+| LongMemEval sample, Strata | 84.2% (−3.6, range −10.0 to +3.0) | 86.3% |
+| LoCoMo, BM25 reference | 75.7% | 75.9% |
+| LoCoMo, Strata | 76.9% (+1.3, range −0.8 to +3.2) | 81.0% |
+
+Both are ties on the test questions. On LongMemEval, Strata is still behind on questions
+whose answer is in a long assistant reply (86.7% against 100%): a long reply is split into
+chunks, and Strata often returns only the part that matched. Neighbour expansion is not
+the cause; turning it off changed the LongMemEval sample by one point.
+
 ## Alternatives considered
 
 **Drop the reference list for excerpts.** Cheapest, and it breaks the promise that every

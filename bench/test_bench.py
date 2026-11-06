@@ -268,6 +268,38 @@ class ReportTests(unittest.TestCase):
             self.assertEqual(counts["answer_errors"], 1)
 
 
+class QuestionReportTests(unittest.TestCase):
+    def test_shows_each_question_with_its_source_and_answers(self):
+        ds = datasets.load_locomo(LOCOMO_SAMPLE, "sha")
+        convs, qs = datasets.select(ds, conversations=1)
+        dog = [q for q in qs if q.question == "What is the dog's name?"][0]
+        move = [q for q in qs if q.question == "When did Bo move?"][0]
+        with tempfile.TemporaryDirectory() as tmp:
+            run = Path(tmp)
+            d = run / "strata"
+            d.mkdir()
+
+            def write(name, rows):
+                (d / name).write_text("".join(json.dumps(r) + "\n" for r in rows))
+
+            write("contexts.jsonl", [
+                dict(qid=dog.qid, context="[1] Ann: I adopted a dog named Rex yesterday."),
+                dict(qid=move.qid, context="nothing useful"),
+            ])
+            write("answers.jsonl", [dict(qid=dog.qid, answer="Rex | the dog")])
+            write("judgments.jsonl", [dict(qid=dog.qid, repeat=0, label=1)])
+            manifest = dict(run="t", dataset="locomo", budget=4000)
+            text = report.questions(run, manifest, {c.conv_id: c for c in convs}, qs)
+
+        self.assertIn("What is the dog's name?", text)
+        self.assertIn("**Correct answer:** Rex", text)
+        self.assertIn("found 1 of 1; correct", text)
+        self.assertIn("Rex \\| the dog", text)  # a pipe in an answer cannot break the table
+        self.assertIn("I adopted a dog named Rex", text)
+        self.assertIn("0 of 2 (missing `D2:1`, `D1:2`)", text)
+        self.assertIn("not answered yet", text)
+
+
 class StrataPayloadTests(unittest.TestCase):
     def test_event_uses_chat_shape(self):
         from backend_strata import Strata, model_env
