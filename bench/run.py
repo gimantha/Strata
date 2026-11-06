@@ -304,7 +304,8 @@ async def cmd_judge(args) -> None:
                 prompt = prompts.judge_prompt(manifest["dataset"], q.category, q.abstention, q.question, q.answer, ans["answer"])
                 try:
                     got = await model.complete(prompt, JUDGE_MAX_TOKENS)
-                    row.update(reply=got.text, label=prompts.judge_label(manifest["dataset"], got.text), model=got.model)
+                    row.update(reply=got.text, label=prompts.judge_label(manifest["dataset"], got.text), model=got.model,
+                               input_tokens=got.input_tokens, output_tokens=got.output_tokens)
                 except Exception as err:
                     row["error"] = f"{type(err).__name__}: {err}"[:500]
                 append_jsonl(path, row)
