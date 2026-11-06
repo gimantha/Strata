@@ -1,0 +1,8 @@
+# Downloaded datasets and the tokenizer cache. Never committed: LoCoMo is shared under a
+# non-commercial license and LongMemEval is large. `run.py fetch` gets them back.
+/data/
+# Run output. Publish a finished run on purpose, not by accident.
+/runs/
+/.venv/
+/.env
+__pycache__/

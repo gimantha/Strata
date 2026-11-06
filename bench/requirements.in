@@ -1,0 +1,4 @@
+# Only what the shared harness needs. Each rival system gets its own environment later,
+# so their libraries cannot change these versions.
+httpx>=0.28,<1
+tiktoken>=0.9,<1
