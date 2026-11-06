@@ -146,6 +146,17 @@ search, where a question with one excellent answer should not get nine poor ones
 **Neighbour expansion for all documents.** Adjacent chunks of a document can help too, but
 they are much longer than chat messages and nothing measured them. Messages only, for now.
 
+**Show a whole chat message when one of its chunks matches.** Tried for the long-reply
+weak spot on LongMemEval, with a cap of a quarter of the budget per message. Blocks fell
+from about 16 items to 12 and recall dropped by 3 points. Two variants did no better:
+neighbours counted by message instead of by chunk (−2 points), and the rest of the same
+message offered at 0.9 of the match's relevance (−1 point, inside the noise). Of the two
+assistant-reply questions Strata missed, one had the answer in its context ("a 1:10
+ratio"); it counts as a miss only because evidence recall wants half of a long message.
+The other is a real miss: "the 27th parameter" does not match "27." as a keyword. Judging
+this needs answer accuracy, not evidence recall. These variants were compared on the
+sample's test questions, so none was kept.
+
 **Keep name searches but weight them down.** Any weight leaves hundreds of records with a
 voice in fusion and none of them chosen for the question. Entity lookup is what the name
 search was for.
